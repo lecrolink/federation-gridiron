@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 
 
@@ -36,6 +37,51 @@ class League(models.Model):
     def root_league(self):
         path = self.path_to_root()
         return path[-1]
+
+    def clean(self):
+        super().clean()
+        errors = {}
+
+        if self.tier == 1:
+            if self.parent_league_id is not None:
+                errors['parent_league'] = 'Tier 1 leagues cannot have a parent league.'
+        elif self.parent_league_id is None:
+            errors['parent_league'] = 'Leagues above tier 1 must have a parent league.'
+
+        if self.pk and self.parent_league_id == self.pk:
+            errors['parent_league'] = 'A league cannot be its own parent.'
+
+        if self.parent_league_id is not None:
+            parent = self.parent_league
+            if parent.tier != self.tier - 1:
+                errors['parent_league'] = (
+                    f'Parent league must be tier {self.tier - 1} '
+                    f'(selected parent is tier {parent.tier}).'
+                )
+
+            if self.pk:
+                ancestor = parent
+                while ancestor is not None:
+                    if ancestor.pk == self.pk:
+                        errors['parent_league'] = (
+                            'A league cannot choose one of its descendants as its parent.'
+                        )
+                        break
+                    ancestor = ancestor.parent_league
+
+        if self.tier == 1 and self.active:
+            existing = League.objects.filter(tier=1, active=True)
+            if self.pk:
+                existing = existing.exclude(pk=self.pk)
+            if existing.exists():
+                errors['active'] = 'Only one active tier 1 league may exist.'
+
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
 
 
 class Conference(models.Model):

@@ -1,10 +1,18 @@
+from django import forms
 from django.contrib import admin
 
 from .models import Conference, Division, League, MovementPath, Team
 
 
+class LeagueAdminForm(forms.ModelForm):
+    class Meta:
+        model = League
+        fields = '__all__'
+
+
 @admin.register(League)
 class LeagueAdmin(admin.ModelAdmin):
+    form = LeagueAdminForm
     list_display = ('name', 'slug', 'tier', 'parent_league', 'active', 'updated_at')
     search_fields = ('name', 'slug', 'description')
     list_filter = ('active', 'tier')
