@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/4.0/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -25,7 +26,7 @@ SECRET_KEY = 'django-insecure-$yz86a8)s(ym-(svy5a@3)(01ejoy#_@d=dv1ir#so2^2zx5oo
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['127.0.0.1','www.federationgridiron.com', 'federationgridiron.com',]
+ALLOWED_HOSTS = ['www.federationgridiron.com', 'federationgridiron.com',]
 
 
 # Application definition
@@ -78,9 +79,12 @@ DATABASES = {
         "ENGINE": "django.db.backends.mysql",
         "NAME": "lecrolink$fg",
         "USER": "lecrolink",
-        "PASSWORD": "wHiPPerferG888",
+        "PASSWORD": os.environ["FG_DB_PASSWORD"],
         "HOST": "lecrolink.mysql.pythonanywhere-services.com",
         "PORT": "3306",
+        "OPTIONS": {
+    "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+},
     }
 }
 
