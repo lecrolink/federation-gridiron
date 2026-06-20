@@ -1,6 +1,8 @@
 from django import forms
 from django.contrib import admin
+from django.urls import path
 
+from .admin_views import generate_32_team_league_view
 from .models import Conference, Division, League, MovementPath, Team
 
 
@@ -13,11 +15,26 @@ class LeagueAdminForm(forms.ModelForm):
 @admin.register(League)
 class LeagueAdmin(admin.ModelAdmin):
     form = LeagueAdminForm
+    change_list_template = 'admin/leagues/league/change_list.html'
     list_display = ('name', 'slug', 'tier', 'parent_league', 'active', 'updated_at')
     search_fields = ('name', 'slug', 'description')
     list_filter = ('active', 'tier')
     ordering = ('tier', 'name')
     prepopulated_fields = {'slug': ('name',)}
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                'generate-32-team-league/',
+                self.admin_site.admin_view(self.generate_32_team_league_view),
+                name='leagues_league_generate_32_team_league',
+            ),
+        ]
+        return custom_urls + urls
+
+    def generate_32_team_league_view(self, request):
+        return generate_32_team_league_view(self, request)
 
 
 @admin.register(Conference)

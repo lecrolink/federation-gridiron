@@ -1,0 +1,86 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+  &rsaquo; <a href="{% url 'admin:leagues_league_changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+  &rsaquo; {% trans 'Generate 32-Team League' %}
+</div>
+{% endblock %}
+
+{% block content %}
+<h1>{% trans 'Generate 32-Team League' %}</h1>
+
+<p>
+  Paste names into the fixed slots below. Each Federation Gridiron league uses
+  2 conferences, 8 divisions (4 per conference), and 32 teams (4 per division).
+  Existing records are matched by slug and updated when found.
+</p>
+
+{% if result %}
+<div class="messagelist">
+  <div class="success">
+    <strong>Structure saved for {{ league.name }}.</strong>
+  </div>
+</div>
+
+<table style="margin: 1em 0;">
+  <thead>
+    <tr>
+      <th scope="col">Entity</th>
+      <th scope="col">Created</th>
+      <th scope="col">Updated</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th scope="row">Conferences</th>
+      <td>{{ result.conferences_created }}</td>
+      <td>{{ result.conferences_updated }}</td>
+    </tr>
+    <tr>
+      <th scope="row">Divisions</th>
+      <td>{{ result.divisions_created }}</td>
+      <td>{{ result.divisions_updated }}</td>
+    </tr>
+    <tr>
+      <th scope="row">Teams</th>
+      <td>{{ result.teams_created }}</td>
+      <td>{{ result.teams_updated }}</td>
+    </tr>
+  </tbody>
+</table>
+{% endif %}
+
+<form method="post" novalidate>
+  {% csrf_token %}
+
+  {% if form.non_field_errors %}
+  <p class="errornote">{{ form.non_field_errors }}</p>
+  {% endif %}
+
+  <fieldset class="module aligned">
+    {% for field in form %}
+    <div class="form-row{% if field.errors %} errors{% endif %}">
+      {{ field.errors }}
+      <div>
+        <label{% if field.field.required %} class="required"{% endif %} for="{{ field.id_for_label }}">
+          {{ field.label }}:
+        </label>
+        {{ field }}
+        {% if field.help_text %}
+        <p class="help">{{ field.help_text }}</p>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </fieldset>
+
+  <div class="submit-row">
+    <input type="submit" value="{% trans 'Generate structure' %}" class="default">
+    <a href="{% url 'admin:leagues_league_changelist' %}" class="button cancel-link">{% trans 'Back to leagues' %}</a>
+  </div>
+</form>
+{% endblock %}
