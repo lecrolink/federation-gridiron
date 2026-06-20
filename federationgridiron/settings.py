@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-$yz86a8)s(ym-(svy5a@3)(01ejoy#_@d=dv1ir#so2^2zx5oo
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['www.federationgridiron.com', 'federationgridiron.com',]
+ALLOWED_HOSTS = ['127.0.0.1','www.federationgridiron.com', 'federationgridiron.com',]
 
 
 # Application definition
