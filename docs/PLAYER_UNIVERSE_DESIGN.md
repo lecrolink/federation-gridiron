@@ -2,7 +2,7 @@
 
 This document specifies the shared fictional people of Federation Gridiron and the per-timeline state that diverges from them.
 
-This revision replaces the earlier draft of this file. That draft assumed 32 franchises, a first draft in 1971, classes generated through 2049, and 28,384 universe player rows. Those figures are obsolete. The current estimates are in [Population and row counts](#population-and-row-counts). The retired arithmetic is isolated under [Obsolete 32-team estimate](#obsolete-32-team-estimate) so it is not reused by accident.
+This revision replaces the earlier draft of this file. That draft assumed 32 franchises, a first draft in 1971, classes generated through 2049, and 28,384 universe player rows. Those figures are obsolete. The playable timeline is **60 seasons, 1970 through 2029 inclusive**. The league **starts** with 24 franchises in 1970 and will add franchises later. Twenty-four is not the permanent league size and is not an implementation constant. Counts that assume 24 teams in every season are a [no-expansion provisional baseline](#no-expansion-provisional-baseline). The retired 32-team arithmetic stays under [Obsolete 32-team estimate](#obsolete-32-team-estimate).
 
 It is a design proposal. It does not add Django models, migrations, services, settings, admin screens, or rows in a database.
 
@@ -24,9 +24,9 @@ The repository today is a Django 5.2 project (`requirements.txt`) with one domai
 
 `leagues/services/league_generator.py` still upserts **2 conferences, 8 divisions, and 32 teams** (`CONFERENCE_COUNT`, `DIVISION_COUNT`, `TEAM_COUNT`). That generator is the code on `main`. It is not the product shape this design uses.
 
-The product shape is **24 fictional franchises** in the 1970 league. Proposed catalog layout, when the generator is later allowed to change: 2 conferences, 3 divisions per conference, 4 teams per division. Population math below depends on the count 24, not on the conference names. This document does not change the generator.
+The 1970 league has **24 fictional franchises**. More franchises enter during the 60 seasons. Their years, counts, and alignments are not chosen yet. A universe release carries a versioned expansion schedule that can be filled in later. Until that schedule has entries, formulas use `N(year) = 24` only as a provisional baseline. This document does not change the generator, and it does not hard-code 24 as the size of every season.
 
-A `Team` row is a franchise identity shared by every timeline. Timeline code reads it and does not write `Team.league`, `Team.conference`, or `Team.division`. Those fields are catalog data. Promotion results, if they ever differ by timeline, belong on timeline placement rows.
+A franchise identity is shared by every timeline on a release. The current `Team` row can store only one conference and one division, so it cannot by itself represent expansion, realignment, or a last active season. Those facts belong on the shared franchise records below. Timeline code does not create franchises and does not write `Team.league`, `Team.conference`, or `Team.division`.
 
 Auth is Django's built-in user model. No `AUTH_USER_MODEL` override is set. The database is MySQL through `mysqlclient`. Domain writes go through `full_clean()` on `League` and through small `@transaction.atomic` services.
 
@@ -38,6 +38,7 @@ League → Conference                UniverseRelease                       Timel
                                    OpeningContract                       TimelineContract
                                    OpeningStaffAssignment                StaffStint
                                    UniversePlayer / GM / Coach           overlays, current ratings
+                                   Franchise + ExpansionEvent            expansion picks, hires
                                    pre-1970 histories and stats          1970–2029 stats, injuries,
                                    DraftClass 1970–2029                  awards, draft picks, contracts
 ```
@@ -46,7 +47,7 @@ Two future apps carry this, and neither is created here:
 
 | App | Owns | Who writes it |
 |-----|------|----------------|
-| `universe` | One published release: players, GMs, coaches, 1970 rosters, free agents, draft classes, pre-1970 histories | A generator command, once per release |
+| `universe` | One published release: players, GMs, coaches, 1970 rosters, free agents, draft classes, the expansion schedule, pre-1970 histories | A generator command, once per release |
 | `timelines` | One owner's 60-season playthrough | Timeline services. They reference universe rows and never update them |
 
 "Campaign" in the previous draft of this document is this timeline. The architecture is unchanged in kind: one shared universe, many independent playthroughs. The horizon, franchise count, opening draft, and staff model are what changed.
@@ -57,7 +58,7 @@ Two future apps carry this, and neither is created here:
 
 | Requirement | Where it lives |
 |-------------|----------------|
-| The game starts in 1970 with 24 fictional franchises | Catalog count used by the release. Opening assignments cover 24 teams. |
+| The game starts in 1970 with 24 fictional franchises, and more franchises join on a shared schedule | `N(1970) = 24`. Later `N(year)` is read from the release's expansion schedule. The schedule is empty of expansion events until we fill it in. |
 | The owner picks a franchise, keeps or replaces its GM and head coach, runs the 1970 rookie draft, sets a few broad instructions, then the season simulates | Timeline opening sequence. Shared data is read; the decisions are timeline rows. |
 | A playthrough lasts 60 seasons, labeled 1970 through 2029 | [Year labels](#year-labels-and-the-60-season-horizon). |
 | 100 initial GMs and 100 initial head coaches, each distinct | Shared staff cohort, with strengths, weaknesses, traits, and pre-1970 histories. |
@@ -73,14 +74,16 @@ Two future apps carry this, and neither is created here:
 
 | Term | Meaning |
 |------|---------|
-| **Universe release** | One immutable publication of the shared people, the 1970 league snapshot, and the draft classes. |
+| **Universe release** | One immutable publication of the shared people, the 1970 league snapshot, the draft classes, and the expansion schedule. |
 | **Timeline** | One owner's 60-season playthrough. The isolation boundary. Not a `leagues.League` row. |
-| **Opening cohort** | Professionals already in the league before the 1970 rookie draft: 24 rosters plus the free-agent pool. They are not members of the 1970 draft class. |
+| **Opening cohort** | Professionals already in the league before the 1970 rookie draft: the 24 founding rosters plus that year's free-agent pool. They are not members of the 1970 draft class. |
 | **1970 rookie class** | The shared draft class used before the first season. |
 | **Archive cohort** | Fictional players who appear in 1960–1969 league history and are gone before the 1970 draft. Shared, so the record book is the same in every timeline. They do not play in 1970. |
 | **Initial staff** | 100 GMs and 100 head coaches available at the 1970 decision point. |
 | **Incoming staff class** | Shared GM and head-coach candidates who become hireable in a later offseason. Same identities in every timeline. |
-| **Catalog franchise** | A `leagues.Team` row. Timelines share the row and keep their own assignments. |
+| **`N(year)`** | How many franchises are active in that season. `N(1970) = 24`. Later years come from the shared expansion schedule. The no-expansion baseline sets `N(year) = 24` for 1971–2029 as well. |
+| **Founding franchise** | One of the 24 clubs whose first active season is 1970. |
+| **Expansion franchise** | A shared club whose first active season is later than 1970. The release names it before any timeline reaches that season. |
 
 An owner may have more than one timeline. Timelines do not share mutable rows.
 
@@ -103,9 +106,9 @@ season_year    1969 + season_index
 
 The draft class year equals the season year that follows the draft. The first action of a new timeline, after the franchise and staff choices, is the **1970** draft. The draft before the last season uses the **2029** class. There are **60** shared classes, 1970 through 2029 inclusive (`2029 − 1970 + 1 = 60`).
 
-**Working decision: the final playable season is 2029, not 2030.**
+**The playable timeline is 60 seasons: 1970 through 2029 inclusive. The final playable season is 2029.**
 
-2030 would be `season_index` 61. Labeling the last season 2030 while also starting in 1970 produces 61 seasons (`2030 − 1970 + 1 = 61`). The estimates in this document use 2029. Choosing 2030 instead would add one modern-era class of 216 prospects and one more season of timeline rows; see the delta in the population section. That choice is listed under [Unresolved decisions](#unresolved-decisions) so it can be confirmed before implementation.
+2030 would be `season_index` 61 (`2030 − 1970 + 1 = 61`). It is not a playable season. Class size for each of the 60 years is `rounds(year) × N(year)` plus that year's undrafted pool. `N(year)` comes from the shared schedule, so the 60 classes stay identical across timelines even when some years have more than 24 teams.
 
 Pre-1970 history uses years **1960–1969**. Those years are outside the 60. Timeline stat tables accept only `season_year` 1970–2029. Shared history tables accept only `season_year` 1960–1969.
 
@@ -117,12 +120,12 @@ The football clock is this integer year plus a phase. `TIME_ZONE` does not defin
 
 A new timeline is pinned to a published release and starts **before** the 1970 season, with the shared 1969 world still intact.
 
-1. **Choose a franchise.** One of the 24. Stored as `Timeline.owned_franchise`. The other 23 stay AI-controlled.
+1. **Choose a franchise.** One of the clubs the release marks owner-selectable in 1970. On the founding schedule that is the 24 clubs with `first_active_season = 1970`. Stored as `Timeline.owned_franchise`. The others stay AI-controlled. Expansion clubs are not on this 1970 list. Whether an owner can start in a later season, or move onto an expansion club, is an open product decision in [Owner access to expansion](#owner-access-to-expansion).
 2. **Keep or replace that franchise's GM and head coach.** The shared snapshot already employs one GM and one head coach on each franchise (24 of each). The other 76 GMs and 76 head coaches are unemployed and are the only legal opening hires. Replacing writes timeline staff stints only. The other 23 franchises keep their shared GM and head coach until later timeline events.
 3. **Complete the 1970 rookie draft.** Materialize the shared 1970 class into this timeline. Draft order comes from the shared 1969 standings (worst record picks first). The owner drafts for the owned franchise. AI GMs draft for the others, starting from their shared tendencies. Picks are timeline rows. The class list itself is not modified.
 4. **Set a few broad instructions** for the owned franchise's GM and head coach. Four GM directives and four coach directives, defined in the data dictionary. AI franchises start from directives derived from the shared staff profile, so every timeline begins with the same AI tendencies.
 5. **GMs reduce rosters to the 1970 limit** (40 active + 8 taxi) after the draft. That reduction is a timeline result. The shared opening roster remains the pre-draft roster.
-6. **Simulate the 1970 season** (14 games under the `run-first` era). Phases then follow the usual loop: offseason, next year's shared draft class, season, through the 2029 season. After 2029 the phase is `complete`. No 2030 draft is generated for this horizon.
+6. **Simulate the 1970 season** (14 games under the `run-first` era). Phases then follow the usual loop: offseason, next year's shared draft class, season, through the 2029 season. If the shared schedule says new franchises enter before a season, that offseason runs the expansion event, then that year's shared draft. After 2029 the phase is `complete`. No 2030 draft is generated.
 
 Phases on the timeline: `choose_franchise`, `staff`, `draft`, `instructions`, `roster_cut`, `regular`, `playoffs`, `offseason`, `complete`.
 
@@ -143,6 +146,9 @@ Whether two timelines that make the same choices in steps 1–4 must then produc
 7. Publishing freezes the release. A correction is a new release. Existing timelines stay pinned, so a retune cannot change the 1970 roster or a class a timeline has already seen.
 8. Opening contracts and opening staff assignments are shared templates. `start_timeline` copies them into timeline rows. Later cuts, extensions, and firings update the copies.
 9. Pre-1970 counting stats are the shared record book. They are display. Starting ratings and traits are what the 1970 simulator reads. The generator builds the counting stats so they agree with those ratings; the sim does not replay 1960–1969.
+10. Franchise identity, first and last active seasons, per-season conference and division membership, and expansion events are stored once on the release. Every timeline on that release introduces the same franchises in the same seasons.
+11. A year's draft class is fixed by the release and by `N(year)` on that schedule. Standings inside a timeline change pick order. They do not add or remove prospects.
+12. An expansion draft assigns people who are already in that timeline. It does not create a universe player, GM, or coach. Any extra rookies or free agents allowed in an expansion year are already members of that year's shared class or shared pool.
 
 ---
 
@@ -154,15 +160,16 @@ Whether two timelines that make the same choices in steps 1–4 must then produc
 | `generator_version` | Algorithm id. Example: `fg-player-gen-2`. |
 | `seed` | Integer stored on the release row. Not a Django setting. |
 | `root_league` | FK to the tier-1 `League`. `on_delete=PROTECT`. |
-| `franchise_count` | Must be 24 for this product shape. |
-| `catalog_fingerprint` | SHA-256 of sorted lines `{tier}:{league_slug}:{conference_slug}:{division_slug}:{team_slug}`. |
+| `founding_franchise_count` | 24. This is the 1970 size, not the size of later seasons. |
+| `expansion_schedule_version` | Integer on the release. Filling in expansion years, clubs, or rules bumps the version. A published release does not change its schedule in place. |
+| `catalog_fingerprint` | SHA-256 of the franchise list (slug, first season, last season) plus each season's conference and division membership plus each expansion event. A timeline stays bound to that fingerprint. |
 | `first_season_year` | 1970. |
 | `season_count` | 60. |
-| `last_season_year` | 2029 while the working decision holds. |
+| `last_season_year` | 2029. |
 | `status` | `draft` or `published`. |
 | timestamps | Same pattern as `leagues`. |
 
-`start_timeline` requires a published release whose fingerprint still matches the live 24-franchise tree. The current 32-team generator cannot satisfy that check. Publishing waits until the catalog is the 24-franchise tree. This document does not perform that catalog change.
+`start_timeline` requires a published release whose fingerprint still matches the shared franchise list and expansion schedule. The current 32-team generator cannot satisfy that check. Publishing waits until the catalog can represent the release's franchises, including expansion clubs once the schedule names them. This document does not perform that catalog change. `N(year)` is computed from the schedule. It is not a settings constant and it is not `TEAM_COUNT`.
 
 While `status` is `draft`, the generator may rebuild from `(generator_version, seed, fingerprint, era tables)`. After `published`, existing keys are frozen. Appending a year past `last_season_year` is a new product decision, not an implied extension.
 
@@ -196,7 +203,7 @@ Draws use HMAC-SHA256 of the release seed and a named key (`f"{universe_key}:wei
 | `spread-influence` | 2004–2013 | 53 | 8 | 7 | 16 | More receiver depth, edge speed ahead of bulk |
 | `modern-passing` | 2014–2029 | 53 | 8 | 7 | 16 through 2020, 17 from 2021 | Hybrid skill profiles more common |
 
-These are tunable defaults for a fictional 24-franchise league, not a claim that the game replays a real league's calendar. Each era owns a position quota that sums to its active limit and another that sums to its taxi limit. The generator refuses a quota that does not sum. Later-era quotas are data, filled before publish. Direction across eras: FB counts fall, WR and CB counts rise, draft rounds shrink, linemen get heavier.
+These roster and draft-round defaults are per team, not a league-size constant. They are not a claim that the game replays a real league's calendar. A season with more active franchises uses the same per-team quota and the same round count, multiplied by `N(year)`. Each era owns a position quota that sums to its active limit and another that sums to its taxi limit. The generator refuses a quota that does not sum. Later-era quotas are data, filled before publish. Direction across eras: FB counts fall, WR and CB counts rise, draft rounds shrink, linemen get heavier.
 
 ### 1970 active quota (40 veterans, before the rookie draft)
 
@@ -254,10 +261,13 @@ Shared rows store `initial` and `potential` for each component. Timeline rows st
 Opening cohort, before the draft:
 
 ```text
-rostered = 24 × (40 + 8) = 1,152
-free agents = 5 × 24 = 120
+N(1970) = 24
+rostered = N(1970) × (40 + 8) = 1,152
+free agents = 5 × N(1970) = 120
 opening cohort = 1,272
 ```
+
+That 1970 arithmetic is fixed, because the league starts with 24 clubs. It is not reused as `N(year)` for 1971–2029.
 
 Every opening player has at least one prior pro season. Age is drawn first (starters mostly 24–30, backups 22–32, taxi 21–24, free agents slightly older). `birth_year = 1970 − age` at the 1970 offseason. Rookies born around 1948 are in the draft class, not on these rosters.
 
@@ -270,10 +280,12 @@ Every opening player has at least one prior pro season. Age is drawn first (star
 `DraftClass` is unique on `(release, year)` for each year from 1970 through 2029.
 
 ```text
-draftable = era(year).draft_rounds × 24
-undrafted_pool = 2 × 24 = 48
-class size = draftable + undrafted_pool
+draftable(year) = era(year).draft_rounds × N(year)
+undrafted(year) = 2 × N(year)
+class size(year) = draftable(year) + undrafted(year)
 ```
+
+`N(year)` is the shared schedule, so every timeline on the release receives the same class. The table below is the **no-expansion provisional baseline**, where `N(year) = 24` in every season. It is not the final class size once expansion years are filled in.
 
 | Years | Rounds | Draftable | Undrafted | Class size | Classes | Prospects |
 |-------|--------|-----------|-----------|------------|---------|-----------|
@@ -283,7 +295,7 @@ class size = draftable + undrafted_pool
 | 1995–2003 | 7 | 168 | 48 | 216 | 9 | 1,944 |
 | 2004–2013 | 7 | 168 | 48 | 216 | 10 | 2,160 |
 | 2014–2029 | 7 | 168 | 48 | 216 | 16 | 3,456 |
-| **1970–2029** | | **13,272** | **2,880** | | **60** | **16,152** |
+| **1970–2029 baseline** | | **13,272** | **2,880** | | **60** | **16,152** |
 
 A prospect stores a shared `board_rank` and a pool of `draftable` or `undrafted`. The prospect does not store a destination team. Round, pick, and franchise are timeline facts. True ratings stay on the universe player. Any scout fog is a timeline report, never a column on the shared prospect.
 
@@ -316,7 +328,16 @@ Archive players have universe identities, pre-1970 stats, and awards. They are n
 
 Each of the 100 in a role has a distinct combination of strength tags, weakness tags, trait tags, and career-history signature. Ages in 1970 run about 32–65. Employed head coaches skew older; the unemployed pool includes younger coordinators.
 
-**Incoming classes, 1971–2029 (59 years):** 8 head-coach candidates and 6 GM candidates per year, shared, debuting in that offseason.
+**Incoming classes, 1971–2029 (59 years).** The no-expansion baseline debuts 8 head-coach candidates and 6 GM candidates per year. Those counts are not enough by themselves once clubs are added. For a year in which `E(year)` franchises enter:
+
+```text
+incoming_hc(year) >= 8 + E(year)
+incoming_gm(year) >= 6 + E(year)
+```
+
+The `8` and `6` are the baseline replacement pool. The `E(year)` term is the minimum number of extra shared identities so each new club can hire a GM and a head coach who are not already the 1970 employees of a founding club. The release stores the actual people. A timeline does not invent a coach the other timelines do not have. How many candidates to add above that floor is unresolved.
+
+No-expansion totals, `E(year) = 0` for every year:
 
 ```text
 future head coaches = 59 × 8 = 472
@@ -326,13 +347,139 @@ all GMs = 100 + 354 = 454
 all staff identities = 1,026
 ```
 
+Those 1,026 identities are the provisional baseline, not the final staff count.
+
 A timeline creates overlay rows for the initial 200 at `start_timeline`, because the owner may hire any unemployed member before the season. An incoming staff class is materialized in the offseason of its debut year, the same way a draft class is. New staff are not invented inside one timeline, so two timelines are hiring from the same people.
 
 Initial staff draw schemes that exist in 1970: `power_run`, `option`, `pro_style` on offense, and `stop_run` or `balanced` on defense. A coach who debuts in a later class may draw that era's schemes (`west_coast` from 1987, `air_raid` from the spread era).
 
 ### Shared 1969 standings
 
-`UniverseFranchiseSeason` for each franchise for each year 1960–1969 (240 rows). The 1969 wins, losses, and ties set the 1970 draft order. Later draft orders come from that timeline's own standings.
+`UniverseFranchiseSeason` for each founding franchise for each year 1960–1969 (24 × 10 = 240 rows). Expansion clubs have no 1960–1969 record. The 1969 wins, losses, and ties set the 1970 draft order. Later draft orders come from that timeline's own standings. Expansion clubs follow the rookie-draft slot rule on their expansion event; that rule changes order only, not the shared class.
+
+---
+
+## Expansion
+
+The Federation Gridiron begins with 24 franchises in 1970. Additional franchises enter during the 60 seasons. The exact years, the number of new clubs, and the final league size are not decided. This section defines the records a release can hold so those decisions can be filled in later. It does not name an expansion year or a final franchise count.
+
+`N(year)` is the number of franchises whose `first_active_season` is less than or equal to `year` and whose `final_active_season` is null or greater than or equal to `year`.
+
+```text
+N(1970) = 24
+E(year) = number of franchises with first_active_season = year
+N(year) = N(year - 1) + E(year) − D(year)
+```
+
+`D(year)` is the number of franchises whose `final_active_season` is `year - 1`. No contraction is scheduled. The field exists so a later schedule can end a franchise without a schema change. The no-expansion baseline is `E(year) = 0` and `D(year) = 0` for 1971–2029, so `N(year) = 24` for all 60 seasons.
+
+The schedule is shared universe data and is versioned with the release. Every timeline on that release activates the same franchises in the same seasons, in the same conferences and divisions. A timeline cannot vote a club into the league or change `N(year)`. After publish, editing the schedule means a new release. Timelines already pinned to the old release keep the old schedule.
+
+### Shared franchise
+
+One row per club that will ever play in the release, including expansion clubs named when the schedule is filled in. Founding rows exist now. Expansion rows are added with the schedule, not when the first timeline reaches that season.
+
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `slug` | Shared | slug | unique in the release | Schedule author | Both |
+| `name` | Shared | string | ≤ 255, name at debut | Schedule author | Display |
+| `first_active_season` | Shared | smallint | 1970 for the founding 24; 1971–2029 for expansion | Schedule author | Both |
+| `final_active_season` | Shared | smallint, null | null means still active through 2029; otherwise 1970–2029 | Schedule author | Both |
+| `origin` | Shared | enum | `founding` or `expansion` | Schedule author | Display |
+| `history_predecessor` | Shared | FK, null | another franchise in the release, for a later relocation or reorganization link | Schedule author, unused until needed | Display |
+
+`history_predecessor` is the hook for relocation, renaming, or a club that continues another club's history. No such links are defined. A rename or city change that keeps the same franchise uses `FranchiseHistoryEvent` rather than a new slug.
+
+### Membership by season
+
+One shared row per franchise per season in which it exists. This is the alignment the schedule promises. It is not the result of a timeline's standings.
+
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `franchise` | Shared | FK | | Schedule author | Both |
+| `season_year` | Shared | smallint | 1970–2029, inside the franchise's active span | Schedule author | Both |
+| `conference_slug` | Shared | slug | conference for that season | Schedule author | Both |
+| `division_slug` | Shared | slug | division for that season | Schedule author | Both |
+| `owner_selectable` | Shared | bool | whether a human owner may hold this club in this season | Schedule author | Both |
+
+Founding clubs are owner-selectable in 1970. The product rules for expansion clubs are open; the column is how the release will record the answer. Realignment is a new membership row for a later season. The rules that decide realignment are unresolved. Until those rules exist, membership is whatever the release stores, and every timeline sees the same alignment.
+
+### History events
+
+Optional shared rows. None are required for the founding 24.
+
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `franchise` | Shared | FK | | Schedule author | Display |
+| `season_year` | Shared | smallint | 1970–2029 | Schedule author | Display |
+| `kind` | Shared | enum | `rename`, `relocation`, `reorganization` | Schedule author | Display |
+| `previous_name` | Shared | string | ≤ 255 | Schedule author | Display |
+| `new_name` | Shared | string | ≤ 255 | Schedule author | Display |
+| `city` | Shared | string | ≤ 255, empty if unchanged | Schedule author | Display |
+| `notes` | Shared | text | | Schedule author | Display |
+
+### Expansion event
+
+One shared row per expansion season. A season may add more than one franchise. The row exists so the rules can be filled in; this document does not create any events.
+
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `season_year` | Shared | smallint | 1971–2029, the first season the new clubs play | Schedule author | Both |
+| `franchises` | Shared | list of franchise FKs | the clubs with `first_active_season` equal to this year | Schedule author | Both |
+| `placement` | Shared | membership rows | conference and division for each new club in `season_year` | Schedule author | Both |
+| `players_protected` | Shared | smallint, null until set | how many players each existing franchise may protect | Schedule author | Sim |
+| `picks_per_new_franchise` | Shared | smallint, null until set | selections in the expansion draft | Schedule author | Sim |
+| `expansion_draft_order_rule` | Shared | text | how selection order among the new clubs is chosen | Schedule author | Sim |
+| `roster_building_rule` | Shared | text | how a new club fills the rest of the roster after the expansion draft | Schedule author | Sim |
+| `free_agent_rule` | Shared | text | which shared free-agent pool the new club may sign, and any limits | Schedule author | Sim |
+| `rookie_draft_slot_rule` | Shared | text | lottery, fixed slot, or other order rule for the new clubs in that year's rookie draft | Schedule author | Sim |
+| `gm_hiring_rule` | Shared | text | which shared GM identities are eligible, and whether the owner or the AI hires | Schedule author | Sim |
+| `hc_hiring_rule` | Shared | text | same for head coaches | Schedule author | Sim |
+
+Blank rule text means the schedule is not ready to publish. A published release that contains an expansion event has those rules filled in. Publishing with a blank event is refused.
+
+### What stays shared, and what a timeline decides
+
+The new franchise, its GM candidates, its head-coach candidates, and that year's rookie class are the same people in every timeline. The class was generated from `N(year)`, which already includes `E(year)`, when the release was built. An expansion draft does not generate players.
+
+| Fact | Where it lives |
+|------|----------------|
+| Which clubs enter, and in which season | Shared expansion event |
+| Conference and division | Shared membership rows |
+| How many veterans an existing club may protect | Shared `players_protected` |
+| Which veterans are protected | Timeline. Depends on that timeline's roster. |
+| Which unprotected players the new club selects | Timeline expansion picks |
+| Which eligible shared GM and head coach are hired | Timeline staff stints |
+| Contracts the new club signs | Timeline contracts |
+| Where the new club picks in the rookie draft | Timeline pick order, using the shared slot rule and that timeline's lottery inputs if the rule calls for them |
+| Who is in the rookie class | Shared. Not affected by the lottery or by earlier timeline results. |
+
+`TimelineExpansionPick`:
+
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `expansion_event` | Timeline | FK | | Shared schedule | Both |
+| `pick_number` | Timeline | smallint | 1 through `picks_per_new_franchise × E(year)` | Timeline sim or owner, if the owner controls a new club | Both |
+| `selecting_franchise` | Timeline | FK | one of the event's new clubs | same | Both |
+| `player` | Timeline | FK | a universe player already in this timeline | same | Both |
+| `from_franchise` | Timeline | FK | the club that lost the player | same | Both |
+
+The pick updates roster stints in that timeline only. The universe player row is unchanged. Two timelines can give the same expansion club different veterans because their earlier seasons produced different rosters.
+
+Supplemental rookies or free agents, if a rule allows them, are drawn from that year's shared draft class or from the shared free-agent pool already sized with `N(year)`. They are not a private list generated when the timeline runs the expansion draft.
+
+### Owner access to expansion
+
+These are open product decisions. The data model can record the result. It does not choose it.
+
+| Question | What the release can already store | Still to decide |
+|----------|------------------------------------|-----------------|
+| May an owner who already holds a founding club move to an expansion club? | `owner_selectable` on the new club's membership row, plus a timeline change of `owned_franchise` | Whether the move is offered, and in which offseason |
+| May someone start a new timeline in an expansion season instead of in 1970? | A start year other than 1970 would be a different product mode | Whether that mode exists. This design's opening sequence still starts in 1970 |
+| May the owner apply for or purchase an expansion franchise? | A timeline decision recorded against the expansion event | Whether application or purchase is the action, and what it costs in game terms |
+| If the owner leaves the original club, does that club become bot-controlled? | The original club keeps its timeline staff and roster either way | Whether control passes to the AI when `owned_franchise` changes |
+
+Until those decisions are made, a new timeline still starts in 1970 on a founding club. Expansion clubs appear for every timeline in the scheduled season. The AI runs them unless a later rule gives the human the seat.
 
 ---
 
@@ -843,7 +990,7 @@ GM rows leave coach fields null, and the reverse. The UI shows the current direc
 |-------|-------|------|---------------|--------|-----|
 | `owner` | Timeline | FK | `settings.AUTH_USER_MODEL` | Owner | Display |
 | `release` | Timeline | FK | published release, `PROTECT` | Owner | Both |
-| `owned_franchise` | Timeline | FK | one of 24 | Owner | Both |
+| `owned_franchise` | Timeline | FK | a franchise the release marks owner-selectable for this timeline's start; in 1970 that is one of the 24 founding clubs | Owner | Both |
 | `name` | Timeline | string | ≤ 255 | Owner | Display |
 | `season_index` | Timeline | smallint | 1–60 | Timeline sim | Both |
 | `season_year` | Timeline | smallint | 1970–2029, equals `1969 + season_index` | Derived | Both |
@@ -854,22 +1001,58 @@ GM rows leave coach fields null, and the reverse. The UI shows the current direc
 
 ## Population and row counts
 
-Franchise count **24**. Classes **1970–2029** (60). Final season **2029**. Free agents **5 per franchise**. Undrafted pool **2 per franchise**. Roster defaults are the era table above.
+The playable clock is 60 seasons, 1970 through 2029 inclusive. Per-team roster size and draft-round count still come from the era table. League size does not.
 
-### Shared, stored once per release
+```text
+N(1970) = 24
+N(year) = active franchises in that season, from the shared expansion schedule
+slots(year) = active_roster(era(year)) + taxi(era(year))
+```
 
-| Slice | Formula | Rows |
-|-------|---------|------|
+Per-team constants used below: free agents at the 1970 start are 5 per founding franchise; undrafted prospects are 2 per active franchise; the injury planning rate is 30 per active franchise per season; the contract planning rate is one contract per two roster-slot seasons.
+
+### Formulas
+
+These are the implementation formulas. Substitute `N(year)` from the published schedule. Do not substitute the constant 24 for a year after 1970 unless that year's schedule entry really has 24 active clubs.
+
+| Quantity | Formula |
+|----------|---------|
+| 1970 opening rosters | `N(1970) × slots(1970)` |
+| 1970 free agents | `5 × N(1970)` |
+| Opening cohort | opening rosters + 1970 free agents |
+| Draftable prospects in a year | `rounds(year) × N(year)` |
+| Undrafted prospects in a year | `2 × N(year)` |
+| Class size | draftable + undrafted for that year |
+| Playable player identities | opening cohort + the sum of class sizes for 1970–2029 |
+| Roster-slot seasons | the sum of `N(year) × slots(year)` for 1970–2029 |
+| Draft picks in one timeline | the sum of `rounds(year) × N(year)` for 1970–2029 |
+| Franchise-seasons | the sum of `N(year)` for 1970–2029 |
+| Injuries | `30 × franchise-seasons` |
+| Contracts | roster-slot seasons / 2 |
+| Incoming head coaches in a year | at least `8 + E(year)` |
+| Incoming GMs in a year | at least `6 + E(year)` |
+| Staff overlays on a finished timeline | 200 initial staff + the sum of incoming classes for 1971–2029 |
+
+Awards scale with seasons and with the number of all-league slots, which grows when `N(year)` adds roster spots worth honoring. Recompute them with the schedule rather than keeping a flat 60-year figure. Staff stints scale with the sum of active franchises, not with `24 × 60`.
+
+Pre-1970 history does not use later expansion. Shared pro lines for 1960–1969 stay `24 × 48 × 10 = 11,520`. Archive headcount stays the planning figure derived from those lines.
+
+### No-expansion provisional baseline
+
+**These totals assume `E(year) = 0` for every year, so `N(year) = 24` for all 60 seasons. They are not the final implementation counts.** They are the numbers the formulas produce before any expansion event is written. When the schedule is filled in, recompute from the formulas. Do not add expansion teams by editing these totals in place.
+
+| Slice | Formula under N = 24 | Baseline rows |
+|-------|----------------------|---------------|
 | Opening rosters | 24 × (40 + 8) | 1,152 |
 | Opening free agents | 5 × 24 | 120 |
-| **Opening cohort** | | **1,272** |
-| Draft prospects 1970–2029 | see class table | **16,152** |
-| **Playable player identities** | 1,272 + 16,152 | **17,424** |
-| Archive players | 11,520 historical roster-seasons / 5 − 1,272 | **1,032** |
-| **All player identities** | 17,424 + 1,032 | **18,456** |
+| Opening cohort | | 1,272 |
+| Draft prospects 1970–2029 | class table above | 16,152 |
+| Playable player identities | 1,272 + 16,152 | 17,424 |
+| Archive players | 11,520 / 5 − 1,272 | 1,032 |
+| All player identities | 17,424 + 1,032 | 18,456 |
 | Initial GMs + head coaches | 100 + 100 | 200 |
-| Incoming staff 1971–2029 | 59 × (8 + 6) | 826 |
-| **Staff identities** | | **1,026** |
+| Incoming staff 1971–2029 | 59 × (8 + 6), because E = 0 | 826 |
+| Staff identities | | 1,026 |
 | Shared pro season lines 1960–1969 | 24 × 48 × 10 | 11,520 |
 | Shared college season lines | 18,456 × 4 | 73,824 |
 | Shared franchise seasons 1960–1969 | 24 × 10 | 240 |
@@ -877,54 +1060,62 @@ Franchise count **24**. Classes **1970–2029** (60). Final season **2029**. Fre
 | Opening staff assignments | 24 GMs + 24 head coaches | 48 |
 | Draft classes | one per year | 60 |
 
-Playable identities are the people a timeline can employ from 1970 on. Archive identities exist so 1960–1969 stats and awards point at someone. College lines are display. If college counting stats are dropped later, the shared row count falls by 73,824 and the playable population stays 17,424.
+College-line and rating-cell totals move when playable identity count moves. The rating-cell illustration for this baseline is `18,456 × 27 × 2 = 996,624` if ratings are normalized. Prefer one row per person with 27 columns. If college counting stats are dropped, the baseline loses 73,824 shared rows and the playable population is unchanged.
 
-Recommended physical shape: one row per person, with the 27 rating components as columns. That keeps the headline counts equal to people. A normalized rating table would multiply player rows by 27 components and by 2 for initial and potential (`18,456 × 27 × 2 = 996,624` shared rating cells) without adding people.
-
-### Per timeline
+Baseline timeline volume, still assuming 24 active clubs every season:
 
 | Moment | Player overlays | Staff overlays |
 |--------|-----------------|----------------|
 | After `start_timeline`, before the 1970 draft | 1,272 opening players | 200 initial staff |
-| After the 1970 draft is materialized, before week 1 | 1,272 + 456 = **1,728** | 200 |
-| After the 2029 draft, timeline complete | **17,424** | **1,026** |
+| After the 1970 draft is materialized, before week 1 | 1,272 + 456 = 1,728 | 200 |
+| After the 2029 draft, if no expansion was scheduled | 17,424 | 1,026 |
 
-Archive players add no timeline overlays.
+| Timeline store | Baseline formula | Baseline rows |
+|----------------|------------------|---------------|
+| Season lines, one per roster slot | sum of `24 × slots(year)` | 82,464 |
+| Season lines if about 10% also need a second team line | 82,464 × 1.10 | about 90,700 |
+| Draft picks | sum of `rounds(year) × 24` | 13,272 |
+| Injuries | 30 × 24 × 60 | 43,200 |
+| Contracts | 82,464 / 2 | 41,232 |
+| Awards | about 56 player honors × 60, plus coach and GM honors | about 3,500 |
+| Staff stints | 24 × 2 × (60 / 4-year mean tenure) | 720 |
 
-| Timeline store, one finished 60-season run | Formula | Rows |
-|--------------------------------------------|---------|------|
-| Season lines, one per roster slot | sum of 24 × (active + taxi) × years in each era | **82,464** |
-| Season lines if about 10% of player-seasons also need a second team line | 82,464 × 1.10 | about 90,700 |
-| Draft picks | 13,272 draftable seats, all filled | **13,272** |
-| Injuries | planning rate 30 per franchise per season: 30 × 24 × 60 | **43,200** |
-| Contracts | planning mean of one contract per 2 roster-seasons: 82,464 / 2 | **41,232** |
-| Awards | about 56 player honors per year × 60, plus coach and GM honors | about 3,500 |
-| Staff stints | 24 franchises × 2 roles × (60 / 4-year mean tenure) | **720** |
-| Directives | small; a few per franchise over 60 years | hundreds |
+Baseline roster-slot seasons:
 
-Roster-slot seasons by era:
-
-| Era | Years | Slots per year | Slot-seasons |
-|-----|-------|----------------|--------------|
+| Era | Years | Slots per year at N = 24 | Slot-seasons |
+|-----|-------|--------------------------|--------------|
 | 1970–1977 | 8 | 24 × 48 = 1,152 | 9,216 |
 | 1978–1986 | 9 | 24 × 53 = 1,272 | 11,448 |
 | 1987–1994 | 8 | 24 × 55 = 1,320 | 10,560 |
 | 1995–2003 | 9 | 24 × 61 = 1,464 | 13,176 |
 | 2004–2013 | 10 | 1,464 | 14,640 |
 | 2014–2029 | 16 | 1,464 | 23,424 |
-| **Total** | **60** | | **82,464** |
+| **Baseline total** | **60** | | **82,464** |
 
-One thousand finished timelines still share **18,456** player identities and **1,026** staff identities. They do not share season lines, picks, injuries, contracts, or awards. Overlay rows for a class are created when that timeline reaches the class, not at account creation. A timeline abandoned in 1970 holds 1,728 player overlays, not 17,424.
+A timeline abandoned in 1970 still holds 1,728 player overlays under this baseline. Later classes are not copied until that timeline reaches them. One thousand timelines still share whatever identity list the release published. They do not share season lines, picks, injuries, contracts, awards, or expansion-draft selections.
 
-### If the last season were 2030
+### Worked example after a schedule exists
 
-That is 61 seasons (1970–2030). Add one `modern-passing` class of 216 prospects and one year of timeline volume (1,464 roster-slot seasons, 168 draft picks, and the same per-season injury rate). Playable identities would be **17,640**. Shared pro history through 1969 would not change. This document does not use those 2030 figures. The working horizon is 2029.
+This example is not an expansion plan. It shows the arithmetic for a schedule that has not been chosen. Suppose one future release sets `E(Y) = 2` in a single season `Y` that uses 7 draft rounds and a 53 + 8 roster, and those two clubs stay active through 2029. Let `S` be the number of seasons from `Y` through 2029 inclusive.
+
+For season `Y` only, compared with the baseline:
+
+| Change | Arithmetic |
+|--------|------------|
+| Extra draftable prospects, shared | `7 × 2 = 14` |
+| Extra undrafted prospects, shared | `2 × 2 = 4` |
+| Extra people in that shared class | 18 |
+| Extra roster-slot seasons in that one year, per timeline | `2 × 61 = 122` |
+| Extra rookie-draft picks in that year, per timeline | 14 |
+| Extra shared GM identities debuting that offseason | at least 2 |
+| Extra shared head-coach identities | at least 2 |
+| Universe players created by the expansion draft | 0 |
+
+For every later season through 2029 the same two clubs remain in `N(year)`, so each of those years adds the same kind of delta using that year's round count and roster size. The full delta is the sum over `Y` through 2029, not the one-year row alone. Expansion-draft selections add timeline rows and add no shared people.
 
 ### Obsolete 32-team estimate
 
-The previous draft of this file reported **28,384** universe player rows. That number is retired. It is recorded here only so later edits do not treat it as current.
-
-It was:
+An earlier draft of this file reported **28,384** universe player rows. That number is retired. It is recorded here only so it is not reused.
 
 | Obsolete slice | Rows |
 |----------------|------|
@@ -933,12 +1124,12 @@ It was:
 | Draft classes **1971–2049**, first draft was 1971, 32-team round sizes | 26,688 |
 | **Total** | **28,384** |
 
-The current playable count is **17,424**. The gap is the product change, not a rounding error:
+The no-expansion baseline playable count is 17,424, not 28,384, and it is still provisional:
 
-- Franchises are 24, not 32, so each year's roster and each draft round are smaller.
+- The 1970 league has 24 founding franchises, not 32.
 - The horizon is 60 seasons, 1970–2029, not classes through 2049.
-- The 1970 rookies are a draft class of 456. The old opening roster had already placed a full veteran-and-rookie roster and started drafting in 1971.
-- The old total did not count an archive cohort. The current all-identity total, including the 1,032 archive players, is **18,456**, which is still the count for this 24-franchise, 60-season design.
+- The 1970 rookies are a draft class. The old opening roster had already placed rookies and started drafting in 1971.
+- Later seasons may have `N(year) > 24` once the expansion schedule is filled in. That raises the playable count above 17,424. It does not return the design to 28,384.
 
 ---
 
@@ -956,22 +1147,24 @@ A future implementation can turn these into tests. This document does not add th
 8. Each of the 100 initial GMs has a distinct strength/weakness/trait/history signature, and the same holds for the 100 initial head coaches.
 9. Opening replacement hires are members of the unemployed 76. The other 23 franchises still employ their shared GM and head coach when the 1970 draft starts, unless a later rule explicitly allows poaching.
 10. Campaign-style code does not insert `League`, `Conference`, `Division`, or `Team` rows and does not update `Team.league`.
-11. A published release rejects edits to an existing `universe_key`.
+11. A published release rejects edits to an existing `universe_key` and rejects edits to a published expansion schedule. A schedule change is a new release.
+12. Two timelines on one release have the same `N(year)`, the same expansion franchises, and the same draft-class keys for every year from 1970 through 2029.
+13. An expansion draft inserts timeline picks only. It does not change the universe player count.
 
 ---
 
 ## Fit with the current project
 
 - External ids stay natural keys: `universe_key`, college slug, existing team slug.
-- Generation is a management command. The 32-team admin view is the right pattern for a few dozen catalog rows and the wrong pattern for about 18,000 players.
+- Generation is a management command. The 32-team admin view is the right pattern for a few dozen catalog rows and the wrong pattern for a full player release. The no-expansion baseline is on the order of 18,000 player identities; expansion makes that larger.
 - `League.clean()` and the single active tier-1 rule stay. Timelines reference that tier-1 league and do not become leagues.
 - No new Django setting is required. The generator seed lives on the release. Production settings stay out of this work.
 - The owner FK should use `settings.AUTH_USER_MODEL` when the model is eventually added. This design does not set `AUTH_USER_MODEL`.
-- The live generator's `TEAM_COUNT = 32` disagrees with the 24-franchise snapshot. A release cannot be fingerprinted against that tree. Changing the generator is a later code change, not part of this document.
+- The live generator's `TEAM_COUNT = 32` is neither the 1970 founding size nor a legal stand-in for `N(year)`. A release cannot be fingerprinted against that tree. Changing the generator is a later code change, not part of this document. The replacement must not hard-code 24 for every season.
 
 Suggested order when implementation is allowed:
 
-1. Change the catalog tooling to 24 franchises (separate work). Then generate and publish one universe release: opening cohort, archive, 1970–2029 classes, 100 + incoming staff.
+1. Represent founding and expansion franchises without a fixed team-count constant (separate work). Then generate and publish one universe release: opening cohort, archive, 1970–2029 classes sized by the schedule, staff classes, and the expansion schedule. An unpublished schedule may contain only the 24 founding clubs.
 2. Timeline models and `start_timeline`, including the opening sequence through the 1970 draft and directives.
 3. Season clock that materializes the next class and the next staff class each offseason, stopping after 2029.
 4. Development, injuries, contracts, and awards, writing timeline rows only.
@@ -990,32 +1183,46 @@ Scoring, schedules, payments, and public pages stay outside this design. Season 
 
 **Store pre-1970 statistics on each timeline as a copied record book.** The lines would be identical forever. They stay on the universe, and the career page reads both stores.
 
+**Treat 24 as the league size in every season from 1970 through 2029.** That is only the no-expansion baseline. Expansion years, once written on the release, change `N(year)` for class size, roster-slot seasons, draft picks, and incoming staff. The people added for a larger class are still shared. The expansion draft itself does not mint a second copy of the player pool.
+
 ---
 
 ## Unresolved decisions
 
 These do not change the shared-universe versus per-timeline split. Several do change the row counts. The estimates above use the working value in each case.
 
+The playable horizon is decided: 60 seasons, 1970 through 2029 inclusive. The rows below are still open. Expansion rows are also listed again, in one place, at the end of this section.
+
 | Decision | Working value | If it changes |
 |----------|----------------|---------------|
-| Final season label | **2029** (60 seasons starting in 1970). 2030 would be the 61st season. | One extra class of 216 and one extra season of timeline rows. Confirm before implementation. |
-| How the 24 franchises sit in conferences | 2 × 3 divisions × 4 teams. Code on `main` still builds 32. | Count must stay 24 or the population formulas change. Layout does not, as long as the count holds. |
-| Leagues below the 24 | None in the estimates. | Extra franchises add roster slots and, if they draft, extra prospects. |
-| 1970 roster and later era limits | 40 + 8, then the era table. | Opening cohort and slot-seasons scale directly. |
-| Free-agent pool and undrafted pool | 5 and 2 per franchise (120 and 48). | Linear in those constants. |
-| Incoming staff | 8 head coaches and 6 GMs per year, 1971–2029. | Staff identity count only. |
+| Founding conference layout in 1970 | 2 conferences × 3 divisions × 4 teams, as a proposal for the 24 founding clubs. Code on `main` still builds 32. | The 1970 count stays 24. Later alignment is the expansion and realignment schedule, not this layout repeated forever. |
+| 1970 roster and later era limits | 40 + 8, then the era table, per active franchise. | Opening cohort and `slots(year)` scale directly. |
+| Free-agent pool and undrafted pool | 5 per founding franchise in 1970, and 2 undrafted prospects per active franchise per draft. | Linear in those per-team constants and in `N(year)`. |
+| Incoming staff floor | 8 head coaches and 6 GMs per year, plus at least one of each per expansion franchise that year. | The floor is the minimum. A larger candidate pool adds shared identities only. |
 | Opening hire pool | The 76 unemployed staff, not a coach already employed by another franchise. | Poaching before the draft would change a second franchise's staff in that timeline only. |
 | Identical decisions, then the 1970 season | Season sim may use the timeline RNG, so results can diverge after kickoff. | A fully deterministic season would require the sim to ignore that seed when decisions match. |
 | Dollar scale | Amounts are nominal dollars of the contract year. | An indexed scale changes display, not row counts. |
-| College counting stats | Stored, 4 seasons per player, display only. | Dropping them removes 73,824 shared rows. |
-| Archive mean career | 5 years inside 1960–1969, implying 1,032 archive players. | The generator should emit the real headcount; 11,520 season lines stay fixed if the historical league is 24 × 48 × 10. |
-| Contract row estimate | One contract per two roster-seasons. | A different mean length changes the 41,232 figure only. |
+| College counting stats | Stored, 4 seasons per player, display only. | Dropping them removes the college rows. The baseline figure 73,824 moves if the identity count moves. |
+| Archive mean career | 5 years inside 1960–1969, implying 1,032 archive players. | The generator should emit the real headcount. The 11,520 historical season lines stay fixed for a 24-team league across those 10 years. |
+| Contract row estimate | One contract per two roster-slot seasons. | A different mean length changes only that derived total, after roster-slot seasons are recomputed from `N(year)`. |
+
+### Expansion decisions still required
+
+| Decision | What this document already fixes | Still open |
+|----------|----------------------------------|------------|
+| Exact expansion schedule | The release can store zero or more `ExpansionEvent` rows. None are filled in. | Which seasons, if any, between 1971 and 2029 add clubs. |
+| Final franchise count | `N(1970) = 24`. Later `N(year)` is the schedule's output. | The value of `N(year)` after 1970, and therefore every class size, roster-slot total, draft-pick total, injury total, contract total, award total, and staff-overlay total that depends on it. |
+| Realignment rules | Membership is a shared row per franchise per season, so every timeline can share one alignment. | When conferences or divisions change, how many divisions exist after expansion, and whether alignment is ever a result of timeline standings instead of the shared schedule. |
+| Owner access to expansion franchises | `owner_selectable` can be set per franchise per season. A 1970 timeline starts on a founding club. | Whether an existing owner may move to an expansion club; whether a new timeline may start in a later expansion season; whether the owner applies for or purchases the club; whether the original club then becomes bot-controlled. |
+| Expansion-draft and hiring parameters | The event has fields for protection count, picks per new club, draft order, roster rules, free-agent rules, rookie-draft slot, and GM and head-coach hiring. | The values in those fields. |
+| Contraction | `final_active_season` may be set. | Whether any franchise leaves before 2029. None is scheduled. |
 
 ---
 
 ## Document status
 
-- Describes `leagues` as it exists on `main`, including the 32-team generator, and states the product shape of 24 franchises as a design target rather than as a code change.
-- Replaces the previous draft's 32-team, 1971-first, through-2049 assumptions. The retired total of 28,384 is labeled obsolete above and is not the estimate to implement.
-- Current shared playable population: **17,424** players. All player identities, including the archive: **18,456**. Staff identities: **1,026**. Final playable season under the working year rule: **2029**.
+- Describes `leagues` as it exists on `main`, including the 32-team generator. The 1970 league has 24 founding franchises. Later league size is a shared expansion schedule, not a constant.
+- Confirms the playable timeline as 60 seasons, 1970 through 2029 inclusive.
+- Labels 17,424 playable players, 18,456 player identities, 1,026 staff identities, and 82,464 roster-slot seasons as the no-expansion provisional baseline. They are not the final counts.
+- The retired total of 28,384 stays labeled obsolete.
 - Adds no application code, database models, migrations, fixtures, settings, or populated tables.
