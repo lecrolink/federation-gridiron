@@ -1,18 +1,18 @@
 # Federation Gridiron — Shared Fictional Player Universe
 
-This document proposes how Federation Gridiron gives every user the same fictional 1970 players and the same annual college draft classes, while each user's league keeps its own careers: team assignments, statistics, injuries, and development.
+This document specifies the shared fictional people of Federation Gridiron and the per-timeline state that diverges from them.
 
-It is a design proposal. It does not add Django models, migrations, services, settings, or admin screens.
+This revision replaces the earlier draft of this file. That draft assumed 32 franchises, a first draft in 1971, classes generated through 2049, and 28,384 universe player rows. Those figures are obsolete. The current estimates are in [Population and row counts](#population-and-row-counts). The retired arithmetic is isolated under [Obsolete 32-team estimate](#obsolete-32-team-estimate) so it is not reused by accident.
 
-The football people in this system are fictional. Era profiles borrow the broad shape of professional football history (roster size, run/pass emphasis, draft length, body types). They are not a real-league roster dump and they do not use real player identities.
+It is a design proposal. It does not add Django models, migrations, services, settings, admin screens, or rows in a database.
+
+The people in this system are fictional. Era profiles borrow the broad shape of professional football history (roster size, run/pass emphasis, draft length, body types). They are not a real-league roster dump and they do not use real player identities.
 
 ---
 
 ## Current architecture
 
-The repository today is a Django 5.2 project (`requirements.txt`) with one domain app, `leagues`. Public URLs expose Django Admin only. There is no player, season, roster, or end-user save model. `leagues/views.py` is empty.
-
-### What the league catalog already is
+The repository today is a Django 5.2 project (`requirements.txt`) with one domain app, `leagues`. Public URLs expose Django Admin only. There is no player, season, roster, staff, or end-user save model. `leagues/views.py` is empty.
 
 | Model | Role today |
 |-------|------------|
@@ -20,47 +20,52 @@ The repository today is a Django 5.2 project (`requirements.txt`) with one domai
 | `Conference` | Child of a league. Unique `(league, slug)`. |
 | `Division` | Child of a conference. Unique `(conference, slug)`. |
 | `Team` | Franchise inside a league, optionally placed in a conference and division. Unique `(league, slug)`. Optional `city`, `region`, `country`. |
-| `MovementPath` | Allowed promotion, relegation, lateral, or special move between leagues and optional teams. Paths are definitions only; nothing executes them. |
+| `MovementPath` | Allowed promotion, relegation, lateral, or special move. Definitions only; nothing executes them. |
 
-`leagues/services/league_generator.py` upserts a fixed shape onto one league: 2 conferences, 8 divisions, 32 teams. Identity is the slug. Re-running the generator updates the same rows.
+`leagues/services/league_generator.py` still upserts **2 conferences, 8 divisions, and 32 teams** (`CONFERENCE_COUNT`, `DIVISION_COUNT`, `TEAM_COUNT`). That generator is the code on `main`. It is not the product shape this design uses.
 
-That catalog is shared operator data. A `Team` row is a franchise identity in the federation, not one user's copy of a club. `League.active` and the single tier-1 rule are catalog rules. A user's playthrough must not create `League` rows and must not move `Team.league`, `Team.conference`, or `Team.division`, because those fields are visible to every campaign that points at the catalog.
+The product shape is **24 fictional franchises** in the 1970 league. Proposed catalog layout, when the generator is later allowed to change: 2 conferences, 3 divisions per conference, 4 teams per division. Population math below depends on the count 24, not on the conference names. This document does not change the generator.
 
-Auth is Django's built-in user model. No `AUTH_USER_MODEL` override is set. The database is MySQL through `mysqlclient`. Domain writes go through `full_clean()` on `League` and through small service functions (`generate_league_structure`) that use `@transaction.atomic` and slug natural keys.
+A `Team` row is a franchise identity shared by every timeline. Timeline code reads it and does not write `Team.league`, `Team.conference`, or `Team.division`. Those fields are catalog data. Promotion results, if they ever differ by timeline, belong on timeline placement rows.
 
-### What this design adds on top
-
-Two future apps, neither of which is created by this change:
-
-| App | Owns | Writes |
-|-----|------|--------|
-| `universe` | The shared fictional population: releases, eras, colleges, biographies, opening assignments, draft classes | A generator command, run once per release |
-| `campaigns` | One user's federation playthrough from 1970 onward | Per-user services (`start_campaign`, draft materialization, later the sim) |
-
-`leagues` stays the franchise catalog. Player code reads `Team` and never rewrites the pyramid as a side effect of a user's season.
+Auth is Django's built-in user model. No `AUTH_USER_MODEL` override is set. The database is MySQL through `mysqlclient`. Domain writes go through `full_clean()` on `League` and through small `@transaction.atomic` services.
 
 ```text
-leagues (exists)                universe (proposed, shared)          campaigns (proposed, per user)
-League → Conference             UniverseRelease                      Campaign
-         → Division             Era, EraRosterQuota                  CampaignPlayer → UniversePlayer
-         → Team ←────────────── OpeningAssignment                    RosterStint → Team
-                                DraftClass → DraftProspect           SeasonLine, Injury, CampaignRating
-                                UniversePlayer, College
+leagues (exists, catalog)          universe (proposed, shared)           timelines (proposed, per user)
+League → Conference                UniverseRelease                       Timeline
+         → Division                Era, College                          owned franchise, directives
+         → Team ←───────────────── OpeningAssignment                     RosterStint → Team
+                                   OpeningContract                       TimelineContract
+                                   OpeningStaffAssignment                StaffStint
+                                   UniversePlayer / GM / Coach           overlays, current ratings
+                                   pre-1970 histories and stats          1970–2029 stats, injuries,
+                                   DraftClass 1970–2029                  awards, draft picks, contracts
 ```
+
+Two future apps carry this, and neither is created here:
+
+| App | Owns | Who writes it |
+|-----|------|----------------|
+| `universe` | One published release: players, GMs, coaches, 1970 rosters, free agents, draft classes, pre-1970 histories | A generator command, once per release |
+| `timelines` | One owner's 60-season playthrough | Timeline services. They reference universe rows and never update them |
+
+"Campaign" in the previous draft of this document is this timeline. The architecture is unchanged in kind: one shared universe, many independent playthroughs. The horizon, franchise count, opening draft, and staff model are what changed.
 
 ---
 
-## Requirements this design meets
+## Requirements
 
 | Requirement | Where it lives |
 |-------------|----------------|
-| Every user's league starts with the same fictional 1970 players | A published **opening cohort** on a `UniverseRelease`. Starting a campaign copies assignment slots into that campaign only. |
-| Every user encounters the same annual college draft classes | `DraftClass` / `DraftProspect` rows for each year, shared by every campaign pinned to that release. |
-| Career statistics, team assignments, injuries, and development stay independent | Those facts are rows under `Campaign`. They reference the shared person by foreign key. |
-| Player characteristics reflect historical football eras | `Era` profiles drive who is generated (body, position mix, skill weights) and, separately, the rules of the season being played. |
-| Decades of seasons do not duplicate the master player database per user | One biography row per fictional person per release. A campaign stores a thin overlay, and only for players who have actually entered that campaign. |
-
-"The same" means the same `universe_key` and the same immutable biography, body, potential, college, and opening slot. It does not mean the same mutable career.
+| The game starts in 1970 with 24 fictional franchises | Catalog count used by the release. Opening assignments cover 24 teams. |
+| The owner picks a franchise, keeps or replaces its GM and head coach, runs the 1970 rookie draft, sets a few broad instructions, then the season simulates | Timeline opening sequence. Shared data is read; the decisions are timeline rows. |
+| A playthrough lasts 60 seasons, labeled 1970 through 2029 | [Year labels](#year-labels-and-the-60-season-horizon). |
+| 100 initial GMs and 100 initial head coaches, each distinct | Shared staff cohort, with strengths, weaknesses, traits, and pre-1970 histories. |
+| Every new timeline starts from the same identities, starting ratings, traits, pre-1970 histories and statistics, 1970 rosters, free-agent pool, and rookie classes | Published `UniverseRelease`. |
+| Timelines diverge only after their decisions and seasons begin | Timeline tables. Universe rows stay immutable after publish. |
+| The first draft is the 1970 rookie class; each later season drafts the next shared class | `DraftClass` years 1970–2029. |
+| Each timeline keeps its own draft choices, assignments, injuries, current ratings, contracts, statistics, awards, and in-timeline career histories | Timeline entities in the data dictionary. |
+| Decades of seasons do not copy the master people into each timeline | Biographies exist once. A timeline stores an overlay for a person when that person has entered that timeline. |
 
 ---
 
@@ -68,119 +73,132 @@ League → Conference             UniverseRelease                      Campaign
 
 | Term | Meaning |
 |------|---------|
-| **Universe release** | One immutable, versioned publication of the shared fictional population and its draft classes. |
-| **Universe player** | One fictional person inside a release. Biography and ceilings live here. |
-| **Opening cohort** | The 1970 professional population already on rosters or in the free-agent pool when a campaign begins. |
-| **Draft class** | The fictional college entrants for one future year (1971, 1972, …). |
-| **Campaign** | One user's playthrough of the federation, starting in the 1970 preseason. This is the isolation boundary. It is not a `leagues.League` row. |
-| **Campaign player** | That person's mutable life inside one campaign: status, current ratings, assignments, stats, injuries. |
-| **Catalog team** | An existing `leagues.Team` franchise. Campaigns share the row and keep their own assignment and placement state. |
+| **Universe release** | One immutable publication of the shared people, the 1970 league snapshot, and the draft classes. |
+| **Timeline** | One owner's 60-season playthrough. The isolation boundary. Not a `leagues.League` row. |
+| **Opening cohort** | Professionals already in the league before the 1970 rookie draft: 24 rosters plus the free-agent pool. They are not members of the 1970 draft class. |
+| **1970 rookie class** | The shared draft class used before the first season. |
+| **Archive cohort** | Fictional players who appear in 1960–1969 league history and are gone before the 1970 draft. Shared, so the record book is the same in every timeline. They do not play in 1970. |
+| **Initial staff** | 100 GMs and 100 head coaches available at the 1970 decision point. |
+| **Incoming staff class** | Shared GM and head-coach candidates who become hireable in a later offseason. Same identities in every timeline. |
+| **Catalog franchise** | A `leagues.Team` row. Timelines share the row and keep their own assignments. |
 
-A user may own more than one campaign. Campaigns do not share mutable player rows with each other.
+An owner may have more than one timeline. Timelines do not share mutable rows.
+
+---
+
+## Year labels and the 60-season horizon
+
+A **season label** is the calendar year in which that season is played. It is not a count of offseasons, and it is not `1970 + season_count`.
+
+```text
+season_index   1 .. 60
+season_year    1969 + season_index
+```
+
+| season_index | season_year | Draft class used before that season |
+|--------------|-------------|-------------------------------------|
+| 1 | 1970 | 1970 |
+| 2 | 1971 | 1971 |
+| 60 | **2029** | 2029 |
+
+The draft class year equals the season year that follows the draft. The first action of a new timeline, after the franchise and staff choices, is the **1970** draft. The draft before the last season uses the **2029** class. There are **60** shared classes, 1970 through 2029 inclusive (`2029 − 1970 + 1 = 60`).
+
+**Working decision: the final playable season is 2029, not 2030.**
+
+2030 would be `season_index` 61. Labeling the last season 2030 while also starting in 1970 produces 61 seasons (`2030 − 1970 + 1 = 61`). The estimates in this document use 2029. Choosing 2030 instead would add one modern-era class of 216 prospects and one more season of timeline rows; see the delta in the population section. That choice is listed under [Unresolved decisions](#unresolved-decisions) so it can be confirmed before implementation.
+
+Pre-1970 history uses years **1960–1969**. Those years are outside the 60. Timeline stat tables accept only `season_year` 1970–2029. Shared history tables accept only `season_year` 1960–1969.
+
+The football clock is this integer year plus a phase. `TIME_ZONE` does not define it.
+
+---
+
+## Opening sequence
+
+A new timeline is pinned to a published release and starts **before** the 1970 season, with the shared 1969 world still intact.
+
+1. **Choose a franchise.** One of the 24. Stored as `Timeline.owned_franchise`. The other 23 stay AI-controlled.
+2. **Keep or replace that franchise's GM and head coach.** The shared snapshot already employs one GM and one head coach on each franchise (24 of each). The other 76 GMs and 76 head coaches are unemployed and are the only legal opening hires. Replacing writes timeline staff stints only. The other 23 franchises keep their shared GM and head coach until later timeline events.
+3. **Complete the 1970 rookie draft.** Materialize the shared 1970 class into this timeline. Draft order comes from the shared 1969 standings (worst record picks first). The owner drafts for the owned franchise. AI GMs draft for the others, starting from their shared tendencies. Picks are timeline rows. The class list itself is not modified.
+4. **Set a few broad instructions** for the owned franchise's GM and head coach. Four GM directives and four coach directives, defined in the data dictionary. AI franchises start from directives derived from the shared staff profile, so every timeline begins with the same AI tendencies.
+5. **GMs reduce rosters to the 1970 limit** (40 active + 8 taxi) after the draft. That reduction is a timeline result. The shared opening roster remains the pre-draft roster.
+6. **Simulate the 1970 season** (14 games under the `run-first` era). Phases then follow the usual loop: offseason, next year's shared draft class, season, through the 2029 season. After 2029 the phase is `complete`. No 2030 draft is generated for this horizon.
+
+Phases on the timeline: `choose_franchise`, `staff`, `draft`, `instructions`, `roster_cut`, `regular`, `playoffs`, `offseason`, `complete`.
+
+The shared snapshot is identical until step 1 writes the first timeline decision. Steps 1–4 are owner decisions. Step 5 and the 1970 games are the first simulated events. A timeline RNG seed is drawn at creation and is used only once simulation starts (steps 5 and 6), not to generate the people.
+
+Whether two timelines that make the same choices in steps 1–4 must then produce a byte-identical 1970 season is unresolved. This design allows the season simulator to use the timeline seed, so identical opening decisions can still diverge once the season runs. The opening identities, ratings, histories, rosters, and draft class cannot diverge before those decisions.
 
 ---
 
 ## Sharing rules
 
-1. A fictional person's name, birth year, college, position, height, weight, handedness, era of origin, initial ratings, and potential are stored once, on the universe release.
-2. A campaign stores the foreign key to that person plus the facts that diverge: current ratings, roster stints, season lines, injuries, and draft results.
-3. Campaign services write campaign tables only. They load universe rows and catalog teams as read-only references.
-4. The generator writes universe tables only. It does not create campaigns.
-5. Future draft classes remain universe rows until that campaign's clock reaches the class year. Starting a campaign in 1970 does not insert campaign rows for the 1988 class.
-6. Publishing a release freezes every universe row that campaigns can cite. A correction is a new release. Existing campaigns stay pinned to the release they started on, so a retune cannot change the 1970 roster or a draft class already in progress.
-7. New campaigns use the latest published release. "Everyone has the same players" means everyone on that release.
-
-The current-rating numbers on a campaign player are an overlay, initialized from the shared initial ratings. They are not a second biography. Potential stays on the universe row and is read from there whenever development runs, so two campaigns share a ceiling even after their current ratings have split.
+1. Name, birth, college, position, body, traits, initial ratings, potential, pre-1970 statistics, pre-1970 employment, and draft-class membership are stored once, on the release.
+2. A timeline stores the foreign key to that person plus what diverges after the opening decisions: draft picks, assignments, injuries, current ratings, contracts, 1970–2029 statistics, awards, and career events inside the timeline.
+3. Timeline services write timeline tables only.
+4. The generator writes universe tables only.
+5. A future draft class or incoming staff class stays a universe row until that timeline's clock reaches the class year. Creating a timeline does not insert overlay rows for the 1988 class.
+6. The 1970 class is materialized during the opening draft, before the 1970 season, because that draft is part of setup rather than a later offseason.
+7. Publishing freezes the release. A correction is a new release. Existing timelines stay pinned, so a retune cannot change the 1970 roster or a class a timeline has already seen.
+8. Opening contracts and opening staff assignments are shared templates. `start_timeline` copies them into timeline rows. Later cuts, extensions, and firings update the copies.
+9. Pre-1970 counting stats are the shared record book. They are display. Starting ratings and traits are what the 1970 simulator reads. The generator builds the counting stats so they agree with those ratings; the sim does not replay 1960–1969.
 
 ---
 
-## Universe release
-
-`UniverseRelease` is the unit of sameness and the unit of reproducibility.
+## Universe release and identity
 
 | Field | Purpose |
 |-------|---------|
 | `slug` | Stable id, unique. Example: `fg-1970-1`. |
-| `generator_version` | Algorithm id, example: `fg-player-gen-1`. |
-| `seed` | Integer stored on the release row. Generation does not read it from Django settings. |
-| `root_league` | FK to the tier-1 `League` this population was built for. `on_delete=PROTECT`. |
-| `catalog_fingerprint` | Hash of the franchise tree at generation time (see below). |
-| `through_year` | Last draft class year materialized in the shared tables. Default horizon **2049**. |
+| `generator_version` | Algorithm id. Example: `fg-player-gen-2`. |
+| `seed` | Integer stored on the release row. Not a Django setting. |
+| `root_league` | FK to the tier-1 `League`. `on_delete=PROTECT`. |
+| `franchise_count` | Must be 24 for this product shape. |
+| `catalog_fingerprint` | SHA-256 of sorted lines `{tier}:{league_slug}:{conference_slug}:{division_slug}:{team_slug}`. |
+| `first_season_year` | 1970. |
+| `season_count` | 60. |
+| `last_season_year` | 2029 while the working decision holds. |
 | `status` | `draft` or `published`. |
-| timestamps | Same `created_at` / `updated_at` pattern as `leagues`. |
+| timestamps | Same pattern as `leagues`. |
 
-`catalog_fingerprint` is the SHA-256 of one sorted line per franchise:
+`start_timeline` requires a published release whose fingerprint still matches the live 24-franchise tree. The current 32-team generator cannot satisfy that check. Publishing waits until the catalog is the 24-franchise tree. This document does not perform that catalog change.
 
-```text
-{tier}:{league_slug}:{conference_slug}:{division_slug}:{team_slug}
-```
+While `status` is `draft`, the generator may rebuild from `(generator_version, seed, fingerprint, era tables)`. After `published`, existing keys are frozen. Appending a year past `last_season_year` is a new product decision, not an implied extension.
 
-`start_campaign` proceeds when the live tree still hashes to the release fingerprint. A slug rename is a different catalog; existing releases keep describing the catalog they were built against. Editing a team display name while keeping the slug does not change the fingerprint.
-
-While `status` is `draft`, the generator may rebuild that release from `(generator_version, seed, fingerprint)`. After `published`, updates to existing players, quotas, opening slots, and existing draft classes are rejected. Appending a draft class for a year beyond `through_year` is allowed when the generator version and seed are unchanged, because those years are a pure function of the seed and do not rewrite older keys. The append advances `through_year`.
-
-Campaigns use `on_delete=PROTECT` toward the release. Deleting a published population out from under a playthrough is a catalog operation that should fail until those campaigns are gone.
-
----
-
-## Identity and deterministic generation
-
-Every universe player has a `universe_key`, unique across the table, max length 64:
+Keys are opaque strings, max length 64. Release slugs contain hyphens, so clients look the row up instead of parsing the key.
 
 ```text
-p-{release_slug}-{cohort}-{year}-{index:05d}
+p-{release_slug}-opening-{index:05d}     veteran or free agent before the 1970 draft
+p-{release_slug}-archive-{index:05d}     pro who left before the 1970 draft
+p-{release_slug}-draft-{year}-{index:05d}
+g-{release_slug}-{debut_year}-{index:03d}    GM
+c-{release_slug}-{debut_year}-{index:03d}    head coach
 ```
 
-Examples:
-
-```text
-p-fg-1970-1-opening-1970-00412
-p-fg-1970-1-draft-1984-00103
-```
-
-`cohort` is `opening` or `draft`. The numeric primary key stays internal (`BigAutoField`, matching `DEFAULT_AUTO_FIELD`). APIs and fixtures cite `universe_key`. That matches the slug identity already used for leagues and teams. The key is opaque: release slugs contain hyphens, so clients look the row up instead of splitting the string.
-
-Attribute draws do not use `random.Random`, whose stream can change across Python versions. Each draw is an HMAC-SHA256 of the release seed and a named key, so one attribute can be rebuilt without reshuffling the rest of the population:
-
-```text
-unit = HMAC_SHA256(seed, f"{universe_key}:weight") interpreted as a unit interval
-```
-
-The same `(generator_version, seed, catalog fingerprint, era tables)` rebuilds the same keys and the same bodies. The MySQL rows are the queryable copy of that function. Rebuilding an unpublished release replaces that copy in place, keyed by `universe_key`. A fresh environment can republish the same fictional league without hand-copying a database dump.
-
-Display names come from fictional given-name and surname lists shipped with the generator. The stored `name` is the result. `universe_key` is the identity; display names may collide, and the UI disambiguates with position, college, and birth year. The generator never reads a real player registry.
+Draws use HMAC-SHA256 of the release seed and a named key (`f"{universe_key}:weight"`), not `random.Random`. One attribute can be rebuilt without reshuffling the person. The same seed, generator version, era tables, and franchise fingerprint rebuild the same keys. Display names come from fictional name lists. Staff profiles must be unique across the 100 initial GMs and across the 100 initial head coaches: the publish step rejects two staff in the same role with the same strengths, weaknesses, traits, and career-history signature. Player identity is `universe_key`; display names may collide, and the UI disambiguates with position, college, and birth year.
 
 ---
 
 ## Eras
 
-Two different things are easy to tangle. This design keeps them apart.
+| Layer | Question | Effect on an existing person |
+|-------|----------|------------------------------|
+| **Origin era** | What kind of footballer or coach was created for this cohort? | Stored on the person and left in place. |
+| **Season era** | What roster limit, schedule length, injury climate, and cap rules apply in the year being played? | The person is unchanged. The sim reads the era for the timeline's current year. |
 
-| Layer | Question it answers | Changes a player already generated? |
-|-------|---------------------|-------------------------------------|
-| **Origin era** | What kind of footballer was created for this cohort year? | No. The body, position, and ceilings are stored on the universe player and stay put. |
-| **Season era** | What rules and roster limits apply in the year being simulated? | The player's row stays. The sim reads the era for the campaign's current year when it resolves roster limits, schedule length, injury climate, and scheme modifiers. |
-
-A tackle generated in 1972 is still that 1972 body when a campaign reaches 1996. The 1996 season era can change how valuable pass blocking is and how large the roster is. It does not rewrite his height, his potential, or his `universe_key`.
-
-### Era rows
-
-`Era` belongs to a release (or is referenced by it and frozen at publish). Proposed default bands, stored as data so designers can retune them without a code change:
-
-| Key | Years | Active roster | Taxi | Draft rounds | Schedule length | Generation emphasis |
-|-----|-------|---------------|------|--------------|-----------------|---------------------|
-| `run-first` | 1970–1977 | 40 | 8 | 17 | 14 | Fullbacks on every roster, fewer receivers, run-block ahead of pass-block, passing traits rarer at the top of the distribution, higher injury cost |
-| `passing-rules` | 1978–1986 | 45 | 8 | 12 | 16 | Receiver and coverage traits more common; pocket passing gains weight |
-| `timing-specialists` | 1987–1994 | 47 | 8 | 8 | 16 | Designated pass rush and nickel-relevant coverage become ordinary; specialists separate from leftovers |
-| `cap-and-size` | 1995–2003 | 53 | 8 | 7 | 16 | Heavier linemen, higher athletic thresholds, shorter drafts |
+| Key | Years | Active | Taxi | Draft rounds | Schedule | Generation emphasis |
+|-----|-------|--------|------|--------------|----------|---------------------|
+| `run-first` | 1970–1977 | 40 | 8 | 17 | 14 | Fullbacks on every roster, fewer receivers, run-block ahead of pass-block, passing traits rarer at the top, higher injury cost |
+| `passing-rules` | 1978–1986 | 45 | 8 | 12 | 16 | Receiver and coverage traits more common |
+| `timing-specialists` | 1987–1994 | 47 | 8 | 8 | 16 | Designated pass rush and nickel coverage become ordinary |
+| `cap-and-size` | 1995–2003 | 53 | 8 | 7 | 16 | Heavier linemen; salary cap becomes a sim constraint |
 | `spread-influence` | 2004–2013 | 53 | 8 | 7 | 16 | More receiver depth, edge speed ahead of bulk |
-| `modern-passing` | 2014–2049 | 53 | 8 | 7 | 16 through 2020, 17 from 2021 | Hybrid skill profiles more common; pass-rate weights stay high |
+| `modern-passing` | 2014–2029 | 53 | 8 | 7 | 16 through 2020, 17 from 2021 | Hybrid skill profiles more common |
 
-These numbers are starting defaults for a fictional 32-team tier-1 federation, chosen so the eras are visibly different. They are not a claim that Federation Gridiron replays a real league's calendar. Schedule length and roster limits are season-era inputs for a later sim. The player system stores them so generation and roster validation have one source.
+These are tunable defaults for a fictional 24-franchise league, not a claim that the game replays a real league's calendar. Each era owns a position quota that sums to its active limit and another that sums to its taxi limit. The generator refuses a quota that does not sum. Later-era quotas are data, filled before publish. Direction across eras: FB counts fall, WR and CB counts rise, draft rounds shrink, linemen get heavier.
 
-Each era owns a complete position quota for the active roster and another for the taxi squad. The generator refuses a quota that does not sum to that era's roster size. Direction of travel across eras: FB counts fall, WR and CB counts rise, draft rounds shrink, linemen get heavier. Only the 1970 active quota is fixed in this proposal, as the worked example the first generator must satisfy. Later quotas are data filled under the same sum rule before that era's classes are published.
-
-### 1970 active quota (40)
+### 1970 active quota (40 veterans, before the rookie draft)
 
 | Position | Count |
 |----------|-------|
@@ -202,9 +220,11 @@ Each era owns a complete position quota for the active roster and another for th
 
 Taxi quota (8): QB 1, RB 1, WR 1, OL 2, DL 1, LB 1, DB 1.
 
-### Ratings
+The 1970 rookies are not in this quota. They enter through the draft, and the post-draft cut returns each franchise to 40 + 8.
 
-One component vocabulary for every era, scale 0–100, higher is better. Eras change how often high values appear. They do not add a new column per decade, which keeps a 1970 fullback and a 2016 receiver on the same record shape.
+### Ratings vocabulary
+
+One component set for every era: **27** integers, 0–100, higher is better. Eras change how often high values are drawn. They do not add a column per decade.
 
 | Group | Components |
 |-------|------------|
@@ -213,337 +233,712 @@ One component vocabulary for every era, scale 0–100, higher is better. Eras ch
 | Offense | `throw_power`, `throw_accuracy`, `catching`, `route_running`, `carrying`, `elusiveness`, `run_blocking`, `pass_blocking` |
 | Defense | `tackling`, `coverage`, `pass_rush`, `run_defense` |
 | Special teams | `kicking`, `punting` |
+| Personality | `work_ethic`, `leadership`, `temperament`, `clutch` |
 
-Physical measurables outside the 0–100 scale: `height_in`, `weight_lb`, `handedness`.
+Physical measurables outside that scale: `height_in`, `weight_lb`, `handedness`.
 
-`UniverseRating` stores `initial` and `potential` per component for one universe player. Non-position skills sit near a low baseline rather than being omitted, so development code can stay position-agnostic. Overall rating is computed when displayed. It is not the stored authority.
+Shared rows store `initial` and `potential` for each component. Timeline rows store `current`, copied from `initial` when the person enters the timeline. Potential stays on the universe row and is read from there during development. Overall is derived for display and is not stored.
 
-Origin-era weights (means and spreads by position, stored on the era) are what make a 1970 player look like 1970 football: a common elite runner, a rarer high-volume passer, offensive linemen whose run-block draw sits above their pass-block draw, fullbacks present because the quota requires them. A 2004 class uses the same columns with the later weights, so high `route_running` and `pass_rush` show up more often and the weight distribution for offensive tackles shifts upward.
+`growth_curve` on the universe person: `peak_age`, `development_rate`, `decline_rate`, with per-person variance baked in at generation.
 
-`growth_curve` is frozen on the universe player at generation: `peak_age`, `development_rate`, `decline_rate`, with small per-player variance already baked in from the HMAC draw. Campaigns share the curve and the ceiling. They differ in snaps, injuries, and current values.
+### Colleges
 
-### Season-era rules the player system must already know
-
-Even before a simulation engine exists, campaign roster checks need:
-
-- active and taxi limits for the campaign's current year
-- the draft-round count that sizes that year's class
-- an injury-climate multiplier and a mix of injury kinds (earlier eras: longer absences; later eras: more graded soft-tissue losses and fewer season-long mysteries)
-
-Scheme and passing modifiers can wait for the sim. The columns for them belong on `Era`, not on the player.
+`College` is shared: `slug`, `name`, `region`, pipeline tag (`independent`, `state`, `small`, `academy`). About 48–80 fictional schools. `EraCollegeWeight` changes how often a school is drawn by era. A timeline does not own colleges.
 
 ---
 
-## Colleges
+## Shared people and the 1970 snapshot
 
-`College` is shared reference data inside the release: `slug`, `name`, `region`, and a pipeline tag (`independent`, `state`, `small`, `academy` — fictional labels). A campaign does not own colleges.
+### Players who can play from 1970 on
 
-`EraCollegeWeight (era, college, weight)` is how often the generator picks that school in that era, so 1970 pipelines and 2010 pipelines can differ while the school list stays stable. Every universe player stores a college FK, including opening-cohort veterans (the school they came from).
-
-College names are fictional, authored for Federation Gridiron, on the order of 48–80 schools. That table is tiny and shared.
-
----
-
-## The 1970 opening population
-
-The opening cohort is everyone already in professional football in September 1970: rostered players and the free-agent pool. The first class a running campaign drafts is **1971**, after the 1970 season. Rookies already on 1970 rosters are opening-cohort players whose `origin_draft_year` is 1970. They are one row each, in the opening cohort, and campaigns do not draft them again.
-
-### How many
-
-For each catalog team in the tier-1 tree (and any lower-tier teams already attached to that tree):
+Opening cohort, before the draft:
 
 ```text
-slots = era.active_quota + era.taxi_quota
+rostered = 24 × (40 + 8) = 1,152
+free agents = 5 × 24 = 120
+opening cohort = 1,272
 ```
 
-With only the current 32-team structure present, 1970 is `32 × (40 + 8) = 1,536` rostered players. Add a shared free-agent pool of **160**, position mix drawn with the same era weights. Total opening population: **1,696**. If lower-tier teams exist when the release is generated, they get the same per-team treatment. The generator sizes itself from the fingerprinted tree. The player tables do not hard-code 32; that count comes from the catalog the release was built against.
+Every opening player has at least one prior pro season. Age is drawn first (starters mostly 24–30, backups 22–32, taxi 21–24, free agents slightly older). `birth_year = 1970 − age` at the 1970 offseason. Rookies born around 1948 are in the draft class, not on these rosters.
 
-Each roster slot has a role: `starter`, `backup`, or `taxi`.
+`OpeningAssignment`: one per opening player. `team` is null for free agents. `position` is stored on the assignment and must match the player. `depth` is the depth-chart index for that position on that team, starting at 1, across starter, backup, and taxi. Unique `(release, team, position, depth)`. MySQL unique indexes treat NULL `team` as distinct per row, so the free-agent pool does not need a partial index.
 
-| Role | Age draw | Ratings |
-|------|----------|---------|
-| Starter | Mostly 24–30, a few older | `initial` closer to `potential`, near the peak of the growth curve |
-| Backup | Wider, 22–32 | Mid initial, remaining room to the ceiling |
-| Taxi | Mostly 21–24 | Lower initial, more remaining potential |
-| Free agent | Same spreads, slightly older bias | Below the starter band |
+`OpeningContract`: one shared template per rostered veteran (1,152). Free agents have none. Copied into the timeline at start.
 
-Age is chosen first. `birth_year = 1970 - age` for opening players, plus a `birth_day` of 1–365 from the HMAC draw so later sims can mark in-season birthdays. A 1970 population therefore contains veterans born in the 1930s and 1940s and rookies born around 1948–1949. That spread is what makes the first season a league in progress, with veterans and rookies already on the depth chart.
+### 1970–2029 draft classes
 
-### Opening assignment
-
-`OpeningAssignment` is the shared template:
-
-| Field | Notes |
-|-------|--------|
-| `release` | FK |
-| `universe_player` | One assignment per opening player. Unique. |
-| `team` | FK to `leagues.Team`, null for the free-agent pool. `on_delete=PROTECT`. |
-| `position` | Copied from the player so a slot can be constrained without a join. The generator rejects a row whose position disagrees with `UniversePlayer.position`. |
-| `role` | `starter`, `backup`, `taxi`, `free_agent` |
-| `depth` | Depth-chart index for that position on that team, starting at 1. It runs through starters, backups, and taxi as one list. |
-
-Unique `(release, team, position, depth)`. MySQL unique indexes treat a NULL `team` as distinct on each row, so the free-agent pool (null team) does not collide with itself and does not need a partial index. A franchise cannot be given two players at the same position and depth. Every campaign that starts on this release begins with the same person in the same role on the same franchise. After kickoff, roster stints in the campaign diverge and the template is left untouched.
-
-`UniversePlayer` fields specific to origin:
-
-| Field | Opening cohort | Draft cohort |
-|-------|----------------|--------------|
-| `entry_route` | `opening_roster` | `college_draft` |
-| `entry_year` | 1970 | class year, ≥ 1971 |
-| `origin_draft_year` | the fictional class they came from, ≤ 1970 | equal to `entry_year` |
-| `era` | the origin era (1970 band) | the era that contains the class year |
-
-Position is a single primary position from the quota list: `QB`, `RB`, `FB`, `WR`, `TE`, `OT`, `OG`, `C`, `DT`, `DE`, `LB`, `CB`, `S`, `K`, `P`. A later season may use a player in a package role (slot, nickel, edge). That role is campaign usage, not a new universe identity.
-
----
-
-## Annual draft classes
-
-`DraftClass` is unique on `(release, year)` for each year from 1971 through `through_year`.
-
-`DraftProspect`:
-
-| Field | Notes |
-|-------|--------|
-| `draft_class` | FK |
-| `universe_player` | Unique. A person belongs to one cohort only. |
-| `board_rank` | Shared default ordering, 1…N. This is a consensus board, not a destination. |
-| `pool` | `draftable` or `undrafted` |
-
-Class size for year Y:
+`DraftClass` is unique on `(release, year)` for each year from 1970 through 2029.
 
 ```text
-draftable = era(Y).draft_rounds × tier1_team_count
-undrafted = 64
+draftable = era(year).draft_rounds × 24
+undrafted_pool = 2 × 24 = 48
+class size = draftable + undrafted_pool
 ```
 
-For the 1970–1977 defaults and 32 teams, each class is `17 × 32 + 64 = 608` prospects. From 1995 onward the default is `7 × 32 + 64 = 288`. The prospect rows exist once. Their measurables, college, position, and ratings were drawn with that year's origin era, so a 1974 class and a 2014 class do not look like the same athletes with different birthdays.
+| Years | Rounds | Draftable | Undrafted | Class size | Classes | Prospects |
+|-------|--------|-----------|-----------|------------|---------|-----------|
+| 1970–1977 | 17 | 408 | 48 | 456 | 8 | 3,648 |
+| 1978–1986 | 12 | 288 | 48 | 336 | 9 | 3,024 |
+| 1987–1994 | 8 | 192 | 48 | 240 | 8 | 1,920 |
+| 1995–2003 | 7 | 168 | 48 | 216 | 9 | 1,944 |
+| 2004–2013 | 7 | 168 | 48 | 216 | 10 | 2,160 |
+| 2014–2029 | 7 | 168 | 48 | 216 | 16 | 3,456 |
+| **1970–2029** | | **13,272** | **2,880** | | **60** | **16,152** |
 
-A prospect does not store a team. Landing spot, round actually taken, and whether they go undrafted are campaign facts (`CampaignDraftPick`). Two users face the same board and leave with different classes because their standings, trades of picks, and choices differ.
+A prospect stores a shared `board_rank` and a pool of `draftable` or `undrafted`. The prospect does not store a destination team. Round, pick, and franchise are timeline facts. True ratings stay on the universe player. Any scout fog is a timeline report, never a column on the shared prospect.
 
-True ratings stay on the universe player. A `CampaignScoutReport` (campaign, prospect, component, revealed grade, scouted_on) is the per-user fog of war. Putting a revealed grade on `DraftProspect` would leak one user's scouting into every other campaign. Scout reports can follow the first playable draft; the split is part of the model now so the shared class stays a record of who exists, not of what any one user has learned.
+`materialize_draft_class` is idempotent on `(timeline, universe_player)`.
 
-When a campaign enters the draft phase of year Y, `materialize_draft_class` inserts campaign players for that class only. The operation is idempotent on `(campaign, universe_player)`. Prospects stay `prospect` until that campaign drafts or signs them. Undrafted prospects become free agents in that campaign only.
+### Archive cohort (record book only)
+
+Shared pro history covers 1960–1969 at the same 24 × 48 roster:
+
+```text
+historical roster-seasons = 24 × 48 × 10 = 11,520
+```
+
+Planning assumption: a mean stay of 5 seasons inside that window, so distinct historical players = `11,520 / 5 = 2,304`. The 1,272 opening players are part of that set. The rest are the archive:
+
+```text
+archive ≈ 2,304 − 1,272 = 1,032
+```
+
+Archive players have universe identities, pre-1970 stats, and awards. They are not on 1970 rosters, not in the free-agent pool, and not placed on timelines as active players. The generator's actual archive count is whatever headcount fills 11,520 lines once the opening cohort is seated in 1969. 1,032 is the planning figure tied to the 5-year mean.
+
+### Staff
+
+**Initial, hireable before the 1970 draft:** 100 GMs and 100 head coaches.
+
+| | Employed on a 1970 franchise | Unemployed, available to hire |
+|--|------------------------------|-------------------------------|
+| GM | 24 | 76 |
+| Head coach | 24 | 76 |
+
+Each of the 100 in a role has a distinct combination of strength tags, weakness tags, trait tags, and career-history signature. Ages in 1970 run about 32–65. Employed head coaches skew older; the unemployed pool includes younger coordinators.
+
+**Incoming classes, 1971–2029 (59 years):** 8 head-coach candidates and 6 GM candidates per year, shared, debuting in that offseason.
+
+```text
+future head coaches = 59 × 8 = 472
+future GMs = 59 × 6 = 354
+all head coaches = 100 + 472 = 572
+all GMs = 100 + 354 = 454
+all staff identities = 1,026
+```
+
+A timeline creates overlay rows for the initial 200 at `start_timeline`, because the owner may hire any unemployed member before the season. An incoming staff class is materialized in the offseason of its debut year, the same way a draft class is. New staff are not invented inside one timeline, so two timelines are hiring from the same people.
+
+Initial staff draw schemes that exist in 1970: `power_run`, `option`, `pro_style` on offense, and `stop_run` or `balanced` on defense. A coach who debuts in a later class may draw that era's schemes (`west_coast` from 1987, `air_raid` from the spread era).
+
+### Shared 1969 standings
+
+`UniverseFranchiseSeason` for each franchise for each year 1960–1969 (240 rows). The 1969 wins, losses, and ties set the 1970 draft order. Later draft orders come from that timeline's own standings.
 
 ---
 
-## Campaign state
+## Data dictionary
 
-### `Campaign`
+Columns on every table:
 
-| Field | Notes |
-|-------|--------|
-| `owner` | FK to `settings.AUTH_USER_MODEL`. Required. `on_delete` cascades the playthrough. |
-| `release` | FK, `PROTECT`. |
-| `root_league` | The tier-1 catalog league. Must match the release. |
-| `name` | User-facing save name. |
-| `current_year` | Integer. Starts at 1970. |
-| `phase` | `preseason`, `regular`, `playoffs`, `offseason`, `draft`. Starts at `preseason`. |
-| `rng_seed` | Drawn at creation. Distinct from the universe seed. |
-| timestamps | |
+| Column | Meaning |
+|--------|---------|
+| Layer | `Shared` or `Timeline` |
+| Type | Logical type. Integers are small unless noted. |
+| Range / units | Legal values. |
+| Origin | `Generator`, `Shared template`, `Owner`, `Timeline sim`, or `Derived` |
+| Use | `Sim`, `Display`, or `Both` |
 
-The season clock is an integer football year plus a phase, not a Django `DateField`. `TIME_ZONE` does not define football time.
+`Derived` fields are computed when shown and are not stored. Counting-stat fields that the sim aggregates from games are stored season totals: the match engine (out of scope) writes them, and later ratings, awards, and AI decisions read them.
 
-`rng_seed` feeds injury and development draws through the same HMAC pattern, keyed by campaign id, year, week, and `universe_key`. Two campaigns with the same user actions still diverge. Replaying one campaign stays reproducible because its seed is fixed.
+### How a career is read
 
-`owner` points at the swappable user model so a later custom user does not require a rewrite. This design does not change `AUTH_USER_MODEL`. Public registration can wait. The foreign key is specified now so the first player rows are never global mutable state. Early admin demos use a staff owner; they are still campaigns.
+A career page concatenates shared rows for years ≤ 1969 with timeline rows for years 1970–2029. It does not copy the shared years into the timeline.
 
-### `CampaignPlayer`
+---
 
-Unique `(campaign, universe_player)`.
+### Player identity and body
 
-| Field | Notes |
-|-------|--------|
-| `status` | `prospect`, `active`, `taxi`, `reserve`, `free_agent`, `retired` |
-| `campaign` | Denormalized alongside the player FK so season queries and deletes filter on one column. Services check that it matches `campaign_player.campaign`. |
+All of these are one shared row per player (`UniversePlayer`).
 
-Created for:
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `universe_key` | Shared | string | ≤ 64, opaque, unique | Generator | Both |
+| `name` | Shared | string | ≤ 255 | Generator | Display |
+| `birth_year` | Shared | smallint | 1920–2008 | Generator | Both |
+| `birth_day` | Shared | smallint | 1–365 | Generator | Both |
+| `college` | Shared | FK | known college slug | Generator | Display |
+| `position` | Shared | enum | `QB` `RB` `FB` `WR` `TE` `OT` `OG` `C` `DT` `DE` `LB` `CB` `S` `K` `P` | Generator | Both |
+| `handedness` | Shared | enum | `left` `right` | Generator | Display |
+| `height_in` | Shared | smallint | 64–84 inches | Generator, era distribution | Both |
+| `weight_lb` | Shared | smallint | 160–360 pounds, by position and era | Generator | Both |
+| `cohort` | Shared | enum | `opening` `archive` `draft` | Generator | Both |
+| `first_pro_year` | Shared | smallint | 1960–1969 for opening and archive players; the class year for a draftable prospect; null for the undrafted pool, whose actual debut is a timeline fact | Generator | Both |
+| `origin_draft_year` | Shared | smallint | ≤ 1969 for opening/archive; class year for the draft cohort; null if the player entered as an undrafted historical free agent | Generator | Display |
+| `origin_draft_round` | Shared | smallint | 1–17, or null | Generator | Display |
+| `origin_draft_pick` | Shared | smallint | 1–408 in the 1970s shape, or null | Generator | Display |
+| `origin_draft_franchise` | Shared | FK | catalog team, or null | Generator | Display |
+| `era` | Shared | FK | origin era | Generator | Both |
+| `peak_age` | Shared | smallint | 24–32 | Generator | Sim |
+| `development_rate` | Shared | smallint | 1–100 | Generator | Sim |
+| `decline_rate` | Shared | smallint | 1–100 | Generator | Sim |
+| `board_rank` | Shared | smallint | 1–class size; draft cohort only | Generator | Both |
 
-- every opening-cohort player, inside `start_campaign`
-- every prospect in a draft class, inside `materialize_draft_class`, in the year that class is encountered
+`origin_draft_*` on an opening player is the historical class he already entered. It is not a seat in the 1970 draft. The 1970 class has its own player rows.
 
-Retirement sets `status` and closes the open roster stint. Season lines stay. The universe player is unchanged, and the same person can still be active in another campaign.
+### Player ratings
 
-### Team assignment
+Stored on the shared player as `initial` and `potential`, and on the timeline player as `current`. Same range for every component: integer 0–100. Origin of `initial` and `potential`: Generator. Origin of `current`: Shared template at entry, then Timeline sim. Use: Both. Potential is shared even after `current` diverges.
 
-`RosterStint`:
+| Component | What it feeds |
+|-----------|----------------|
+| `speed`, `acceleration`, `agility` | Movement, separation, coverage, return ability |
+| `strength` | Blocking, tackling, pass rush, breaking tackles |
+| `stamina` | Late-game decline |
+| `durability` | Injury frequency and recovery |
+| `awareness`, `processing`, `discipline` | Assignment errors, pre-snap, penalties |
+| `throw_power`, `throw_accuracy` | Passing. Near a low baseline for non-quarterbacks |
+| `catching`, `route_running` | Receiving |
+| `carrying`, `elusiveness` | Rushing and yards after contact |
+| `run_blocking`, `pass_blocking` | Offensive line, tight ends, fullbacks |
+| `tackling`, `run_defense`, `pass_rush`, `coverage` | Defense |
+| `kicking`, `punting` | Specialists. Near a low baseline for everyone else |
+| `work_ethic`, `leadership` | Development and teammate effects |
+| `temperament` | Penalties, durability of performance after errors |
+| `clutch` | Late-game and high-leverage modifier |
 
-| Field | Notes |
-|-------|--------|
-| `campaign`, `campaign_player` | Both stored. |
-| `team` | FK to catalog `Team`, null while a free agent. `PROTECT`. |
-| `role` | `starter`, `backup`, `taxi`, `reserve`, `free_agent` |
-| `start_year`, `start_week` | Opening stints start at 1970, week 0. |
-| `end_year`, `end_week` | Null while current. |
+Non-position skills are still stored, at a low baseline, so development code can stay position-agnostic.
 
-A player has one open stint. A trade or cut closes it and opens another in the same campaign. The opening template is not updated. Uniqueness of "who is on this franchise" is enforced inside the campaign, never globally: many campaigns can roster the same `universe_key` on different teams at once.
+### Player traits that are not ratings
 
-### Where the franchise sits in the pyramid
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `trait_tags` | Shared | set of enum | 0–3 tags from `film_junkie`, `gym_rat`, `hothead`, `quiet_pro`, `mentor`, `injury_prone_label`, `big_play`, `scheme_specific` | Generator | Both |
 
-Promotion and relegation will eventually differ per campaign. Those results must not be written onto `Team.league`.
+`injury_prone_label` is flavor consistent with a low `durability`. The sim reads `durability`, not the label. Tags are display plus a small sim modifier where the tag says so (`hothead` adds penalty chance, `mentor` adds a small development bonus to younger teammates). The dictionary treats those two as Sim and the others as Display. They are fixed for the life of the release.
 
-`CampaignPlacement` snapshots catalog membership at campaign start and then stores that campaign's own placement:
+### Opening roster and opening contract
 
-| Field | Notes |
-|-------|--------|
-| `campaign`, `team`, `season_year` | Unique together. |
-| `league`, `conference`, `division` | FKs copied from the catalog for 1970. Later seasons update only these campaign rows when movement is executed. |
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `team` | Shared | FK, null for free agents | one of 24, or null | Generator | Both |
+| `role` | Shared | enum | `starter` `backup` `taxi` `free_agent` | Generator | Both |
+| `depth` | Shared | smallint | ≥ 1 on a team; null if free agent | Generator | Both |
+| `position` | Shared | enum | same as the player | Generator | Both |
+| `years` | Shared template | smallint | 1–5 remaining entering 1970 | Generator | Both |
+| `salary_per_year` | Shared template | int | 1970 dollars, 20,000–250,000 | Generator | Display before 1995; Both from the cap era on the timeline copy |
+| `guaranteed` | Shared template | int | 1970 dollars, 0–salary × years | Generator | Display before 1995; Both once the cap exists, on the timeline copy |
+| `signing_bonus` | Shared template | int | 1970 dollars | Generator | Display |
+| `start_year`, `end_year` | Shared template | smallint | `end_year` ≥ 1970, `start_year` ≤ 1970 | Generator | Both |
 
-Player stints point at the franchise (`Team`). They do not point at a league membership that another user's season might change. Executing `MovementPath` is a later season component. The player design only requires that the placement it would update is campaign-scoped. Until that component exists, every campaign keeps the 1970 catalog placement it copied at start.
+The timeline copy is the contract that can be cut or extended. The template is not.
 
-### Statistics
+### Shared pro history (1960–1969)
 
-`SeasonLine` is the career record. One row per campaign player, per year, per franchise they played for:
+`UniverseProStint`: continuous employment before 1970.
 
-| Group | Fields |
-|-------|--------|
-| Participation | `games`, `starts` |
-| Passing | `pass_attempts`, `completions`, `pass_yards`, `pass_touchdowns`, `interceptions_thrown` |
-| Rushing | `rush_attempts`, `rush_yards`, `rush_touchdowns` |
-| Receiving | `targets`, `receptions`, `receiving_yards`, `receiving_touchdowns` |
-| Defense | `tackles`, `sacks`, `interceptions`, `passes_defended`, `forced_fumbles` |
-| Ball security | `fumbles`, `fumbles_lost` |
-| Kicking | `fg_made`, `fg_attempts`, `xp_made`, `xp_attempts`, `punts`, `punt_yards` |
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `player` | Shared | FK | opening or archive | Generator | Display |
+| `team` | Shared | FK | catalog franchise | Generator | Display |
+| `start_year`, `end_year` | Shared | smallint | 1960–1969, end ≥ start | Generator | Display |
+| `role` | Shared | enum | `starter` `backup` `taxi` | Generator | Display |
 
-Unused columns stay zero. Every era uses this shape so a record book from 1970 through 2020 is one query. Era changes how the future sim fills the columns (a 1972 season produces more rushing attempts), not which table holds them.
+`UniverseProSeason`: one row per player, per year, per franchise. Years 1960–1969 only. The stat columns are the same set as the timeline season, listed by position below. Origin: Generator. Use: Display. The sim does not replay these rows.
 
-`team` is a required FK to the catalog franchise the line was earned with. A free agent with no club has no counting line until a stint assigns one. Unique `(campaign_player, season_year, team)`. Also store `campaign` and index `(campaign, season_year)`.
+`UniverseAward`, years 1960–1969:
 
-Game-level player lines are a later child of a match entity. They are out of this proposal so decades of history do not multiply by a 14-to-17-game schedule before the box score exists. If they are added, `SeasonLine` remains the durable rollup and game lines may be pruned.
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `season_year` | Shared | smallint | 1960–1969 | Generator | Display |
+| `kind` | Shared | enum | `mvp` `opoy` `dpoy` `oroy` `droy` `all_league_1` `all_league_2` `all_star` `coach_of_year` `executive_of_year` | Generator | Display |
+| `player` | Shared | FK, nullable | player or null | Generator | Display |
+| `staff` | Shared | FK, nullable | GM or head coach, or null | Generator | Display |
+| `franchise` | Shared | FK | team at the time | Generator | Display |
 
-### Injuries
+Exactly one of `player` or `staff` is set. All-league rows name a position as `slot` (`QB`, `RB`, …).
 
-`Injury` belongs to a campaign player:
+### College history
 
-| Field | Notes |
-|-------|--------|
-| `year`, `week` | When it happened in that campaign. |
-| `kind` | `sprain`, `break`, `concussion`, `tear`, `illness`, `wear` |
-| `body_part` | Short code |
-| `weeks_out` | |
-| `season_ending` | |
-| `career_altering` | When true, the same transaction writes a downward `CampaignRating` change. |
+`UniverseCollegeSeason`, one row per player per college season. Planning default: 4 seasons each. The anchor year is `first_pro_year` when set, otherwise the draft-class year. College seasons are the four years before that anchor. Origin: Generator. Use: Display. Draft `board_rank` already carries the scouting conclusion, so college counting stats are not a second sim input.
 
-`durability` on the universe player is the shared tendency. The injury events are not. A career-altering injury in one campaign does not change potential and does not appear in any other campaign.
+| Field | Type | Range / units | Applies to |
+|-------|------|---------------|------------|
+| `season_year` | smallint | the four years before the anchor year | All |
+| `class_standing` | enum | `freshman` `sophomore` `junior` `senior` | All |
+| `games`, `starts` | smallint | 0–12 | All |
+| Passing, rushing, receiving, defense, kicking columns | same definitions as pro seasons | same ranges, college volume | The player's position group |
 
-Kind frequencies and the era's injury multiplier come from the season era. The roll uses the campaign `rng_seed`.
+---
 
-### Development
+### Pro season statistics
 
-`CampaignRating` stores the operational current value per component. `start_campaign` and draft materialization initialize it from `UniverseRating.initial`.
+Stored twice with the same columns:
 
-A later annual development step, run inside the campaign only:
+| Store | Layer | Years | Who |
+|-------|-------|-------|-----|
+| `UniverseProSeason` | Shared | 1960–1969 | Opening and archive players |
+| `TimelineSeason` | Timeline | 1970–2029 | Players who appeared in that timeline |
+
+`TimelineSeason.team` is required. A free agent with no club has no counting line until a stint assigns one. Unique `(player overlay, season_year, team)` on the timeline, and the analogous unique key on the shared row. Yards are signed integers (sacks and tackles for loss can drive negative team yards; individual rush and receiving yards may be negative). Counts are ≥ 0. `games` and `starts` cannot exceed that season's schedule length (14, 16, or 17).
+
+Origin of shared seasons: Generator, Display. Origin of timeline seasons: Timeline sim, Both (awards, development, and AI read them; the UI shows them).
+
+#### All positions
+
+| Field | Type | Range / units | Use on a timeline row |
+|-------|------|---------------|------------------------|
+| `games` | smallint | 0–schedule length | Both |
+| `starts` | smallint | 0–`games` | Both |
+| `offensive_snaps` | smallint | 0–`games` × 90 | Both |
+| `defensive_snaps` | smallint | 0–`games` × 90 | Both |
+| `special_teams_snaps` | smallint | 0–`games` × 30 | Both |
+| `penalties` | smallint | 0–30 | Both |
+| `penalty_yards` | smallint | 0–300 | Display |
+| `fumbles` | smallint | 0–20 | Both |
+| `fumbles_lost` | smallint | 0–`fumbles` | Both |
+
+#### Quarterback
+
+Primary sim readers: `throw_power`, `throw_accuracy`, `awareness`, `processing`, plus the passing line.
+
+| Field | Type | Range / units |
+|-------|------|---------------|
+| `pass_attempts` | smallint | 0–800 |
+| `completions` | smallint | 0–`pass_attempts` |
+| `pass_yards` | int | −200–6,000 |
+| `pass_touchdowns` | smallint | 0–60 |
+| `interceptions_thrown` | smallint | 0–40 |
+| `sacks_taken` | smallint | 0–80 |
+| `sack_yards` | smallint | 0–600 |
+| `rush_attempts` | smallint | 0–200 |
+| `rush_yards` | int | −100–1,500 |
+| `rush_touchdowns` | smallint | 0–20 |
+
+Passer rating is derived for display from attempts, completions, yards, touchdowns, and interceptions.
+
+#### Running back and fullback
+
+| Field | Type | Range / units |
+|-------|------|---------------|
+| `rush_attempts` | smallint | 0–450 |
+| `rush_yards` | int | −50–2,500 |
+| `rush_touchdowns` | smallint | 0–30 |
+| `targets` | smallint | 0–150 |
+| `receptions` | smallint | 0–`targets` |
+| `receiving_yards` | int | −20–1,200 |
+| `receiving_touchdowns` | smallint | 0–15 |
+| `drops` | smallint | 0–`targets` − `receptions` |
+| `run_block_snaps` | smallint | 0–offensive snaps | 
+
+`run_block_snaps` is Both for fullbacks and Display for tailbacks.
+
+#### Wide receiver and tight end
+
+| Field | Type | Range / units |
+|-------|------|---------------|
+| `targets` | smallint | 0–220 |
+| `receptions` | smallint | 0–`targets` |
+| `receiving_yards` | int | −20–2,000 |
+| `receiving_touchdowns` | smallint | 0–25 |
+| `drops` | smallint | 0–30 |
+| `rush_attempts` | smallint | 0–40 |
+| `rush_yards` | int | −10–400 |
+| `rush_touchdowns` | smallint | 0–8 |
+| `run_block_snaps` | smallint | 0–`offensive_snaps` |
+| `pass_block_snaps` | smallint | 0–offensive snaps |
+
+#### Offensive line (`OT`, `OG`, `C`)
+
+| Field | Type | Range / units | Use |
+|-------|------|---------------|-----|
+| `run_block_snaps` | smallint | 0–`offensive_snaps` | Both |
+| `pass_block_snaps` | smallint | 0–`offensive_snaps` | Both |
+| `sacks_allowed` | smallint | 0–20 | Both |
+| `penalties` | smallint | already on the common line; holding and false starts dominate | Both |
+
+#### Defensive line (`DT`, `DE`)
+
+| Field | Type | Range / units |
+|-------|------|---------------|
+| `tackles` | smallint | 0–120 |
+| `tackles_for_loss` | smallint | 0–30 |
+| `sacks` | smallint | 0–250 tenths of a sack (75 means 7.5; display divides by 10) |
+| `quarterback_hits` | smallint | 0–40 |
+| `forced_fumbles` | smallint | 0–10 |
+| `fumble_recoveries` | smallint | 0–8 |
+| `passes_defended` | smallint | 0–15 |
+| `defensive_touchdowns` | smallint | 0–4 |
+
+The same tenths-of-a-sack encoding is used for linebacker sack totals.
+
+#### Linebacker
+
+Same defensive columns as the line, with higher tackle ranges (`tackles` 0–200, `sacks` usually lower). Add:
+
+| Field | Type | Range / units |
+|-------|------|---------------|
+| `coverage_snaps` | smallint | 0–`defensive_snaps` |
+| `targets_in_coverage` | smallint | 0–80 |
+| `completions_allowed` | smallint | 0–`targets_in_coverage` |
+| `interceptions` | smallint | 0–10 |
+
+#### Defensive back (`CB`, `S`)
+
+| Field | Type | Range / units |
+|-------|------|---------------|
+| `tackles` | smallint | 0–140 |
+| `interceptions` | smallint | 0–15 |
+| `passes_defended` | smallint | 0–30 |
+| `targets_in_coverage` | smallint | 0–140 |
+| `completions_allowed` | smallint | 0–`targets_in_coverage` |
+| `yards_allowed` | int | 0–1,500 |
+| `forced_fumbles` | smallint | 0–8 |
+| `defensive_touchdowns` | smallint | 0–4 |
+
+#### Kicker
+
+| Field | Type | Range / units |
+|-------|------|---------------|
+| `fg_made` | smallint | 0–45 |
+| `fg_attempts` | smallint | 0–50, ≥ `fg_made` |
+| `fg_long` | smallint | 0–65 yards, 0 if no makes |
+| `xp_made` | smallint | 0–70 |
+| `xp_attempts` | smallint | 0–75, ≥ `xp_made` |
+| `kickoff_touchbacks` | smallint | 0–90 |
+
+#### Punter
+
+| Field | Type | Range / units |
+|-------|------|---------------|
+| `punts` | smallint | 0–120 |
+| `punt_yards` | int | 0–6,000 |
+| `punts_inside_20` | smallint | 0–`punts` |
+| `punt_touchbacks` | smallint | 0–`punts` |
+| `punt_long` | smallint | 0–90 yards |
+
+Net average and yards per punt are derived for display.
+
+Unused columns on a season row stay 0. One row shape covers every position and every era, so a 1970-to-2029 record book is one query. The era changes how the sim fills the columns.
+
+---
+
+### Timeline player overlay
+
+Created for opening-cohort players at `start_timeline`, for a draft class when that class is materialized, and never for the archive cohort.
+
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `timeline` | Timeline | FK | | Owner's new timeline | Both |
+| `player` | Timeline | FK | universe player | Shared template | Both |
+| `status` | Timeline | enum | `prospect` `active` `taxi` `reserve` `free_agent` `retired` | Timeline sim, or the opening copy | Both |
+| `current` ratings | Timeline | 27 × smallint | 0–100, ≤ potential | Copied from `initial`, then Timeline sim | Both |
+| `seasons_played` | Timeline | smallint | 0–60, pro seasons inside this timeline only | Derived, may be cached | Display |
+| `career_altering_injuries` | Timeline | smallint | 0–10 | Timeline sim | Both |
+
+Unique `(timeline, player)`.
+
+#### Roster stint
+
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `team` | Timeline | FK, nullable | catalog franchise, null if free agent | Copied from the opening assignment, then Timeline sim | Both |
+| `role` | Timeline | enum | `starter` `backup` `taxi` `reserve` `free_agent` | same | Both |
+| `start_year`, `start_week` | Timeline | smallint | year 1970–2029; week 0 means preseason | same | Both |
+| `end_year`, `end_week` | Timeline | smallint, null if open | ≥ start | Timeline sim | Both |
+
+One open stint per player. A trade closes one stint and opens another in that timeline only.
+
+#### Injury
+
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `season_year` | Timeline | smallint | 1970–2029 | Timeline sim | Both |
+| `week` | Timeline | smallint | 1–schedule length, or 0 in camp | Timeline sim | Both |
+| `kind` | Timeline | enum | `sprain` `break` `concussion` `tear` `illness` `wear` | Timeline sim, weighted by season era | Both |
+| `body_part` | Timeline | enum | `head` `shoulder` `arm` `hand` `back` `hip` `thigh` `knee` `ankle` `foot` | Timeline sim | Both |
+| `weeks_out` | Timeline | smallint | 0–36 | Timeline sim | Sim |
+| `season_ending` | Timeline | bool | | Timeline sim | Both |
+| `career_altering` | Timeline | bool | when true, the same transaction drops one or more `current` ratings | Timeline sim | Both |
+
+`durability` is the shared tendency. The injury row exists only on the timeline.
+
+#### Timeline contract
+
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `years` | Timeline | smallint | 1–7 | Copied from the opening template, or created at signing | Both |
+| `salary_per_year` | Timeline | int | dollars. Before 1995, display and negotiation flavor. From 1995, cap accounting | same | Both from 1995; Display before |
+| `guaranteed` | Timeline | int | dollars | same | same |
+| `signing_bonus` | Timeline | int | dollars | same | Display; Sim from 1995 (cap proration) |
+| `start_year`, `end_year` | Timeline | smallint | 1970–2035 (a 2029 signing can run past the final season) | same | Both |
+| `status` | Timeline | enum | `active` `expired` `cut` `retired` | Timeline sim | Both |
+| `franchise` | Timeline | FK | catalog team | same | Both |
+| `is_rookie_deal` | Timeline | bool | true for contracts created by a draft signing | Timeline sim | Display |
+
+Cap compliance is a season-era rule from 1995 (`cap-and-size`) onward. The cap limit itself lives on the era, not on the person. There is no shared "this player signed with that team in 1974" row. Only the pre-draft 1970 veteran deals are shared templates.
+
+#### Timeline draft pick
+
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `season_year` | Timeline | smallint | 1970–2029, the class year | Owner for the owned franchise; Timeline sim for AI clubs | Both |
+| `round` | Timeline | smallint | 1–that era's round count | same | Both |
+| `pick_number` | Timeline | smallint | 1–`draftable` count | same | Both |
+| `franchise` | Timeline | FK | catalog team | same | Both |
+| `prospect` | Timeline | FK | shared prospect | same | Both |
+
+Unique `(timeline, season_year, pick_number)` and `(timeline, prospect)`. The undrafted pool has no pick row. Signing an undrafted player creates a contract and a stint only.
+
+#### Timeline award
+
+Same `kind` enum as the shared award, `season_year` 1970–2029, recipient and franchise set by the timeline sim. Display, and Sim for the following offseason's reputation and development.
+
+#### Development event
+
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `season_year` | Timeline | smallint | 1970–2029 | Timeline sim | Display |
+| `component` | Timeline | enum | rating vocabulary | Timeline sim | Display |
+| `delta` | Timeline | smallint | −20–+20 | Timeline sim | Display |
+| `reason` | Timeline | enum | `age` `snaps` `injury` `coaching` | Timeline sim | Display |
+
+The stored authority for "what is he now" is `current`. The event is the audit trail. Development reads shared `potential`, `peak_age`, and `durability`, plus this timeline's snaps and injuries.
 
 ```text
-gap = potential - current          # potential read from UniverseRating
-delta = f(gap, age vs peak_age, snaps from SeasonLine,
-          durability, injury weeks this year, campaign rng draw)
+gap = potential − current
+delta = f(gap, age vs peak_age, snaps, durability, injury weeks, timeline rng)
 current = clamp(current + delta, 0, potential)
 ```
 
-`DevelopmentEvent` (campaign player, year, component, delta, reason) is the audit row written in that same transaction. Reasons include `age`, `snaps`, `injury`, and later `coaching` when that component exists. Coaching and team facilities, when they are built, modify the delta. They do not modify the universe player.
+---
 
-Contracts and salaries are intentionally absent. A future contract row would hang off `CampaignPlayer`, because money and length diverge per playthrough, and the cap era would be a season-era rule rather than a fact about the fictional person.
+### General managers
+
+One shared row per GM (`UniverseGM`), plus a timeline overlay (`TimelineGM`) holding `current` ratings and employment.
+
+#### Identity and ability
+
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `universe_key` | Shared | string | `g-…`, unique | Generator | Both |
+| `name` | Shared | string | ≤ 255 | Generator | Display |
+| `birth_year` | Shared | smallint | initial cohort about 1905–1938 so ages in 1970 are 32–65; incoming classes are about 40 at debut | Generator | Both |
+| `debut_year` | Shared | smallint | 1970 for the initial 100; 1971–2029 for incoming classes | Generator | Both |
+| `former_role` | Shared | enum | `player` `scout` `college_coach` `personnel` `cap_analyst` | Generator | Display |
+| `talent_evaluation` | Shared `initial`/`potential`; Timeline `current` | smallint | 0–100 | Generator, then Timeline sim | Both |
+| `scheme_fit` | same | smallint | 0–100 | same | Both |
+| `negotiation` | same | smallint | 0–100 | same | Both |
+| `draft_strategy` | same | smallint | 0–100 | same | Both |
+| `free_agency` | same | smallint | 0–100 | same | Both |
+| `roster_construction` | same | smallint | 0–100 | same | Both |
+| `player_development` | same | smallint | 0–100 | same | Both |
+| `discipline` | same | smallint | 0–100 | same | Both |
+| `leadership` | same | smallint | 0–100 | same | Both |
+| `risk_tolerance` | same | smallint | 0–100 | same | Both |
+
+#### Distinct strengths, weaknesses, and traits
+
+Exactly two strengths, one weakness, two traits. Tags are not repeated between the strength list and the weakness list. The tuple plus the career-history signature is unique among GMs in the release.
+
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `strengths` | Shared | 2 enums | `quarterback_eye`, `lineman_eye`, `finds_speed`, `finds_size`, `trade_market`, `cap_discipline`, `loyalty`, `medical_caution`, `late_round`, `character` | Generator | Both |
+| `weakness` | Shared | enum | same vocabulary as strengths | Generator | Both |
+| `traits` | Shared | 2 enums | `patient`, `impatient`, `secretive`, `public`, `delegator`, `hands_on`, `stubborn`, `adaptable`, `gambler`, `conservative` | Generator | Both |
+
+Strengths add a bonus when the sim resolves that kind of decision. The weakness applies a penalty. Traits break ties (a `gambler` trades more often at the same `risk_tolerance`).
+
+#### GM career history
+
+`UniverseStaffPost` for years ending ≤ 1969 (initial cohort) or ≤ `debut_year − 1` (incoming). Use: Display. Ratings are what the sim reads; the posts are generated to agree with those ratings.
+
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `role` | Shared | enum | `gm` `personnel_director` `scout` `college_coach` | Generator | Display |
+| `franchise` | Shared | FK, nullable | null for a college post | Generator | Display |
+| `start_year`, `end_year` | Shared | smallint | through the year before they are hireable | Generator | Display |
+| `wins`, `losses`, `ties` | Shared | smallint | ≥ 0; ties allowed; 0 if the post had no games | Generator | Display |
+| `playoff_appearances` | Shared | smallint | 0–20 | Generator | Display |
+| `championships` | Shared | smallint | 0–`playoff_appearances` | Generator | Display |
+
+Timeline employment is `StaffStint`:
+
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `role` | Timeline | enum | `gm` | Copied from `OpeningStaffAssignment`, then Owner or Timeline sim | Both |
+| `franchise` | Timeline | FK, nullable | null if unemployed | same | Both |
+| `start_year`, `end_year` | Timeline | smallint | 1970–2029; `end_year` null while open | same | Both |
+| `reason_ended` | Timeline | enum | `opening_replace` `fired` `retired` `hired_elsewhere` `timeline_complete` | Owner or Timeline sim | Display |
+
+The owner's opening replace sets `reason_ended = opening_replace` on the displaced GM and opens a stint for the hire, both before the 1970 draft.
 
 ---
 
-## Lifecycles
+### Head coaches
 
-### Generate and publish a release
+Same identity pattern as GMs, with key prefix `c-`.
 
-Operator command, modeled on the existing service style (`@transaction.atomic`, a small result dataclass) but batched. The 32-team admin view is the right pattern for 42 catalog rows. It is the wrong pattern for a full release of 28,384 players on today's 32-team tree: generation is a management command, not a browser request.
+#### Ability
 
-1. Confirm `root_league` is the active tier-1 league and record `catalog_fingerprint`.
-2. Write eras, quotas, colleges, and college weights.
-3. Build opening players, ratings, and `OpeningAssignment` rows.
-4. Build draft classes from 1971 through `through_year`.
-5. Leave the release in `draft` for inspection in admin.
-6. `publish` flips status. Published rows are frozen except for the append rule above.
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `offensive_scheme` | Shared `initial`/`potential`; Timeline `current` | smallint | 0–100 | Generator, then Timeline sim | Both |
+| `defensive_scheme` | same | smallint | 0–100 | same | Both |
+| `game_management` | same | smallint | 0–100 | same | Both |
+| `player_development` | same | smallint | 0–100 | same | Both |
+| `motivation` | same | smallint | 0–100 | same | Both |
+| `discipline` | same | smallint | 0–100 | same | Both |
+| `in_game_adjustments` | same | smallint | 0–100 | same | Both |
+| `aggressiveness` | same | smallint | 0–100 | same | Both |
+| `staff_management` | same | smallint | 0–100 | same | Both |
+| `clock_management` | same | smallint | 0–100 | same | Both |
+| `preferred_offense` | Shared | enum | `power_run` `option` `pro_style`; add `west_coast` from 1987 debuts; add `air_raid` from 2004 debuts | Generator | Both |
+| `preferred_defense` | Shared | enum | `stop_run` `balanced` `pressure_quarterback` | Generator | Both |
 
-Unpublished regeneration upserts on `universe_key` inside one transaction, in chunks (about 500), and deletes keys that the seed no longer produces. Published regeneration is refused.
+Scheme enums are fixed on the person. The 0–100 scheme ratings move on the timeline. A 1970 `power_run` coach does not become an `air_raid` coach in 2014; his pass-game rating can still rise.
 
-### Start a campaign
+#### Distinct strengths, weaknesses, and traits
 
-`start_campaign(owner, release, name)`:
+Exactly two strengths, one weakness, two traits. Unique tuple plus career-history signature among head coaches.
 
-1. Refuse unless the release is published and the catalog fingerprint still matches.
-2. Create the campaign at 1970, phase `preseason`, with a new `rng_seed`.
-3. Bulk-create `CampaignPlacement` for 1970 from the current catalog membership of each fingerprinted team.
-4. Bulk-create `CampaignPlayer`, `CampaignRating`, and the opening `RosterStint` for the opening cohort only, including free agents (`team` null, role `free_agent`).
-5. Do not read or copy draft classes.
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `strengths` | Shared | 2 enums | `run_game`, `passing_game`, `red_zone`, `defense`, `special_teams`, `develops_quarterbacks`, `develops_linemen`, `halftime_adjustments`, `discipline`, `closer` | Generator | Both |
+| `weakness` | Shared | enum | same vocabulary | Generator | Both |
+| `traits` | Shared | 2 enums | `players_coach`, `disciplinarian`, `innovator`, `conservative`, `volatile`, `even_keel`, `workaholic`, `delegator` | Generator | Both |
 
-Two campaigns started on the same release have equal sets of opening `universe_key` values and equal `(universe_key, team slug, role)` assignments. The second start does not increase `UniversePlayer` row count.
+#### Coach career history
 
-### Reach a later draft
+Same post shape as the GM, with `role` in `head_coach`, `offensive_coordinator`, `defensive_coordinator`, `position_coach`, `college_head_coach`. Wins and losses are the post's record. Display only; `motivation`, scheme ratings, and traits are the sim inputs.
 
-When the season clock enters phase `draft` for `current_year` (first time: 1971):
-
-1. Load `DraftClass` for that year on the pinned release. If the year is beyond `through_year`, append it first under the publish-append rule, or refuse if the release can no longer be extended.
-2. `materialize_draft_class` bulk-creates campaign players and ratings for prospects not already present.
-3. The campaign's draft board reads those prospects. Picks write `CampaignDraftPick (campaign, year, round, pick_number, team, prospect)`.
-4. Unique `(campaign, year, pick_number)` and unique `(campaign, prospect)`.
-5. Undrafted `draftable` prospects and the `undrafted` pool become free-agent stints in this campaign.
-
-Advancing from 1970 to 1971 does not materialize 1972.
-
-### Read a player card
-
-Biography, body, college, origin era, and potential come from the universe player. Status, team, current ratings, this year's injury, and career totals come from the campaign. A client of one campaign receives only that campaign's overlay. Admin staff can inspect the shared universe without opening a campaign.
-
-Illustrative shape for a later API, not implemented here:
-
-```json
-{
-  "universe_key": "p-fg-1970-1-opening-1970-00412",
-  "name": "Marcus Hale",
-  "position": "RB",
-  "birth_year": 1946,
-  "college_slug": "red-cedar-state",
-  "height_in": 71,
-  "weight_lb": 208,
-  "origin_era": "run-first",
-  "campaign": {
-    "year": 1974,
-    "team_slug": "harbor-city",
-    "status": "active",
-    "ratings": { "speed": 78, "carrying": 74 },
-    "rush_yards_career": 3410
-  }
-}
-```
+Opening assignment: `OpeningStaffAssignment (release, staff, franchise, role)` for the 24 employed GMs and 24 employed head coaches. Unique `(release, franchise, role)` and unique `(release, staff)`.
 
 ---
 
-## Storage across decades
+### Owner directives
 
-Rough size for one release built on today's 32-team tree, using the default quotas and an 80-year horizon (draft classes 1971–2049):
+Set in the `instructions` phase for the owned franchise. Required before the 1970 season can simulate. AI franchises receive an initial directive derived from the shared staff tags so the starting tendency is identical in every timeline. Later changes append a row; they do not edit the previous one.
+
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `franchise` | Timeline | FK | the owned franchise for owner-set rows; any franchise for AI rows | Owner or Timeline sim | Sim |
+| `role` | Timeline | enum | `gm` `head_coach` | same | Sim |
+| `effective_year`, `effective_week` | Timeline | smallint | first row is 1970 week 0 | same | Both |
+| `draft_approach` | Timeline | enum | `best_player_available` `fill_needs` `trade_back` | Owner, GM only | Sim |
+| `veteran_preference` | Timeline | enum | `youth` `balanced` `win_now` | Owner, GM only | Sim |
+| `free_agency` | Timeline | enum | `conservative` `selective` `aggressive` | Owner, GM only | Sim |
+| `trade_willingness` | Timeline | enum | `low` `medium` `high` | Owner, GM only | Sim |
+| `offensive_emphasis` | Timeline | enum | `run_heavy` `balanced` `pass_heavy` | Owner, coach only | Sim |
+| `defensive_emphasis` | Timeline | enum | `stop_run` `balanced` `pressure_quarterback` | Owner, coach only | Sim |
+| `fourth_down` | Timeline | enum | `conservative` `balanced` `aggressive` | Owner, coach only | Sim |
+| `playing_time` | Timeline | enum | `veterans` `balanced` `develop_youth` | Owner, coach only | Sim |
+
+GM rows leave coach fields null, and the reverse. The UI shows the current directive. The sim reads the row in effect for that week.
+
+---
+
+### Timeline header
+
+| Field | Layer | Type | Range / units | Origin | Use |
+|-------|-------|------|---------------|--------|-----|
+| `owner` | Timeline | FK | `settings.AUTH_USER_MODEL` | Owner | Display |
+| `release` | Timeline | FK | published release, `PROTECT` | Owner | Both |
+| `owned_franchise` | Timeline | FK | one of 24 | Owner | Both |
+| `name` | Timeline | string | ≤ 255 | Owner | Display |
+| `season_index` | Timeline | smallint | 1–60 | Timeline sim | Both |
+| `season_year` | Timeline | smallint | 1970–2029, equals `1969 + season_index` | Derived | Both |
+| `phase` | Timeline | enum | see opening sequence | Timeline sim | Both |
+| `rng_seed` | Timeline | int | drawn at creation | Generator of the timeline, not the universe seed | Sim |
+
+---
+
+## Population and row counts
+
+Franchise count **24**. Classes **1970–2029** (60). Final season **2029**. Free agents **5 per franchise**. Undrafted pool **2 per franchise**. Roster defaults are the era table above.
+
+### Shared, stored once per release
 
 | Slice | Formula | Rows |
 |-------|---------|------|
-| Opening rosters | 32 × (40 + 8) | 1,536 |
-| Opening free agents | fixed pool | 160 |
-| Drafts 1971–1977 | 7 × (17 × 32 + 64) | 4,256 |
-| Drafts 1978–1986 | 9 × (12 × 32 + 64) | 4,032 |
-| Drafts 1987–1994 | 8 × (8 × 32 + 64) | 2,560 |
-| Drafts 1995–2049 | 55 × (7 × 32 + 64) | 15,840 |
-| **Universe players, one release** | 1,536 + 160 + 4,256 + 4,032 + 2,560 + 15,840 | **28,384** |
-| Colleges, eras, quotas | | a few hundred |
+| Opening rosters | 24 × (40 + 8) | 1,152 |
+| Opening free agents | 5 × 24 | 120 |
+| **Opening cohort** | | **1,272** |
+| Draft prospects 1970–2029 | see class table | **16,152** |
+| **Playable player identities** | 1,272 + 16,152 | **17,424** |
+| Archive players | 11,520 historical roster-seasons / 5 − 1,272 | **1,032** |
+| **All player identities** | 17,424 + 1,032 | **18,456** |
+| Initial GMs + head coaches | 100 + 100 | 200 |
+| Incoming staff 1971–2029 | 59 × (8 + 6) | 826 |
+| **Staff identities** | | **1,026** |
+| Shared pro season lines 1960–1969 | 24 × 48 × 10 | 11,520 |
+| Shared college season lines | 18,456 × 4 | 73,824 |
+| Shared franchise seasons 1960–1969 | 24 × 10 | 240 |
+| Opening contracts | rostered veterans | 1,152 |
+| Opening staff assignments | 24 GMs + 24 head coaches | 48 |
+| Draft classes | one per year | 60 |
 
-Those 28,384 biographies exist once.
+Playable identities are the people a timeline can employ from 1970 on. Archive identities exist so 1960–1969 stats and awards point at someone. College lines are display. If college counting stats are dropped later, the shared row count falls by 73,824 and the playable population stays 17,424.
 
-A campaign that plays the 1970 through 2019 seasons (50 seasons) and then runs the 2020 draft has overlaid the opening cohort plus 50 classes (1971–2020): 1,696 + 4,256 + 4,032 + 2,560 + 26 × 288 = **20,032** campaign players. Classes after 2020 are still only universe rows.
+Recommended physical shape: one row per person, with the 27 rating components as columns. That keeps the headline counts equal to people. A normalized rating table would multiply player rows by 27 components and by 2 for initial and potential (`18,456 × 27 × 2 = 996,624` shared rating cells) without adding people.
 
-Season lines are the campaign table that grows with play. The 1970 tree has 1,536 rostered slots. With taxi players who appear, free agents who appear, and a second line when a player changes teams mid-year, a season is on the order of 1,600–2,000 lines. Fifty seasons are on the order of 80,000–100,000 lines per campaign. Injuries, stints, and draft picks are smaller.
+### Per timeline
 
-One thousand such campaigns still share the same 28,384 universe players. Season-line growth is linear in campaigns × seasons played × players who appeared. It does not grow with campaigns × future classes × biography width.
+| Moment | Player overlays | Staff overlays |
+|--------|-----------------|----------------|
+| After `start_timeline`, before the 1970 draft | 1,272 opening players | 200 initial staff |
+| After the 1970 draft is materialized, before week 1 | 1,272 + 456 = **1,728** | 200 |
+| After the 2029 draft, timeline complete | **17,424** | **1,026** |
 
-MySQL notes for the eventual migration, consistent with the current strict-mode MySQL setup:
+Archive players add no timeline overlays.
 
-- Relational columns for ratings and season lines. No Postgres `ArrayField`. Avoid a JSON blob as the authority for ratings so era code can query a component without depending on a JSON feature flag.
-- `PositiveSmallIntegerField` for 0–100 ratings.
-- Index `(release, entry_route, entry_year)` on universe players, unique `(release, year)` on draft classes, unique `universe_key`.
-- Index `(campaign, season_year)` on season lines. Range partitioning by `season_year` is a later option if a single campaign table becomes large. It is not required to ship the model.
-- Bulk insert the opening overlay in one transaction. Per-row `update_or_create`, which the 32-team generator uses, fits 42 catalog rows and is a poor fit for the 1,696 opening players.
+| Timeline store, one finished 60-season run | Formula | Rows |
+|--------------------------------------------|---------|------|
+| Season lines, one per roster slot | sum of 24 × (active + taxi) × years in each era | **82,464** |
+| Season lines if about 10% of player-seasons also need a second team line | 82,464 × 1.10 | about 90,700 |
+| Draft picks | 13,272 draftable seats, all filled | **13,272** |
+| Injuries | planning rate 30 per franchise per season: 30 × 24 × 60 | **43,200** |
+| Contracts | planning mean of one contract per 2 roster-seasons: 82,464 / 2 | **41,232** |
+| Awards | about 56 player honors per year × 60, plus coach and GM honors | about 3,500 |
+| Staff stints | 24 franchises × 2 roles × (60 / 4-year mean tenure) | **720** |
+| Directives | small; a few per franchise over 60 years | hundreds |
+
+Roster-slot seasons by era:
+
+| Era | Years | Slots per year | Slot-seasons |
+|-----|-------|----------------|--------------|
+| 1970–1977 | 8 | 24 × 48 = 1,152 | 9,216 |
+| 1978–1986 | 9 | 24 × 53 = 1,272 | 11,448 |
+| 1987–1994 | 8 | 24 × 55 = 1,320 | 10,560 |
+| 1995–2003 | 9 | 24 × 61 = 1,464 | 13,176 |
+| 2004–2013 | 10 | 1,464 | 14,640 |
+| 2014–2029 | 16 | 1,464 | 23,424 |
+| **Total** | **60** | | **82,464** |
+
+One thousand finished timelines still share **18,456** player identities and **1,026** staff identities. They do not share season lines, picks, injuries, contracts, or awards. Overlay rows for a class are created when that timeline reaches the class, not at account creation. A timeline abandoned in 1970 holds 1,728 player overlays, not 17,424.
+
+### If the last season were 2030
+
+That is 61 seasons (1970–2030). Add one `modern-passing` class of 216 prospects and one year of timeline volume (1,464 roster-slot seasons, 168 draft picks, and the same per-season injury rate). Playable identities would be **17,640**. Shared pro history through 1969 would not change. This document does not use those 2030 figures. The working horizon is 2029.
+
+### Obsolete 32-team estimate
+
+The previous draft of this file reported **28,384** universe player rows. That number is retired. It is recorded here only so later edits do not treat it as current.
+
+It was:
+
+| Obsolete slice | Rows |
+|----------------|------|
+| 32 × (40 + 8) opening roster slots | 1,536 |
+| Free agents (fixed 160) | 160 |
+| Draft classes **1971–2049**, first draft was 1971, 32-team round sizes | 26,688 |
+| **Total** | **28,384** |
+
+The current playable count is **17,424**. The gap is the product change, not a rounding error:
+
+- Franchises are 24, not 32, so each year's roster and each draft round are smaller.
+- The horizon is 60 seasons, 1970–2029, not classes through 2049.
+- The 1970 rookies are a draft class of 456. The old opening roster had already placed a full veteran-and-rookie roster and started drafting in 1971.
+- The old total did not count an archive cohort. The current all-identity total, including the 1,032 archive players, is **18,456**, which is still the count for this 24-franchise, 60-season design.
 
 ---
 
@@ -551,67 +946,76 @@ MySQL notes for the eventual migration, consistent with the current strict-mode 
 
 A future implementation can turn these into tests. This document does not add them.
 
-1. `UniversePlayer` count is unchanged by `start_campaign` and by `materialize_draft_class`.
-2. Two fresh campaigns on one release have the same opening `universe_key` set and the same opening `(universe_key, team.slug, role)` tuples.
-3. Their draft-class prospect keys for any published year are equal to each other and to `DraftProspect` for that year.
-4. An injury, season line, roster stint, rating change, or draft pick written in campaign A is invisible to campaign B and does not update universe tables.
-5. Materializing year Y creates no campaign players whose `entry_year` is greater than Y.
-6. An opening player generated for 1970 references the `run-first` era. A prospect in a 2004 class references `spread-influence`. Across a fixed seed, those cohorts differ in the era weights the generator was given (position mix, weight distribution, skill emphasis).
-7. A published release rejects edits to an existing `universe_key`.
-8. `start_campaign` rejects a release whose fingerprint does not match the live league tree.
-9. Campaign code does not insert `League`, `Conference`, `Division`, or `Team` rows and does not update `Team.league`.
-10. Every overlay row's denormalized `campaign` matches its `campaign_player.campaign`.
+1. `start_timeline` does not change universe player, GM, or coach counts.
+2. Two new timelines on one release have the same player keys, the same GM keys, the same coach keys, the same pre-1970 stat rows, the same 1970 pre-draft `(player, franchise, role)` tuples, the same free-agent pool, and the same 1970 prospect keys.
+3. Those timelines have no 1970–2029 stat rows and no draft picks until the owner finishes the opening decisions and the season runs.
+4. The 1970 draft class is the first class materialized. Materializing year Y creates no overlay whose class year is greater than Y.
+5. A pick, stint, injury, contract, rating change, award, or 1970-or-later stat written on timeline A is invisible to timeline B and does not update universe tables.
+6. Timeline `season_year` values lie in 1970–2029. Shared pro seasons lie in 1960–1969.
+7. `season_year = 1969 + season_index`, and a complete timeline has `season_index` 60 and `season_year` 2029.
+8. Each of the 100 initial GMs has a distinct strength/weakness/trait/history signature, and the same holds for the 100 initial head coaches.
+9. Opening replacement hires are members of the unemployed 76. The other 23 franchises still employ their shared GM and head coach when the 1970 draft starts, unless a later rule explicitly allows poaching.
+10. Campaign-style code does not insert `League`, `Conference`, `Division`, or `Team` rows and does not update `Team.league`.
+11. A published release rejects edits to an existing `universe_key`.
 
 ---
 
-## How this stays inside the current project
+## Fit with the current project
 
-- Slug and natural-key identity stay the external ids (`universe_key`, college slug, existing team slug).
-- Service functions stay out of admin modules. Admin can gain a read-only universe browser and a publish action later; the heavy generate path is a command.
-- `League.clean()` and the single active tier-1 rule stay as they are. Campaigns reference that tier-1 league and do not become leagues.
-- `MovementPath` stays a catalog of allowed moves. Per-user movement results, when built, write `CampaignPlacement`.
-- No new Django setting is required. The generator seed lives on `UniverseRelease`, so production settings and the PythonAnywhere environment file stay out of this work.
-- No custom user model is required. The campaign owner FK should use `settings.AUTH_USER_MODEL` when the model is eventually added. If the product needs user fields Django's user does not have, decide that before the first campaign migration.
+- External ids stay natural keys: `universe_key`, college slug, existing team slug.
+- Generation is a management command. The 32-team admin view is the right pattern for a few dozen catalog rows and the wrong pattern for about 18,000 players.
+- `League.clean()` and the single active tier-1 rule stay. Timelines reference that tier-1 league and do not become leagues.
+- No new Django setting is required. The generator seed lives on the release. Production settings stay out of this work.
+- The owner FK should use `settings.AUTH_USER_MODEL` when the model is eventually added. This design does not set `AUTH_USER_MODEL`.
+- The live generator's `TEAM_COUNT = 32` disagrees with the 24-franchise snapshot. A release cannot be fingerprinted against that tree. Changing the generator is a later code change, not part of this document.
 
 Suggested order when implementation is allowed:
 
-1. `universe` models, era and college seed data, generator command, publish. Inspect 1970 assignments and a sample of later classes in admin. Still no campaigns.
-2. `campaigns` models and `start_campaign` / `materialize_draft_class`, with the invariants above as tests.
-3. Connect materialization to the season clock once that clock exists. The first draft a 1970 campaign runs is the 1971 class.
-4. Development and injury resolution services, still writing only campaign rows.
-5. Read API for the player card, joining universe biography to one campaign overlay.
+1. Change the catalog tooling to 24 franchises (separate work). Then generate and publish one universe release: opening cohort, archive, 1970–2029 classes, 100 + incoming staff.
+2. Timeline models and `start_timeline`, including the opening sequence through the 1970 draft and directives.
+3. Season clock that materializes the next class and the next staff class each offseason, stopping after 2029.
+4. Development, injuries, contracts, and awards, writing timeline rows only.
 
-Scoring, schedules, payments, and public pages stay outside this design. The overlay is shaped so a later box score can add a `SeasonLine` without moving biography into the campaign.
+Scoring, schedules, payments, and public pages stay outside this design. Season lines are the durable stat record so a later box score can aggregate into them.
 
 ---
 
 ## Alternatives considered
 
-**Copy the full player database into each user's league at creation, including future draft classes.** Every campaign would start identical, and isolation would be trivial. Storage and publish corrections would scale with users × decades × biography width, which is the duplication this design avoids. Future classes would also be frozen into saves that have not reached them, so a legitimate append of the year 2050 would not be one shared write.
+**Keep the previous draft's 32-team, 1971-first, through-2049 population.** That is the retired 28,384-row model. It does not match a 24-franchise game, a 1970 rookie draft, or a 60-season run.
 
-**Store no universe rows and generate each player from the seed at read time.** The seed function in this proposal is already deterministic, and a pure function would use the least disk. Admin inspection, draft boards, and joins from season lines need a stable row to point at. Materializing once per release keeps the function as the source of truth and MySQL as the shared index.
+**Put 1970 rookies on the opening rosters and skip a preseason draft.** That makes every timeline's 1970 roster identical through week 1, including rookies. The opening sequence now includes the draft as an owner decision, so rookies stay in the shared class until that timeline drafts them.
 
-**One global player row whose team, stats, and injuries update in place.** That matches a single shared multiplayer world. It cannot give two users independent careers for the same 1970 person. Federation Gridiron's current catalog is one shared pyramid; the playthrough requirement is many independent histories of that pyramid.
+**Generate replacement coaches inside each timeline.** Sixty seasons outlive the 1970 staff. Per-timeline identities would make two owners hire different fictional people. Incoming classes are shared instead, and the hiring choice is the timeline's.
 
-**Clone `League` / `Team` rows per user and hang players off the clone.** Isolation would ride on the cascade that already deletes a league's teams. It fights the single active tier-1 rule and turns franchise identity into a per-user slug. The 32-team tree is small enough to clone, and this design still does not clone it: franchises stay catalog rows, and `RosterStint` plus `CampaignPlacement` carry the divergence. Player biographies are the large shared set; teams are not.
+**Store pre-1970 statistics on each timeline as a copied record book.** The lines would be identical forever. They stay on the universe, and the career page reads both stores.
 
 ---
 
-## Decisions left open
+## Unresolved decisions
 
-These have defaults above. Changing them does not change the sharing model.
+These do not change the shared-universe versus per-timeline split. Several do change the row counts. The estimates above use the working value in each case.
 
-- Exact quotas and measurables for eras after 1970, under the rule that each quota sums to that era's roster limit.
-- Whether lower-tier teams are loaded before the first universe release. If they are not, the first population covers the 32-team tree plus the free-agent pool, and a later catalog change is a new release.
-- How large a draft class must be once lower-tier clubs also need incoming players. The default class is tier-1 rounds × tier-1 teams, plus 64 undrafted prospects. A deeper pyramid needs a larger undrafted pool, or its own rounds, before that release is published.
-- A product cap on campaigns per user. The schema allows more than one.
-- How soon scout reports are playable. The table split is specified; the UI can wait.
-- Whether franchise display-name changes over eras are campaign overrides. Identity remains the catalog team slug either way.
+| Decision | Working value | If it changes |
+|----------|----------------|---------------|
+| Final season label | **2029** (60 seasons starting in 1970). 2030 would be the 61st season. | One extra class of 216 and one extra season of timeline rows. Confirm before implementation. |
+| How the 24 franchises sit in conferences | 2 × 3 divisions × 4 teams. Code on `main` still builds 32. | Count must stay 24 or the population formulas change. Layout does not, as long as the count holds. |
+| Leagues below the 24 | None in the estimates. | Extra franchises add roster slots and, if they draft, extra prospects. |
+| 1970 roster and later era limits | 40 + 8, then the era table. | Opening cohort and slot-seasons scale directly. |
+| Free-agent pool and undrafted pool | 5 and 2 per franchise (120 and 48). | Linear in those constants. |
+| Incoming staff | 8 head coaches and 6 GMs per year, 1971–2029. | Staff identity count only. |
+| Opening hire pool | The 76 unemployed staff, not a coach already employed by another franchise. | Poaching before the draft would change a second franchise's staff in that timeline only. |
+| Identical decisions, then the 1970 season | Season sim may use the timeline RNG, so results can diverge after kickoff. | A fully deterministic season would require the sim to ignore that seed when decisions match. |
+| Dollar scale | Amounts are nominal dollars of the contract year. | An indexed scale changes display, not row counts. |
+| College counting stats | Stored, 4 seasons per player, display only. | Dropping them removes 73,824 shared rows. |
+| Archive mean career | 5 years inside 1960–1969, implying 1,032 archive players. | The generator should emit the real headcount; 11,520 season lines stay fixed if the historical league is 24 × 48 × 10. |
+| Contract row estimate | One contract per two roster-seasons. | A different mean length changes the 41,232 figure only. |
 
 ---
 
 ## Document status
 
-- Describes the `leagues` app as it exists on `main`: catalog models, one active tier-1 constraint, and the 32-team slug generator. No player code exists there yet.
-- Specifies a shared universe plus a per-campaign overlay so 1970 rosters and draft classes are common, and careers are not.
-- Adds no application code, database models, migrations, fixtures, or settings.
+- Describes `leagues` as it exists on `main`, including the 32-team generator, and states the product shape of 24 franchises as a design target rather than as a code change.
+- Replaces the previous draft's 32-team, 1971-first, through-2049 assumptions. The retired total of 28,384 is labeled obsolete above and is not the estimate to implement.
+- Current shared playable population: **17,424** players. All player identities, including the archive: **18,456**. Staff identities: **1,026**. Final playable season under the working year rule: **2029**.
+- Adds no application code, database models, migrations, fixtures, settings, or populated tables.
