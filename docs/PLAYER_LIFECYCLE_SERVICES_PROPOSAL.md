@@ -51,6 +51,8 @@ Idempotency compares committed state with the request. There is no request-id ta
 2. If the committed rows equal the source state the operation requires, apply the change inside the transaction.
 3. Otherwise raise, and write nothing.
 
+Rule 1 is decided before the source-state checks in each operation. Those checks describe rule 2. A retry of a committed result is rule 1 after the source row is gone. A half-applied player, or a complete row that differs from the request, is rule 3 and is not success.
+
 A unique-constraint error inside the transaction rolls the attempt back. The caller retries. The retry hits rule 1 when the first attempt committed the same result, and rule 3 when it committed a different result.
 
 `deferred_lifecycle()` is the transaction for any call that changes `TimelinePlayer.status` and `RosterMembership` together. Its outer use opens `transaction.atomic()`, collects the player ids saved inside the block, and after the block runs `_check_lifecycle` on those players as reloaded from the database. A mismatch raises `ValidationError` inside the atomic block, so the pair rolls back. A nested call, while that context is already active, yields without opening a second transaction and without validating early. Validation runs once, at the outer exit, for every player id noted by `TimelinePlayer.save` or `RosterMembership.save`.
@@ -89,7 +91,7 @@ Replay for one component:
 
 A completed season's rating is frozen. `verify_season_replay` is the read that must succeed before a clock service sets `TimelineSeason.phase` to `complete`. This workflow never sets that phase, and it never sets `directives_locked`, `regular_season_simulated`, `postseason_complete`, `expansion_gate`, or the era profile.
 
-A completed or archived timeline cannot gain, change, or lose child rows. Every operation requires `Timeline.status` of `active` and raises before writing when the timeline is closed.
+A completed or archived timeline cannot gain, change, or lose child rows. Every writing operation requires `Timeline.status` of `active` and raises before writing when the timeline is closed. `verify_season_replay` only reads, so a completed or archived timeline does not block that check.
 
 ## Shared replay
 
@@ -97,7 +99,7 @@ A completed or archived timeline cannot gain, change, or lose child rows. Every 
 
 It loads the overlay's `PlayerRatingProfile` and the season's `DevelopmentEvent` rows. For each of the 33 `PLAYER_COMPONENTS` it computes the replay above and compares it with `PlayerSeasonRating.current_*`. The rating row must already exist. The helper returns the per-component results and does not write.
 
-If the previous calendar season has a rating whose `TimelineSeason.phase` is not `complete`, replay fails. The next season copies a frozen row.
+When this overlay has a `PlayerSeasonRating` in the previous calendar year, that season's phase must be `complete` or replay fails. The next season copies a frozen row. When this season is the overlay's earliest rating, `prior` is `initial_*`, and other players' rows in the previous year are ignored.
 
 ## `initialize_opening_state`
 
@@ -198,7 +200,7 @@ Inserts prospect overlays and one initial rating each, for class members who had
 
 ### Failure
 
-A missing profile, a completed season, a class from another release, or a partial overlay aborts the transaction. The shared `DraftClass` is unread except as the set of players.
+A missing profile, a completed season, a class from another release, or a partial overlay aborts the transaction. The shared `DraftClass` is read to select the year and the players, and it is not saved.
 
 ## `place_drafted_players`
 
@@ -216,9 +218,8 @@ An empty list is a successful no-op.
 
 The season belongs to the timeline, the timeline is `active`, and the season phase is not `complete`.
 
-Each placement:
+Each placement names an overlay on this timeline. Rule 1 is an open membership and status that already equal the request. The source state for rule 2 is:
 
-- An overlay already exists on this timeline for that player.
 - The saved status is `prospect`.
 - The overlay has zero memberships.
 - `franchise` is set, belongs to the release, and has a `FranchiseSeasonMembership` for the season year.
@@ -313,7 +314,7 @@ Appends ordered development events and moves the live season rating by the same 
 - A `PlayerSeasonRating` exists for this overlay and season.
 - The saved player is not retired before this season.
 - `replay_season` already matches every component, including components this call does not touch.
-- Each new `event_index` for a component is greater than every stored index for that overlay, season, and component. Gaps are allowed. An index less than or equal to the current maximum is accepted only as the idempotent retry below.
+- Each new `event_index` for a component is greater than every stored index for that overlay, season, and component. Gaps are allowed. An index less than or equal to the current maximum is accepted only when that stored event has the same `delta` and `reason`.
 - Within the request, indexes for one component are strictly increasing.
 
 The service does not compute the delta from age, snaps, durability, coaching, or a draw. The caller passes the delta. An event in `retired_year` is still legal: the model rejects development only in a later season.
@@ -322,7 +323,9 @@ The service does not compute the delta from age, snaps, durability, coaching, or
 
 One `transaction.atomic()`. `deferred_lifecycle()` is not used. Status and membership do not change.
 
-Apply `changes` in `PLAYER_COMPONENTS` order, and in `event_index` order within a component:
+Apply `changes` in `PLAYER_COMPONENTS` order, and in `event_index` order within a component. Skip a change whose stored event already has the same `delta` and `reason`. A different stored payload fails the call before any write.
+
+For each remaining change:
 
 1. Insert `DevelopmentEvent` with the raw `delta`.
 2. Set that component's `current_*` to `clamp(current + delta, 0, potential)` and save the rating.
@@ -366,11 +369,11 @@ Moves a completed season to the next season: retire the requested players, copy 
 - `verify_season_replay(completed_season)` succeeds.
 - `next_season.timeline` is the same timeline, `next_season.season_year` is `completed_season.season_year + 1`, and `next_season.phase` is not `complete`.
 - No player appears in both lists.
-- Every overlay on the timeline whose status is `active`, `taxi`, `reserve`, or `free_agent`, and whose open membership is in `completed_season`, appears in exactly one list.
-- Every retirement and continuation names a player with an open membership in `completed_season`.
+- Every overlay whose open membership is in `completed_season` appears in exactly one list. That requirement is about the source state. A named player who already matches the requested retirement or continuation is rule 1 and is not required to still have that open row.
+- The source state for a named retirement or continuation is an open membership in `completed_season`.
 - A prospect is in neither list. Prospects are copied below and keep zero memberships.
-- An overlay whose `retired_year` is already set is in neither list.
-- Every non-retired overlay has a `PlayerSeasonRating` in `completed_season`. A missing rating fails the call.
+- An overlay whose `retired_year` is a year other than `completed_season.season_year` is in neither list. A player already retired in the completed season may appear in `retirements` and is then rule 1.
+- Every non-retired overlay that has a rating, membership, or development event in `completed_season` or in an earlier season has a `PlayerSeasonRating` in `completed_season`. A missing rating fails the call. An overlay whose rows exist only in `next_season` is outside this handoff. It is not copied and it is not a missing-rating failure.
 - Each continuation's franchise, when the role is not `free_agent`, is active in `next_season.season_year`. A `free_agent` continuation has a null franchise. `position` is a shared primary or secondary. `role` is legal in `next_season.phase`. `reserve` is legal there only from `roster_cut` onward.
 
 This operation does not decide who retires. It does not copy the previous club, role, or position into the new row. The model proposal keeps memberships from being copied automatically.
@@ -383,7 +386,7 @@ Order:
 
 1. Finish the read-only preconditions, including replay. A failure here writes nothing.
 2. Retire each requested player from `completed_season` through the `retire_player` steps, before any next-season rating is inserted. The retirement `end_week` is the one in the request.
-3. For every remaining non-retired overlay, including prospects, insert `PlayerSeasonRating` in `next_season` by copying the frozen `current_*` values, when that next rating does not already exist.
+3. For every remaining non-retired overlay that belongs to `completed_season`, including prospects, insert `PlayerSeasonRating` in `next_season` by copying the frozen `current_*` values, when that next rating does not already exist. Leave next-season-only overlays untouched.
 4. For each continuation, close the open membership with `season_complete` and the requested `end_week`, then insert the next season's open membership and set `status` from the new role.
 
 A player who is already retired is skipped, including the rating copy.
@@ -394,7 +397,7 @@ The call succeeds with no write when all of the following are already true:
 
 - Each retirement has `retired_year` equal to `completed_season.season_year`, a membership in that season closed with `retired` at the requested `end_week`, and no rating, membership, or event in a later season.
 - Each continuation's completed membership is closed with `season_complete` at the requested `end_week`, and the open membership in `next_season` equals the requested franchise, role, position, availability, and `start_week`.
-- Each non-retired overlay already has a next-season rating. That rating is left as stored. A retry after later development does not copy over it.
+- Each non-retired overlay that belongs to `completed_season` already has a next-season rating. That rating is left as stored. A retry after later development does not copy over it. An overlay whose rows exist only in `next_season` is unchanged.
 
 If some players already match and the others are still in the source state, the call applies only the remaining work in the same transaction. If any player is in a third state, the call raises and rolls back, including the remaining work it had staged.
 
@@ -403,7 +406,7 @@ A next-season rating that already exists is never overwritten. When the continua
 ### Model changes
 
 - Retirees: membership closed with `retired`, `status` `retired`, `retired_year` set to the completed season. A premature next-season rating is deleted only under the guards in `retire_player`.
-- Everyone else who is not already retired: a next-season rating copied from the frozen row, when absent.
+- Everyone else who is not already retired and who belongs to `completed_season`: a next-season rating copied from the frozen row, when absent.
 - Continuers: completed membership closed with `season_complete`; one new open membership; `status` from the new role.
 - Prospects: a next rating only. Status stays `prospect`. Membership count stays zero.
 
@@ -431,7 +434,7 @@ Shared write order inside `deferred_lifecycle()`:
 
 #### Preconditions
 
-The open membership is a club row in `season` (`franchise` set, role not `free_agent`). `end_week` is at least that row's `start_week`. `start_week` does not overlap the closed span. Position on the new row is the closed row's position.
+The source state is an open club row in `season` (`franchise` set, role not `free_agent`). `end_week` is at least that row's `start_week`. `start_week` does not overlap the closed span. Position on the new row is the closed row's position. The idempotent target below is rule 1 and does not have to still be that open club row.
 
 #### Transaction
 
@@ -457,7 +460,7 @@ A free-agent source, a position change requested through this call, an overlap, 
 
 #### Preconditions
 
-Two source states are legal.
+Two source states are legal. The idempotent target below is rule 1 and does not have to still be one of these sources.
 
 - Prospect: saved status `prospect`, zero memberships. `end_week` is omitted. No row closes.
 - Free agent: the open row is `free_agent` in `season`. `end_week` closes it.
@@ -470,7 +473,7 @@ One `deferred_lifecycle()`.
 
 #### Idempotency
 
-Success with no write when an open membership already equals the request and the status matches the role. For a free-agent source, the previous row in that season must already be closed with `transaction` at `end_week`. A prospect source has no closed predecessor.
+Success with no write when the open membership equals the request and the status matches the role. When the request supplies `end_week`, a same-season row is already closed with `transaction` at that week. When `end_week` is omitted, that season has no closed predecessor.
 
 #### Model changes
 
@@ -488,7 +491,7 @@ Any other source, including an open club row, rolls back. Moving a club player i
 
 #### Preconditions
 
-An open club membership exists in `season`. The replacement differs in franchise, role, or position. The new role is not `free_agent`. The new franchise is set and is active that season. `reserve` follows the phase rule.
+The source state is an open club membership in `season`. The replacement differs in franchise, role, or position. The new role is not `free_agent`. The new franchise is set and is active that season. `reserve` follows the phase rule. The idempotent target below is rule 1. A franchise change uses this operation when the caller names `transaction`. `expansion_move` is the operation that records `expansion`.
 
 #### Transaction
 
@@ -504,7 +507,7 @@ Closes the old row with `transaction`. Opens the new row. Sets status from the n
 
 #### Failure
 
-An unchanged target, a free-agent target, an expansion-shaped call that the caller intended as expansion, or a third state rolls back. The reason `transaction` records the roster result. It does not record a trade. Trade agreements are a later service, and that service must call this operation in its own transaction if the agreement and the roster are to commit together.
+An unchanged target, a free-agent target, or a third state rolls back. The reason `transaction` records the roster result. It does not record a trade. Trade agreements are a later service, and that service must call this operation in its own transaction if the agreement and the roster are to commit together.
 
 ### `expansion_move`
 
@@ -514,7 +517,7 @@ An unchanged target, a free-agent target, an expansion-shaped call that the call
 
 #### Preconditions
 
-An open club membership exists in `season`. The new `franchise` is a different franchise, active in the season year. The new role is a club role. The caller has already decided that this player was selected. This operation does not read `ExpansionPin`, `ExpansionEvent`, or `TimelineExpansionChoice` to make that decision.
+The source state is an open club membership in `season`. The new `franchise` is a different franchise, active in the season year. The new role is a club role. The caller has already decided that this player was selected. This operation does not read `ExpansionPin`, `ExpansionEvent`, or `TimelineExpansionChoice` to make that decision. The idempotent target below is rule 1.
 
 #### Transaction
 
@@ -570,7 +573,7 @@ Used on its own and by `advance_season`.
 
 #### Preconditions
 
-The timeline is `active`. The overlay has an open membership in `season`. The player is not already retired in another year.
+The timeline is `active`. The source state is an open membership in `season`. The idempotent target below is rule 1 and has no open membership. The player is not already retired in another year.
 
 If any `PlayerSeasonRating`, `RosterMembership`, or `DevelopmentEvent` exists with `season_year` greater than this season, all of the following must be true or the call raises:
 
@@ -579,7 +582,7 @@ If any `PlayerSeasonRating`, `RosterMembership`, or `DevelopmentEvent` exists wi
 - That later season has no `DevelopmentEvent` and no `RosterMembership` for this overlay.
 - That later rating's 33 `current_*` values still equal the frozen rating of `season`.
 
-When those guards pass, the later rating is an early copy and is removed. When any guard fails, the player has entered the later season. This call does not switch `retired_year` forward. The caller may retire that later season by naming it, once its open membership is the one being closed.
+When those guards pass, the later rating is an early copy and is removed. When any guard fails, the player has entered the later season. The approved `retired_year` is the season of the membership being closed, so this call does not switch the year forward on its own. The caller retires that later season by naming it, once its open membership is the one being closed.
 
 A prospect cannot be retired. Leaving membership count at zero does not mean retired.
 
@@ -607,7 +610,7 @@ Closes the last membership with `retired`. Sets `status` and `retired_year`. Del
 
 #### Failure
 
-A failed guard, a missing open membership, a second retirement year, or a closed timeline rolls back. The early rating remains if the retirement itself cannot be saved.
+A failed guard, a missing open membership when the player is not already in the target state, a second retirement year, or a closed timeline rolls back. The early rating remains if the retirement itself cannot be saved.
 
 ## What is atomic together
 
@@ -616,7 +619,7 @@ A failed guard, a missing open membership, a second retirement year, or a closed
 | One opening player's status, initial rating, and membership | The single `deferred_lifecycle()` around the whole opening cohort, so one bad assignment rolls the cohort back |
 | One draft class of prospect inserts | One `transaction.atomic()`, without deferred lifecycle |
 | One list of draft placements | One `deferred_lifecycle()` |
-| One development call's events and rating update | One `transaction.atomic()`, then an in-transaction replay |
+| One development call's events and rating update | One `transaction.atomic()`, including the replay before commit |
 | One season advance: retirements, rating copy, and continuations | One outer atomic and one outer `deferred_lifecycle()` |
 | One cut, sign, reassignment, expansion move, or retirement | One `deferred_lifecycle()` |
 | One availability change | One atomic save, without deferred lifecycle |
