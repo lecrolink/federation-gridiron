@@ -90,7 +90,7 @@ Versioned rules for a contiguous span of seasons. Nine working rows: `y1970`, `y
 - Foreign keys: `release` to `UniverseRelease`, `CASCADE`.
 - Fields: `first_year` and `last_year` `PositiveSmallIntegerField`; `market` choices `controlled`, `transitional`, `modern`; `style_key` choices `run-first`, `passing-rules`, `timing-specialists`, `cap-and-size`, `spread-influence`, `modern-passing`; `active_limit` and `taxi_limit` `PositiveSmallIntegerField`; nineteen `quota_active_*` and nineteen `quota_taxi_*` `PositiveSmallIntegerField` columns, one per primary position; `ir_max`, `ir_min_weeks`, `ir_returns_allowed` `PositiveSmallIntegerField`; `draft_rounds` `PositiveSmallIntegerField`; `rookie_contract_years_min` and `rookie_contract_years_max`; `veteran_contract_years_min` and `veteran_contract_years_max`; `accrued_seasons_for_ufa` `PositiveSmallIntegerField`, null in the controlled market; `trade_deadline_week` `PositiveSmallIntegerField`; `future_pick_years` `PositiveSmallIntegerField`; `waiver_rule`, `free_agency_type`, `fa_compensation`, `cap_status`, `franchise_tag`, `playoff_format`, `overtime_rule`, and `sack_leaderboard` as `CharField` choices from the design; `schedule_length` `PositiveSmallIntegerField`; `cap_limit` and `minimum_salary` `BigIntegerField`, null while unset; `rookie_slot_scale` `JSONField`, null until 1995 and until a percent table is configured. The slot table is the one JSON field on this row because its length is the draft, not a fixed 33.
 - Unique: `(release, profile_key)`.
-- Checks: `first_year <= last_year`; both years inside 1970–2029; the nineteen active quota columns sum to `active_limit`; the nineteen taxi quota columns sum to `taxi_limit`; `cap_status = on` implies `market = modern`; `cap_status = off` implies `cap_limit` is null. A modern profile with a null `cap_limit` is refused in the publication service. That last rule is not a database check, because the column is allowed to exist before a number is chosen.
+- Database checks: `first_year <= last_year`; the nineteen `quota_active_*` columns sum to `active_limit`; the nineteen `quota_taxi_*` columns sum to `taxi_limit`; contract-year spans are ordered and at least 1; the trade deadline is from 1 through `schedule_length`; enum values; `cap_status = on` implies `market = modern`; `cap_status = off` implies `cap_limit` is null; a controlled market has null `accrued_seasons_for_ufa` and the other markets set it. Model validation places the span inside the parent release. It does not hardcode 1970–2029, 14, 16, 17, or the confirmed quota totals. Overlapping spans are a publication check. A modern profile with a null `cap_limit` is refused by the publication service and is not a database check, because a draft release may leave the amount unset. `minimum_salary` and `rookie_slot_scale` may also stay null until a number is approved.
 - Indexes: `(release, first_year, last_year)`.
 - Immutable after the release is published. Mutable while the release is `draft`.
 - Rows: 9 per release.
@@ -181,7 +181,7 @@ The 1976 and 1996 entry rules, including the active-roster arithmetic.
 - Foreign keys: `release` `CASCADE`.
 - Fields: `season_year`; `existing_club_count`; `new_club_count`; `active_target`; `taxi_capacity`; `max_losses_per_existing`; `min_losses_per_existing`; `clubs_at_max_loss`; `clubs_at_min_loss`; `veteran_picks_per_new`; `veteran_picks_total`; `rookie_picks_per_new`; `undrafted_multiplier`; `undrafted_pool`; `undrafted_reserved_per_new`; all of those `PositiveSmallIntegerField`. There is no free-agent reserve column. Rule text: `expansion_draft_order_rule`, `roster_building_rule`, `free_agent_rule`, `rookie_draft_slot_rule`, `gm_hiring_rule`, `hc_hiring_rule`, each a non-empty `TextField` before publish. `free_agent_rule` says free agents may replace an undrafted signing and are not required.
 - Unique: `(release, season_year)`.
-- Checks, all on the row, and none of them read a timeline free-agent list: `veteran_picks_per_new * new_club_count = veteran_picks_total`; `clubs_at_max_loss + clubs_at_min_loss = existing_club_count`; `clubs_at_max_loss * max_losses_per_existing + clubs_at_min_loss * min_losses_per_existing = veteran_picks_total`; `min_losses_per_existing < max_losses_per_existing`; `veteran_picks_per_new + rookie_picks_per_new + undrafted_reserved_per_new = active_target`; `undrafted_reserved_per_new * new_club_count <= undrafted_pool`; `undrafted_pool = undrafted_multiplier * (existing_club_count + new_club_count)`. Taxi capacity is not in the active-roster sum. The stored 1976 row is 24, 4, 40, 8, max 3, min 2, 16 clubs at 3, 8 clubs at 2, 16 veterans per new club, 64 total, 17 rookies, multiplier 2, pool 56, reserved 7. `16 + 17 + 7 = 40` and `16 × 3 + 8 × 2 = 64`. The stored 1996 row is 28, 4, 53, 8, max 4, min 3, 20 clubs at 4, 8 clubs at 3, 26 veterans per new club, 104 total, 7 rookies, multiplier 3, pool 96, reserved 20. `26 + 7 + 20 = 53` and `20 × 4 + 8 × 3 = 104`.
+- Database checks, all on the row, and none of them read a timeline free-agent list or hardcode 1976 or 1996: `veteran_picks_per_new * new_club_count = veteran_picks_total`; `clubs_at_max_loss + clubs_at_min_loss = existing_club_count`; `clubs_at_max_loss * max_losses_per_existing + clubs_at_min_loss * min_losses_per_existing = veteran_picks_total`; `min_losses_per_existing < max_losses_per_existing`; `veteran_picks_per_new + rookie_picks_per_new + undrafted_reserved_per_new = active_target`; `undrafted_reserved_per_new * new_club_count <= undrafted_pool`; `undrafted_pool = undrafted_multiplier * (existing_club_count + new_club_count)`. Taxi capacity is not in the active-roster sum. Rule text may be empty while the release is draft. Publication requires each rule text to be nonempty and checks the confirmed rows. The stored 1976 row is 24, 4, 40, 8, max 3, min 2, 16 clubs at 3, 8 clubs at 2, 16 veterans per new club, 64 total, 17 rookies, multiplier 2, pool 56, reserved 7. `16 + 17 + 7 = 40` and `16 × 3 + 8 × 2 = 64`. The stored 1996 row is 28, 4, 53, 8, max 4, min 3, 20 clubs at 4, 8 clubs at 3, 26 veterans per new club, 104 total, 7 rookies, multiplier 3, pool 96, reserved 20. `26 + 7 + 20 = 53` and `20 × 4 + 8 × 3 = 104`. Conference and division placement stays on `FranchiseSeasonMembership`. There is no separate placement column and no free-agent reserve column.
 - Indexes: `season_year`.
 - Immutable after publish.
 - Rows: 2.
@@ -195,7 +195,7 @@ Which new franchises belong to an expansion event.
 
 - Ownership: shared.
 - Primary key: `BigAutoField`.
-- Foreign keys: `event` and `franchise`, both `CASCADE`.
+- Foreign keys: `event` `CASCADE`; `franchise` `PROTECT`.
 - Fields: `selection_order` `PositiveSmallIntegerField` (1–4, placeholder slug order).
 - Unique: `(event, franchise)`; `(event, selection_order)`.
 - Checks: the franchise's `first_active_season` equals the event year.
@@ -228,7 +228,7 @@ Header for one rookie class, 1970 through 2029.
 - Foreign keys: `release` `CASCADE`; `profile` to `EraRuleProfile`, `PROTECT`.
 - Fields: `season_year`; `franchise_count`; `rounds`; `draftable_count`; `undrafted_multiplier` `PositiveSmallIntegerField`; `undrafted_count`.
 - Unique: `(release, season_year)`.
-- Checks: `draftable_count = rounds * franchise_count`; `undrafted_count = undrafted_multiplier * franchise_count`; the multiplier is 2 except in 1996, when it is 3; year in 1970–2029. Publication accepts that one expansion-year exception. It does not force every class through the two-per-franchise rule.
+- Database checks: `draftable_count = rounds * franchise_count`; `undrafted_count = undrafted_multiplier * franchise_count`; rounds, franchise count, and the multiplier are at least 1. Model validation places the year inside the release, requires the profile to cover that year, and requires `rounds` to match the profile. It does not hardcode 1970–2029. Publication requires the multiplier to be 2, except an expansion year, which uses that `ExpansionEvent.undrafted_multiplier`. The confirmed 1996 class uses 3. Publication does not force every class through the two-per-franchise rule.
 - Indexes: `season_year`.
 - Immutable after publish.
 - Rows: 60. Draftable prospects across those rows: 16,028. Undrafted: 3,616. All draft prospects: 19,644.
@@ -403,7 +403,7 @@ The 1970 pre-draft roster and free-agent pool. A template. `start_timeline` copi
 
 - Ownership: shared.
 - Primary key: `BigAutoField`.
-- Foreign keys: `release` `CASCADE`; `player` `CASCADE`; `franchise` `CASCADE`, null for a free agent.
+- Foreign keys: `release` `CASCADE`; `player` `CASCADE`; `franchise` `PROTECT`, null for a free agent.
 - Fields: `role` choices `starter`, `backup`, `taxi`, `free_agent`; `depth` `PositiveSmallIntegerField`, null for a free agent.
 - Unique: `(release, player)`. Not unique on `(release, franchise, position, depth)` when franchise is null, because MySQL would not collapse those nulls anyway. The publication service checks depth uniqueness on a club.
 - Checks: free agents have null franchise, null depth, and role `free_agent`; rostered players have a founding franchise; the player is in the opening cohort.
@@ -421,7 +421,7 @@ Shared template for opening veterans. Free agents have none.
 - Foreign keys: `assignment` `OneToOneField`, `CASCADE`.
 - Fields: `years` `PositiveSmallIntegerField`; `salary_per_year`, `guaranteed`, `signing_bonus` `BigIntegerField`; `start_year`, `end_year`.
 - Unique: the one-to-one.
-- Checks: years 1–5; `end_year >= 1970`; `start_year <= 1970`; `guaranteed` between 0 and salary times years. Amounts are ledger units. The scale may be configured later without a new column.
+- Database checks: `years` is at least 1; `end_year >= start_year`; salary, guarantee, and bonus are nonnegative; `guaranteed` is at most salary times years. Model validation refuses a free-agent assignment, requires the contract to cover the release's first playable season, and, when an era profile covers that season, keeps `years` inside that profile's veteran range. The confirmed 1–5 length and the year 1970 are not schema constants. There is no separate status or rookie flag: the assignment already carries the player and franchise, and every opening contract is a veteran template. Amounts are ledger units. The 1970 market is uncapped. The scale may be configured later without a new column.
 - Indexes: the one-to-one.
 - Immutable after publish. The timeline copy is the contract that can change.
 - Rows: 1,152.
@@ -433,10 +433,10 @@ Who is employed in 1970, before the owner keeps or replaces anyone.
 
 - Ownership: shared.
 - Primary key: `BigAutoField`.
-- Foreign keys: `release` `CASCADE`; `franchise` `CASCADE`; `gm` null; `coach` null. Exactly one staff foreign key is set.
+- Foreign keys: `release` `CASCADE`; `franchise` `PROTECT`; `gm` null; `coach` null. Exactly one staff foreign key is set.
 - Fields: `role` choices `gm`, `head_coach`, `offensive_coordinator`, `defensive_coordinator`.
-- Unique: `(release, franchise, role)`; one assignment per GM; one assignment per coach.
-- Checks: 24 of each role; each franchise is founding; coordinator specialty matches the chair.
+- Unique: `(release, franchise, role)`; one assignment per GM; one assignment per coach. MySQL allows many nulls on the single-column staff keys, so the empty side of each row does not collide.
+- Checks: the database requires the role to match which staff key is set. Model validation requires a founding franchise in the same release. An offensive coordinator supports `offense` or `both`. A defensive coordinator supports `defense` or `both`. A head coach may be `offense`, `defense`, or `both`. One of each role on every founding franchise, 24 in the confirmed release, is a publication check. The count is not hardcoded.
 - Indexes: `(release, role)`.
 - Immutable after publish.
 - Rows: 96.
@@ -545,14 +545,14 @@ Scout noise uses the same HMAC with a different coordinate string: player key, c
 
 ### OwnerDirective
 
-Append-only instructions. The current row is the latest effective week. AI clubs get a starting row derived from shared staff tags.
+Append-only instructions. The current row is the latest effective week. AI clubs get a starting row derived from shared staff tags. Phase 3 reserves this shape and does not create the table. The owner does not receive a control for every contract, depth-chart spot, transaction, or player component.
 
 - Ownership: timeline.
 - Primary key: `BigAutoField`.
 - Foreign keys: `timeline` `CASCADE`; `franchise` `PROTECT`.
-- Fields: `role` choices `gm` or `head_coach`; `effective_year`; `effective_week`; `draft_approach`, `veteran_preference`, `free_agency`, `trade_willingness` null on coach rows; `offensive_emphasis`, `defensive_emphasis`, `fourth_down`, `playing_time` null on GM rows. Choices match the design.
+- Fields: `role` choices `gm` or `head_coach`; `effective_year`; `effective_week`. GM rows: `team_direction` choices `compete`, `balanced`, `rebuild`; `priority_group_1`, `priority_group_2`, `priority_group_3` from the GM position-group vocabulary, filled in order, each null; `trade_appetite` choices `low`, `medium`, `high`; `veteran_preference` choices `youth`, `balanced`, `veterans`, defaulted from team direction unless the owner overrides it; `draft_participation` choices `owner` or `gm`, default `gm`. Coach rows: `offensive_emphasis` choices `run`, `balanced`, `pass`; `defensive_emphasis` choices `stop_run`, `balanced`, `pressure_quarterback`; `fourth_down` choices `conservative`, `balanced`, `aggressive`; `playing_time` choices `veterans`, `balanced`, `develop_youth`, null when unset. GM rows leave coach fields null and the reverse.
 - Unique: `(timeline, franchise, role, effective_year, effective_week)`.
-- Checks: GM rows leave coach fields null and the reverse; the first owned-franchise row is 1970 week 0 before the season simulates.
+- Checks: GM rows leave coach fields null and the reverse; the first owned-franchise row is the timeline's opening week 0 before the season simulates. The GM still builds contracts, cuts, signings, trades, expansion selections, undrafted signings, and the roster. The head coach still sets the depth chart, weekly lineup, special teams, fatigue, injuries, coordinators, and play calls.
 - Indexes: `(timeline, franchise, role, effective_year, effective_week)`.
 - Immutable: every field after insert. A change inserts a new row.
 - Rows: a handful per franchise per timeline, more if the owner edits often. Planning size is under a few thousand per timeline.
@@ -1009,7 +1009,8 @@ Existing `League`, `Conference`, `Division`, `Team`, and `MovementPath` rows rem
 
 - Models: `EraRuleProfile`, `EraCollegeWeight`, `DraftClass`, `ExpansionEvent`, `ExpansionClub`, `OpeningAssignment`, `OpeningContract`, `OpeningStaffAssignment`.
 - Depends on: phases 1 and 2.
-- Validation: nine profiles; quota columns sum to 40, 45, 47, or 53 and taxi columns sum to 8; spans do not overlap; expansion checks `16 + 17 + 7 = 40` and `26 + 7 + 20 = 53`, with veteran totals 64 and 104; the undrafted multiplier is 2 except for 3 in 1996; no free-agent reserve is required; opening assignment counts; a 1995-or-later profile with an empty `cap_limit` fails the publish service and does not fail merely because the column exists.
+- Validation: nine profiles for the confirmed release; quota columns sum to that profile's active and taxi limits, which are 40, 45, 47, or 53 and taxi 8 on that release; spans do not overlap; expansion publication checks `16 + 17 + 7 = 40` and `26 + 7 + 20 = 53`, with veteran totals 64 and 104; the undrafted multiplier is 2 except for 3 in 1996; no free-agent reserve is required; opening assignment counts; a modern profile with an empty `cap_limit` fails the publish service and does not fail merely because the column exists. Those confirmed numbers are publication checks, not schema constants. `OwnerDirective` stays a phase 4 timeline model.
+- Technical notes from implementation, not new game rules: quotas stay the proposal's explicit `quota_active_*` and `quota_taxi_*` columns, one pair per position, not a child table. `UniversePlayer.draft_class` and `origin_profile` are added here. `(draft_class, board_rank)` is unique; MySQL still allows many null ranks. Franchise foreign keys use `PROTECT`. `rookie_slot_scale` is the one `JSONField`, which MySQL stores as JSON. Opening contracts do not duplicate the assignment's player or franchise and do not add a status or rookie flag.
 - Rows: 9 profiles, 60 draft-class headers, 2 expansion events, 8 expansion clubs, 1,272 assignments, 1,152 opening contracts, 96 staff assignments, plus college weights.
 - League data: untouched.
 - Rollback: drop these tables. People and franchises remain. Draft-class foreign keys on players must be added in this phase, so reversing it also clears `UniversePlayer.draft_class`.

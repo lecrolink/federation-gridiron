@@ -135,7 +135,7 @@ The shared snapshot is identical until step 1 writes the first timeline decision
 
 ## Owner experience
 
-The database holds the full rating vector, the histories, and the era rules. The normal screen does not ask the owner to set them. Detail is one step away. Exact truth stays hidden.
+The database holds the full rating vector, the histories, and the era rules. The human player is the owner. The owner hires or fires the GM and the head coach, gives each of them a few broad instructions, takes part in the rookie draft at the level they choose, and then sees the season. The owner does not call plays, set every depth-chart spot, write every contract, or approve every transaction, practice decision, or play. The normal screen does not ask the owner to set the 33 components. Detail is one step away. Exact truth stays hidden.
 
 ### What the owner sees immediately
 
@@ -179,6 +179,8 @@ A normal offseason is seven decisions. Each one has a default. The GM and head c
 5. **Trade preference.** Low, medium, or high. Future picks move only as far as that year's `future_pick_years` allows. The owner does not pick the partner or the contract.
 6. **Rookie draft.** The owner makes the club's picks, or hands the draft to the GM. The default is to hand it over. The owner can take the draft back for one round.
 7. **Final instructions.** Offensive emphasis, defensive emphasis, and fourth-down tendency. Then the season simulates.
+
+Team direction sets the GM's default veteran-versus-youth preference: compete leans veteran, rebuild leans youth, and balanced stays in the middle. The owner may override that preference. It does not add a separate free-agency slider. The GM turns direction into contracts, cuts, signings, trade construction, expansion selections, undrafted signings, and roster balance. The head coach turns the three tendencies into the depth chart, the weekly lineup, special teams, fatigue and injury decisions, coordinator use, and the detailed game plan. An optional playing-time preference, veterans or youth, is stored only when the owner sets one.
 
 An optional involved mode, off by default, lets the owner pin up to five named players to protect or to target in an expansion year. It does not open the full rating editor or the full depth chart.
 
@@ -1389,21 +1391,24 @@ Version 1 need not show coordinator hiring. The rows are still generated with th
 
 Set in the `instructions` phase for the owned franchise. Required before the 1970 season can simulate. AI franchises receive an initial directive derived from the shared staff tags so the starting tendency is identical in every timeline. Later changes append a row; they do not edit the previous one.
 
+This is a later timeline model. Phase 3 does not create it. The owner never sees a slider for each of the 33 player components.
+
 | Field | Layer | Type | Range / units | Origin | Use |
 |-------|-------|------|---------------|--------|-----|
 | `franchise` | Timeline | FK | the owned franchise for owner-set rows; any franchise for AI rows | Owner or Timeline sim | Sim |
 | `role` | Timeline | enum | `gm` `head_coach` | same | Sim |
-| `effective_year`, `effective_week` | Timeline | smallint | first row is 1970 week 0 | same | Both |
-| `draft_approach` | Timeline | enum | `best_player_available` `fill_needs` `trade_back` | Owner, GM only | Sim |
-| `veteran_preference` | Timeline | enum | `youth` `balanced` `win_now` | Owner, GM only | Sim |
-| `free_agency` | Timeline | enum | `conservative` `selective` `aggressive` | Owner, GM only | Sim |
-| `trade_willingness` | Timeline | enum | `low` `medium` `high` | Owner, GM only | Sim |
-| `offensive_emphasis` | Timeline | enum | `run_heavy` `balanced` `pass_heavy` | Owner, coach only | Sim |
+| `effective_year`, `effective_week` | Timeline | smallint | first row is the timeline's opening week 0 | same | Both |
+| `team_direction` | Timeline | enum | `compete` `balanced` `rebuild` | Owner, GM only | Sim |
+| `priority_group_1`, `priority_group_2`, `priority_group_3` | Timeline | enum, null | up to three of `quarterback` `skill` `offensive_line` `defensive_line` `linebacker` `defensive_back` `special_teams`, filled in order | Owner, GM only | Sim |
+| `trade_appetite` | Timeline | enum | `low` `medium` `high` | Owner, GM only | Sim |
+| `veteran_preference` | Timeline | enum | `youth` `balanced` `veterans`. Default comes from team direction unless the owner changes it. | Owner, GM only | Sim |
+| `draft_participation` | Timeline | enum | `owner` `gm`. Default `gm`. The owner may take the draft for a round and hand it back. | Owner, GM only | Sim |
+| `offensive_emphasis` | Timeline | enum | `run` `balanced` `pass` | Owner, coach only | Sim |
 | `defensive_emphasis` | Timeline | enum | `stop_run` `balanced` `pressure_quarterback` | Owner, coach only | Sim |
 | `fourth_down` | Timeline | enum | `conservative` `balanced` `aggressive` | Owner, coach only | Sim |
-| `playing_time` | Timeline | enum | `veterans` `balanced` `develop_youth` | Owner, coach only | Sim |
+| `playing_time` | Timeline | enum, null | `veterans` `balanced` `develop_youth`. Null when the owner leaves it unset. | Owner, coach only | Sim |
 
-GM rows leave coach fields null, and the reverse. The UI shows the current directive. The sim reads the row in effect for that week.
+GM rows leave coach fields null, and the reverse. The GM still handles contract detail, cuts, signings, the shape of a trade, expansion selections, undrafted signings, and roster balance. The head coach still handles the depth chart, the weekly lineup, special teams, fatigue, injuries, coordinators, and play calls. The UI shows the current directive. The sim reads the row in effect for that week.
 
 ---
 

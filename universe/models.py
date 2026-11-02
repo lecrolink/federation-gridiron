@@ -607,3 +607,4 @@ def _require_slug(value, field_name, errors):
 
 
 from universe import people as _people  # noqa: E402,F401
+from universe import rules as _rules  # noqa: E402,F401
