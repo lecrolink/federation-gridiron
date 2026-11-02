@@ -210,7 +210,7 @@ Shared 1960–1969 record book used for display and for the 1970 draft order. No
 - Foreign keys: `franchise` `CASCADE`.
 - Fields: `season_year`; `wins`, `losses`, `ties` `PositiveSmallIntegerField`; `draft_order` `PositiveSmallIntegerField`, null except where the 1970 order needs it.
 - Unique: `(franchise, season_year)`.
-- Checks: year in 1960–1969; wins + losses + ties equals that historical schedule length.
+- Checks: year in 1960–1969; wins, losses, and ties are nonnegative. `draft_order` is null except in 1969, where it is 1 or greater. Phase 1 does not check that wins + losses + ties equal a schedule length, because the approved design does not fix the 1960–1969 game count. That equality can be added when a length is approved, without a new table.
 - Indexes: `(season_year, draft_order)`.
 - Immutable after publish.
 - Rows: 240 if 24 clubs played each of those ten years. The generator fills this from the same seed. It does not replay the seasons.
