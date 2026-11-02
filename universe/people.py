@@ -440,6 +440,18 @@ class UniversePlayer(ReleaseChild):
         blank=True,
         related_name='origin_players',
     )
+    draft_class = models.ForeignKey(
+        'universe.DraftClass',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='players',
+    )
+    origin_profile = models.ForeignKey(
+        'universe.EraRuleProfile',
+        on_delete=models.PROTECT,
+        related_name='origin_players',
+    )
     universe_key = models.CharField(max_length=64, unique=True)
     name = models.CharField(max_length=255)
     birth_year = models.PositiveSmallIntegerField()
@@ -638,6 +650,20 @@ class UniversePlayer(ReleaseChild):
                 condition=~models.Q(universe_key='') & ~models.Q(name=''),
                 name='universe_player_identity_nonempty',
             ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(cohort='draft', draft_class__isnull=False)
+                    | (
+                        ~models.Q(cohort='draft')
+                        & models.Q(draft_class__isnull=True)
+                    )
+                ),
+                name='universe_player_draft_class',
+            ),
+            models.UniqueConstraint(
+                fields=['draft_class', 'board_rank'],
+                name='unique_player_class_board',
+            ),
         ]
 
     def __str__(self):
@@ -662,11 +688,24 @@ class UniversePlayer(ReleaseChild):
         if not self.release_id:
             return
         release = self.release
+        if not self.origin_profile_id:
+            errors['origin_profile'] = 'Every player records an origin era profile.'
+        elif self.origin_profile.release_id != self.release_id:
+            errors['origin_profile'] = (
+                'The origin profile must belong to this player\'s release.'
+            )
         if self.cohort == self.Cohort.DRAFT:
+            if not self.draft_class_id:
+                errors['draft_class'] = 'A draft prospect belongs to one draft class.'
+            elif self.draft_class.release_id != self.release_id:
+                errors['draft_class'] = (
+                    'The draft class must belong to this player\'s release.'
+                )
             if self.draft_pool == self.DraftPool.UNDRAFTED and self.first_pro_year is not None:
                 errors['first_pro_year'] = (
                     'An undrafted prospect has no shared professional debut.'
                 )
+            class_year = self.draft_class.season_year if self.draft_class_id else None
             if self.draft_pool == self.DraftPool.DRAFTABLE:
                 if self.first_pro_year is None or self.origin_draft_year is None:
                     errors['origin_draft_year'] = (
@@ -680,7 +719,28 @@ class UniversePlayer(ReleaseChild):
                     errors['first_pro_year'] = (
                         'A draftable prospect\'s class year is inside the release.'
                     )
+            if (
+                class_year is not None
+                and self.origin_draft_year != class_year
+                and 'origin_draft_year' not in errors
+            ):
+                errors['origin_draft_year'] = (
+                    'The shared class year is not a timeline draft result.'
+                )
+            if (
+                self.draft_pool == self.DraftPool.UNDRAFTED
+                and class_year is not None
+                and (
+                    class_year < release.first_season_year
+                    or class_year > release.last_season_year
+                )
+            ):
+                errors['draft_class'] = 'A draft class year is inside the release.'
         elif self.cohort in (self.Cohort.OPENING, self.Cohort.ARCHIVE):
+            if self.draft_class_id:
+                errors['draft_class'] = (
+                    'Opening and archive players are not in a playable draft class.'
+                )
             if self.first_pro_year is None or not _in_archive(release, self.first_pro_year):
                 errors['first_pro_year'] = (
                     'Opening and archive players debut in the archive window.'
