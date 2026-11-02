@@ -1,14 +1,18 @@
+"""Shared franchise history for one universe release.
+
+``clean()``, ``save()``, and instance ``delete()`` refuse changes to a
+published release. Those are application guards. Queryset updates, bulk
+operations, and direct SQL bypass them. Constraints on these models cover
+single-table structure only. The confirmed 1970–2029 schedule is release
+data, checked when that release is generated and published.
+"""
+
 from django.core.exceptions import ValidationError
+from django.core.validators import validate_slug
 from django.db import models
 
 
-PLAYABLE_FIRST_YEAR = 1970
-PLAYABLE_LAST_YEAR = 2029
-PLAYABLE_SEASON_COUNT = 60
-FOUNDING_FRANCHISE_COUNT = 24
-ARCHIVE_FIRST_YEAR = 1960
-ARCHIVE_LAST_YEAR = 1969
-DEBUT_YEARS = (1970, 1976, 1996)
+ARCHIVE_SEASON_COUNT = 10
 
 
 def _previous(instance):
@@ -59,20 +63,18 @@ class UniverseRelease(models.Model):
         ]
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(founding_franchise_count=FOUNDING_FRANCHISE_COUNT),
-                name='universe_release_founding_count',
+                condition=models.Q(founding_franchise_count__gte=1),
+                name='universe_release_founding_positive',
             ),
             models.CheckConstraint(
-                condition=models.Q(first_season_year=PLAYABLE_FIRST_YEAR),
-                name='universe_release_first_year',
+                condition=models.Q(season_count__gte=1),
+                name='universe_release_season_count_positive',
             ),
             models.CheckConstraint(
-                condition=models.Q(last_season_year=PLAYABLE_LAST_YEAR),
-                name='universe_release_last_year',
-            ),
-            models.CheckConstraint(
-                condition=models.Q(season_count=PLAYABLE_SEASON_COUNT),
-                name='universe_release_season_count',
+                condition=models.Q(
+                    last_season_year__gte=models.F('first_season_year'),
+                ),
+                name='universe_release_season_order',
             ),
             models.CheckConstraint(
                 condition=models.Q(
@@ -131,7 +133,9 @@ class UniverseRelease(models.Model):
                 ),
             )
             for name in changed:
-                errors[name] = 'This field is immutable once the release is published.'
+                errors[name] = (
+                    'Model save cannot change this field once the release is published.'
+                )
 
         if errors:
             raise ValidationError(errors)
@@ -147,6 +151,10 @@ class UniverseRelease(models.Model):
 
 
 class UniverseFranchise(models.Model):
+    class Origin(models.TextChoices):
+        FOUNDING = 'founding', 'Founding'
+        EXPANSION = 'expansion', 'Expansion'
+
     release = models.ForeignKey(
         UniverseRelease,
         on_delete=models.CASCADE,
@@ -168,6 +176,7 @@ class UniverseFranchise(models.Model):
     )
     placeholder_slug = models.SlugField(max_length=64)
     display_name = models.CharField(max_length=255)
+    origin = models.CharField(max_length=16, choices=Origin.choices)
     first_active_season = models.PositiveSmallIntegerField()
     final_active_season = models.PositiveSmallIntegerField(null=True, blank=True)
 
@@ -189,8 +198,8 @@ class UniverseFranchise(models.Model):
                 name='unique_franchise_catalog_team',
             ),
             models.CheckConstraint(
-                condition=models.Q(first_active_season__in=DEBUT_YEARS),
-                name='universe_franchise_debut_year',
+                condition=models.Q(origin__in=['founding', 'expansion']),
+                name='universe_franchise_origin',
             ),
             models.CheckConstraint(
                 condition=(
@@ -228,8 +237,37 @@ class UniverseFranchise(models.Model):
                         seen.add(current.pk)
                         current = current.history_predecessor
 
-        if self.catalog_team_id and self.release_id:
-            if self.catalog_team.league_id != self.release.root_league_id:
+        if self.release_id:
+            release = self.release
+            if (
+                self.first_active_season < release.first_season_year
+                or self.first_active_season > release.last_season_year
+            ):
+                errors['first_active_season'] = (
+                    'The first active season must fall inside the release.'
+                )
+            if self.final_active_season is not None and (
+                self.final_active_season < release.first_season_year
+                or self.final_active_season > release.last_season_year
+            ):
+                errors['final_active_season'] = (
+                    'The final active season must fall inside the release.'
+                )
+            if (
+                self.origin == self.Origin.FOUNDING
+                and self.first_active_season != release.first_season_year
+            ):
+                errors['origin'] = (
+                    'A founding franchise begins in the release\'s first season.'
+                )
+            elif (
+                self.origin == self.Origin.EXPANSION
+                and self.first_active_season <= release.first_season_year
+            ):
+                errors['origin'] = (
+                    'An expansion franchise begins after the release\'s first season.'
+                )
+            if self.catalog_team_id and self.catalog_team.league_id != release.root_league_id:
                 errors['catalog_team'] = (
                     'The catalog team must belong to this release\'s root league.'
                 )
@@ -247,6 +285,7 @@ class UniverseFranchise(models.Model):
                             'release_id',
                             'placeholder_slug',
                             'display_name',
+                            'origin',
                             'first_active_season',
                             'final_active_season',
                             'history_predecessor_id',
@@ -254,7 +293,7 @@ class UniverseFranchise(models.Model):
                     )
                     for name in changed:
                         errors[name] = (
-                            'This field is immutable once the release is published.'
+                            'Model save cannot change this field once the release is published.'
                         )
                     if (
                         previous.catalog_team_id is not None
@@ -280,25 +319,16 @@ class UniverseFranchise(models.Model):
 
 
 class FranchiseSeasonMembership(models.Model):
-    class ConferenceSlug(models.TextChoices):
-        CONFERENCE_1 = 'conference-1', 'Conference 1'
-        CONFERENCE_2 = 'conference-2', 'Conference 2'
-
-    class DivisionSlug(models.TextChoices):
-        D1 = 'd1', 'Division 1'
-        D2 = 'd2', 'Division 2'
-        D3 = 'd3', 'Division 3'
-        D4 = 'd4', 'Division 4'
-
     franchise = models.ForeignKey(
         UniverseFranchise,
         on_delete=models.CASCADE,
         related_name='memberships',
     )
     season_year = models.PositiveSmallIntegerField()
-    conference_slug = models.CharField(max_length=32, choices=ConferenceSlug.choices)
-    division_slug = models.CharField(max_length=32, choices=DivisionSlug.choices)
+    conference_slug = models.CharField(max_length=32)
+    division_slug = models.CharField(max_length=32)
     slot_order = models.PositiveSmallIntegerField()
+    owner_selectable = models.BooleanField(default=True)
 
     class Meta:
         ordering = ['franchise', 'season_year']
@@ -314,46 +344,16 @@ class FranchiseSeasonMembership(models.Model):
                 name='unique_membership_franchise_year',
             ),
             models.CheckConstraint(
-                condition=models.Q(
-                    season_year__gte=PLAYABLE_FIRST_YEAR,
-                    season_year__lte=PLAYABLE_LAST_YEAR,
-                ),
-                name='universe_membership_season_bounds',
+                condition=models.Q(slot_order__gte=1),
+                name='universe_membership_slot_positive',
             ),
             models.CheckConstraint(
-                condition=models.Q(slot_order__gte=1, slot_order__lte=7),
-                name='universe_membership_slot_order',
+                condition=~models.Q(conference_slug=''),
+                name='universe_membership_conference_nonempty',
             ),
             models.CheckConstraint(
-                condition=models.Q(
-                    conference_slug__in=['conference-1', 'conference-2'],
-                ),
-                name='universe_membership_conference',
-            ),
-            models.CheckConstraint(
-                condition=models.Q(division_slug__in=['d1', 'd2', 'd3', 'd4']),
-                name='universe_membership_division',
-            ),
-            models.CheckConstraint(
-                condition=(
-                    (
-                        models.Q(season_year__gt=1975)
-                        | (
-                            models.Q(division_slug__in=['d1', 'd2', 'd3'])
-                            & models.Q(slot_order__lte=4)
-                        )
-                    )
-                    & (
-                        models.Q(season_year__lt=1976)
-                        | models.Q(season_year__gt=1995)
-                        | models.Q(division_slug__in=['d1', 'd2'])
-                    )
-                    & (
-                        models.Q(season_year__lt=1996)
-                        | models.Q(slot_order__lte=4)
-                    )
-                ),
-                name='universe_membership_era_shape',
+                condition=~models.Q(division_slug=''),
+                name='universe_membership_division_nonempty',
             ),
         ]
 
@@ -365,18 +365,20 @@ class FranchiseSeasonMembership(models.Model):
         errors = {}
         if self.franchise_id:
             franchise = self.franchise
-            last_year = franchise.final_active_season or franchise.release.last_season_year
+            release = franchise.release
+            _require_slug(self.conference_slug, 'conference_slug', errors)
+            _require_slug(self.division_slug, 'division_slug', errors)
+            last_year = franchise.final_active_season or release.last_season_year
             if self.season_year < franchise.first_active_season or self.season_year > last_year:
                 errors['season_year'] = (
                     'The season must fall inside this franchise\'s active span.'
                 )
-            release = franchise.release
-            if (
+            elif (
                 self.season_year < release.first_season_year
                 or self.season_year > release.last_season_year
             ):
                 errors['season_year'] = (
-                    'The season must fall inside the release\'s supported years.'
+                    'The season must fall inside the release\'s playable seasons.'
                 )
             clash = FranchiseSeasonMembership.objects.filter(
                 franchise__release_id=franchise.release_id,
@@ -439,13 +441,6 @@ class FranchiseHistoryEvent(models.Model):
                 fields=['franchise', 'season_year', 'kind'],
                 name='unique_history_event_per_year',
             ),
-            models.CheckConstraint(
-                condition=models.Q(
-                    season_year__gte=PLAYABLE_FIRST_YEAR,
-                    season_year__lte=PLAYABLE_LAST_YEAR,
-                ),
-                name='universe_history_season_bounds',
-            ),
         ]
 
     def __str__(self):
@@ -456,12 +451,22 @@ class FranchiseHistoryEvent(models.Model):
         errors = {}
         if self.franchise_id:
             franchise = self.franchise
-            last_year = franchise.final_active_season or franchise.release.last_season_year
-            if self.season_year < franchise.first_active_season or self.season_year > last_year:
+            release = franchise.release
+            if (
+                self.season_year < release.first_season_year
+                or self.season_year > release.last_season_year
+            ):
+                errors['season_year'] = (
+                    'The event year must fall inside the release\'s playable seasons.'
+                )
+            elif self.season_year < franchise.first_active_season or (
+                franchise.final_active_season is not None
+                and self.season_year > franchise.final_active_season
+            ):
                 errors['season_year'] = (
                     'The event year must fall inside this franchise\'s active span.'
                 )
-            _reject_published_child(self, franchise.release, errors)
+            _reject_published_child(self, release, errors)
 
         if errors:
             raise ValidationError(errors)
@@ -504,18 +509,11 @@ class HistoricalStanding(models.Model):
                 name='unique_standing_franchise_year',
             ),
             models.CheckConstraint(
-                condition=models.Q(
-                    season_year__gte=ARCHIVE_FIRST_YEAR,
-                    season_year__lte=ARCHIVE_LAST_YEAR,
-                ),
-                name='universe_standing_archive_years',
-            ),
-            models.CheckConstraint(
                 condition=(
                     models.Q(draft_order__isnull=True)
-                    | models.Q(season_year=ARCHIVE_LAST_YEAR, draft_order__gte=1)
+                    | models.Q(draft_order__gte=1)
                 ),
-                name='universe_standing_draft_order',
+                name='universe_standing_draft_order_positive',
             ),
         ]
 
@@ -527,11 +525,22 @@ class HistoricalStanding(models.Model):
         errors = {}
         if self.franchise_id:
             franchise = self.franchise
-            if franchise.first_active_season != PLAYABLE_FIRST_YEAR:
+            release = franchise.release
+            archive_last = release.first_season_year - 1
+            archive_first = release.first_season_year - ARCHIVE_SEASON_COUNT
+            if self.season_year < archive_first or self.season_year > archive_last:
+                errors['season_year'] = (
+                    'Historical seasons are the ten years immediately before the release begins.'
+                )
+            if franchise.origin != UniverseFranchise.Origin.FOUNDING:
                 errors['franchise'] = (
                     'Historical standings belong to founding franchises only.'
                 )
-            if self.draft_order is not None:
+            if self.draft_order is not None and self.season_year != archive_last:
+                errors['draft_order'] = (
+                    'Draft order is recorded only for the last archive season.'
+                )
+            elif self.draft_order is not None:
                 clash = HistoricalStanding.objects.filter(
                     franchise__release_id=franchise.release_id,
                     season_year=self.season_year,
@@ -575,4 +584,16 @@ def _reject_published_child(instance, release, errors):
         [field.attname for field in instance._meta.concrete_fields if field.attname != 'id'],
     )
     for name in changed:
-        errors[name] = 'This field is immutable once the release is published.'
+        errors[name] = (
+            'Model save cannot change this field once the release is published.'
+        )
+
+
+def _require_slug(value, field_name, errors):
+    if not value:
+        errors[field_name] = 'Enter a nonempty slug.'
+        return
+    try:
+        validate_slug(value)
+    except ValidationError:
+        errors[field_name] = 'Enter a nonempty slug.'

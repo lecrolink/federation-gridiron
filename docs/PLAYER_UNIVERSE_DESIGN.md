@@ -110,7 +110,7 @@ The draft class year equals the season year that follows the draft. The first ac
 
 2030 would be `season_index` 61 (`2030 − 1970 + 1 = 61`). It is not a playable season. Class size for each of the 60 years is `rounds(year) × N(year)` plus that year's undrafted pool. `N(year)` comes from the shared schedule, so the 60 classes stay identical across timelines even when some years have more than 24 teams.
 
-Pre-1970 history uses years **1960–1969**. Those years are outside the 60. Timeline stat tables accept only `season_year` 1970–2029. Shared history tables accept only `season_year` 1960–1969.
+Pre-1970 history for the confirmed release uses years **1960–1969**, the ten seasons immediately before 1970. Those years are outside the 60. Timeline stat tables for that release use `season_year` 1970–2029. A historical standing is validated as one of the ten seasons before its release's first playable season, so the 1970 release still stores 1960–1969, and draft order is allowed only in 1969. The table does not hardcode those calendar years.
 
 The football clock is this integer year plus a phase. `TIME_ZONE` does not define it.
 
@@ -640,6 +640,16 @@ The 1996 shape is 2 conferences and 8 divisions of 4, which is the shape `league
 
 The schedule is shared universe data and is versioned with the release. Every timeline on that release activates the same franchises in the same seasons, in the same conferences and divisions. A timeline cannot vote a club into the league or change `N(year)`. After publish, editing the schedule means a new release. Timelines already pinned to the old release keep the old schedule.
 
+The years, franchise counts, and alignment shapes above are the confirmed first release. They are release data. The tables store `origin` and `owner_selectable` as their own columns, and they store conference and division as slugs. They do not hardcode 1970, 1976, 1996, 2029, 24 founding clubs, 60 seasons, or the era shapes as database checks. A later release with a different horizon does not need a migration to change those numbers.
+
+Publication of the confirmed release still requires 24 founding franchises, playable seasons 1970–2029, expansion to 28 franchises in 1976, expansion to 32 franchises in 1996, the alignment tables above, and 1,792 franchise-season memberships. That check belongs to release publication (phase 8 in the model proposal). It is not a permanent limit on every row the database can store, and this phase does not implement that validator.
+
+`origin` is stored on the franchise. It is not inferred when the franchise is displayed. A founding franchise begins in the release's first playable season. An expansion franchise begins in a later season. The confirmed release therefore marks the 1970 clubs `founding` and the 1976 and 1996 clubs `expansion`.
+
+`owner_selectable` is stored on each membership row, because a human owner may be allowed to control a franchise in one season and not in another. The column defaults to true when a row is saved without the flag. The confirmed release sets it true for each founding club in 1970, true for an expansion club only in that club's first season, and false on every other membership.
+
+Model `clean()`, `save()`, and instance `delete()` refuse edits to a published release. Those are application guards. Queryset updates, bulk writes, and direct SQL can bypass them. A generator may use bulk operations only while the release is still `draft`. Published rows are changed only through an approved service. Application code must not call queryset `update` or `bulk_update` on published release data. Future admin tools are read-only for a published release. The release fingerprints are how a later check confirms the stored rows still match what was published. Database constraints enforce the single-table rules they can express, such as unique keys, positive counts, and season arithmetic. This design adds no database triggers.
+
 ### Shared franchise
 
 One row per club that will ever play in the release. All 32 placeholder franchises exist when the release is generated. Expansion clubs are not created when the first timeline reaches 1976 or 1996.
@@ -648,9 +658,9 @@ One row per club that will ever play in the release. All 32 placeholder franchis
 |-------|-------|------|---------------|--------|-----|
 | `slug` | Shared | slug | unique in the release | Schedule author | Both |
 | `name` | Shared | string | ≤ 255, name at debut | Schedule author | Display |
-| `first_active_season` | Shared | smallint | 1970 for the founding 24; 1971–2029 for expansion | Schedule author | Both |
-| `final_active_season` | Shared | smallint, null | null means still active through 2029; otherwise 1970–2029 | Schedule author | Both |
-| `origin` | Shared | enum | `founding` or `expansion` | Schedule author | Display |
+| `first_active_season` | Shared | smallint | confirmed release: 1970 for the founding 24; 1976 or 1996 for expansion | Schedule author | Both |
+| `final_active_season` | Shared | smallint, null | null means still active through the release's last season; the confirmed release has no final season | Schedule author | Both |
+| `origin` | Shared | enum | `founding` or `expansion`, stored on the row | Schedule author | Both |
 | `history_predecessor` | Shared | FK, null | another franchise in the release, for a later relocation or reorganization link | Schedule author, unused until needed | Display |
 
 `history_predecessor` is the hook for relocation, renaming, or a club that continues another club's history. No such links are defined. A rename or city change that keeps the same franchise uses `FranchiseHistoryEvent` rather than a new slug.
@@ -662,11 +672,11 @@ One shared row per franchise per season in which it exists. This is the alignmen
 | Field | Layer | Type | Range / units | Origin | Use |
 |-------|-------|------|---------------|--------|-----|
 | `franchise` | Shared | FK | | Schedule author | Both |
-| `season_year` | Shared | smallint | 1970–2029, inside the franchise's active span | Schedule author | Both |
-| `conference_slug` | Shared | slug | conference for that season | Schedule author | Both |
-| `division_slug` | Shared | slug | division for that season | Schedule author | Both |
-| `slot_order` | Shared | smallint | 1–4 in 1970–1975 and 1996–2029; 1–7 in 1976–1995 | Schedule author, from the alignment tables | Both |
-| `owner_selectable` | Shared | bool | whether a human owner may hold or apply for this club in this season | Schedule author | Both |
+| `season_year` | Shared | smallint | inside the franchise's active span and the release's playable span; 1970–2029 for the confirmed release | Schedule author | Both |
+| `conference_slug` | Shared | slug | nonempty conference slug for that season; `conference-1` or `conference-2` in the confirmed release | Schedule author | Both |
+| `division_slug` | Shared | slug | nonempty division slug for that season; `d1`–`d4` as the confirmed alignment requires | Schedule author | Both |
+| `slot_order` | Shared | smallint | positive; 1–4 or 1–7 in the confirmed alignment tables | Schedule author, from the alignment tables | Both |
+| `owner_selectable` | Shared | bool | whether a human owner may control this club in this season; column default true | Schedule author | Both |
 
 Founding clubs are owner-selectable in 1970. Each expansion club is owner-selectable only in its first season, which is when an existing owner may apply for it. Every other membership row sets the flag false. Realignment is a new membership row for the later season, using the alignment tables above. A timeline does not recompute conference, division, or `slot_order` from standings.
 
@@ -677,7 +687,7 @@ Optional shared rows. None are required for the founding 24.
 | Field | Layer | Type | Range / units | Origin | Use |
 |-------|-------|------|---------------|--------|-----|
 | `franchise` | Shared | FK | | Schedule author | Display |
-| `season_year` | Shared | smallint | 1970–2029 | Schedule author | Display |
+| `season_year` | Shared | smallint | inside the release's playable span and the franchise's active span | Schedule author | Display |
 | `kind` | Shared | enum | `rename`, `relocation`, `reorganization` | Schedule author | Display |
 | `previous_name` | Shared | string | ≤ 255 | Schedule author | Display |
 | `new_name` | Shared | string | ≤ 255 | Schedule author | Display |
