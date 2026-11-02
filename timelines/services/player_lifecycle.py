@@ -289,8 +289,6 @@ def initialize_opening_state(timeline, season, availability_by_player):
     """Copy the release's opening assignments into the first season."""
     with deferred_lifecycle():
         timeline = _lock_timeline(timeline)
-        _require_active(timeline)
-        _require_published(timeline)
         season = _lock_season(season)
         _season_on_timeline(season, timeline)
         if season.season_year != timeline.start_season_year:
@@ -346,6 +344,8 @@ def initialize_opening_state(timeline, season, availability_by_player):
             _fail('Opening state is neither the requested result nor the required source.')
         if not pending:
             return
+        _require_active(timeline)
+        _require_published(timeline)
         _reject_complete_phase(season)
         for assignment, profile, availability, expected_status, overlay in pending:
             if overlay is None:
@@ -386,8 +386,6 @@ def materialize_draft_class(timeline, draft_class, season):
     """Insert prospect overlays for one shared draft class."""
     with transaction.atomic():
         timeline = _lock_timeline(timeline)
-        _require_active(timeline)
-        _require_published(timeline)
         season = _lock_season(season)
         if draft_class.release_id != timeline.release_id:
             _fail('The draft class belongs to this timeline\'s release.')
@@ -414,6 +412,8 @@ def materialize_draft_class(timeline, draft_class, season):
                 _fail('A prospect has no roster membership.')
         if not to_create:
             return
+        _require_active(timeline)
+        _require_published(timeline)
         _reject_complete_phase(season)
         for player, profile in to_create:
             overlay = TimelinePlayer(
@@ -459,7 +459,6 @@ def place_drafted_players(timeline, season, placements):
         return
     with deferred_lifecycle():
         timeline = _lock_timeline(timeline)
-        _require_active(timeline)
         season = _lock_season(season)
         _season_on_timeline(season, timeline)
         seen = set()
@@ -486,6 +485,7 @@ def place_drafted_players(timeline, season, placements):
             planned.append((overlay, fields))
         if not planned:
             return
+        _require_active(timeline)
         _reject_complete_phase(season)
         for overlay, fields in planned:
             _open_membership(
@@ -520,7 +520,6 @@ def record_development(overlay, season, changes):
     """Append ordered development events and move the live season rating."""
     with transaction.atomic():
         timeline = _lock_timeline(overlay.timeline)
-        _require_active(timeline)
         season = _lock_season(season)
         _season_on_timeline(season, timeline)
         overlay = TimelinePlayer.objects.select_for_update().get(pk=overlay.pk)
@@ -564,6 +563,7 @@ def record_development(overlay, season, changes):
                 planned.append((component, delta, reason, event_index))
         if not planned:
             return
+        _require_active(timeline)
         _reject_complete_phase(season)
         for component, delta, reason, event_index in planned:
             DevelopmentEvent(
@@ -608,10 +608,11 @@ def _retirement_matches(overlay, season, end_week):
     return not ratings and not memberships and not events
 
 
-def _delete_premature_rating(overlay, season):
+def _premature_rating(overlay, season):
+    """Return the unmodified next-season rating, when retirement may remove it."""
     ratings, memberships, events = _later_rows(overlay, season)
     if not ratings and not memberships and not events:
-        return
+        return None
     current = overlay.season_ratings.filter(season=season).first()
     if (
         len(ratings) == 1
@@ -622,8 +623,7 @@ def _delete_premature_rating(overlay, season):
         and current is not None
         and _same_vector(ratings[0], current)
     ):
-        ratings[0].delete()
-        return
+        return ratings[0]
     _fail(
         'The player has entered a later season. '
         'Name that season once its membership is the one being closed.'
@@ -638,7 +638,6 @@ def retire_player(overlay, season, end_week):
 
 def _retire_player(overlay, season, end_week):
     timeline = _lock_timeline(overlay.timeline)
-    _require_active(timeline)
     season = _lock_season(season)
     _season_on_timeline(season, timeline)
     end_week = _week(end_week, 'end_week')
@@ -652,7 +651,10 @@ def _retire_player(overlay, season, end_week):
     open_row = _open_in_season(overlay, season)
     if open_row is None:
         _fail('Retirement closes an open roster membership.')
-    _delete_premature_rating(overlay, season)
+    early_rating = _premature_rating(overlay, season)
+    _require_active(timeline)
+    if early_rating is not None:
+        early_rating.delete()
     _close_membership(open_row, end_week, 'retired')
     _save_status(overlay, TimelinePlayer.Status.RETIRED, season.season_year)
 
@@ -686,7 +688,6 @@ def cut_player(overlay, season, end_week, start_week, availability):
     """Move a club player to an unsigned free-agent row."""
     with deferred_lifecycle():
         timeline = _lock_timeline(overlay.timeline)
-        _require_active(timeline)
         season = _lock_season(season)
         _season_on_timeline(season, timeline)
         end_week = _week(end_week, 'end_week')
@@ -718,6 +719,7 @@ def cut_player(overlay, season, end_week, start_week, availability):
             or open_row.role == RosterMembership.Role.FREE_AGENT
         ):
             _fail('A cut starts from an open club membership.')
+        _require_active(timeline)
         _reject_complete_phase(season)
         position = open_row.position
         _close_membership(open_row, end_week, 'cut')
@@ -765,7 +767,6 @@ def sign_player(
     """Give a prospect a first membership, or sign a free agent to a club."""
     with deferred_lifecycle():
         timeline = _lock_timeline(overlay.timeline)
-        _require_active(timeline)
         season = _lock_season(season)
         _season_on_timeline(season, timeline)
         if role not in CLUB_ROLES:
@@ -808,6 +809,7 @@ def sign_player(
                 _fail('A free-agent signing closes the open free-agent row.')
         else:
             _fail('A signing starts from a prospect or an open free agent.')
+        _require_active(timeline)
         _reject_complete_phase(season)
         if free_agent:
             _close_membership(open_row, end_week, 'transaction')
@@ -866,7 +868,6 @@ def _replace_membership(
     require_different_franchise,
 ):
     timeline = _lock_timeline(overlay.timeline)
-    _require_active(timeline)
     season = _lock_season(season)
     _season_on_timeline(season, timeline)
     if role not in CLUB_ROLES:
@@ -903,6 +904,7 @@ def _replace_membership(
             _fail('An expansion move changes the franchise.')
     elif not differs:
         _fail('A reassignment changes the franchise, role, or position.')
+    _require_active(timeline)
     _reject_complete_phase(season)
     _close_membership(open_row, end_week, reason)
     _open_membership(
@@ -973,7 +975,6 @@ def set_availability(overlay, season, availability):
     """Change availability on the open membership without a new row."""
     with transaction.atomic():
         timeline = _lock_timeline(overlay.timeline)
-        _require_active(timeline)
         season = _lock_season(season)
         _season_on_timeline(season, timeline)
         availability = _availability(availability)
@@ -983,6 +984,7 @@ def set_availability(overlay, season, availability):
             _fail('Availability changes an open roster membership.')
         if open_row.availability == availability:
             return
+        _require_active(timeline)
         _reject_complete_phase(season)
         open_row.availability = availability
         open_row.save()
@@ -1073,7 +1075,6 @@ def advance_season(completed_season, next_season, retirements, continuations):
     """Retire, copy frozen ratings, and open the next season's memberships."""
     with transaction.atomic():
         timeline = _lock_timeline(completed_season.timeline)
-        _require_active(timeline)
         completed_season = _lock_season(completed_season)
         next_season = _lock_season(next_season)
         _season_on_timeline(completed_season, timeline)
@@ -1160,12 +1161,11 @@ def advance_season(completed_season, next_season, retirements, continuations):
             if completed_rating is None:
                 _fail('Every player in the completed season has a season rating.')
             needs_copy.append((overlay, completed_rating))
-        if (to_retire or to_continue or needs_copy) and (
-            next_season.phase == Timeline.Phase.COMPLETE
-        ):
-            _fail('The next season is not complete.')
         if not to_retire and not to_continue and not needs_copy:
             return
+        _require_active(timeline)
+        if next_season.phase == Timeline.Phase.COMPLETE:
+            _fail('The next season is not complete.')
         with deferred_lifecycle():
             for overlay, end_week in to_retire:
                 retire_player(overlay, completed_season, end_week)
