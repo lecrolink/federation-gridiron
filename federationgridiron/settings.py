@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'leagues',
     'universe',
     'timelines',
+    'setupflow',
 ]
 
 MIDDLEWARE = [

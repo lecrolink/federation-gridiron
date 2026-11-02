@@ -1,0 +1,62 @@
+{% extends "setupflow/base.html" %}
+
+{% block title %}{{ franchise.name }}{% endblock %}
+
+{% block content %}
+  <p class="kicker">{{ franchise.conference_label }} · {{ franchise.division }}</p>
+  <h1>{{ franchise.name }}</h1>
+  <p class="lede">A founding club for the 1970 season. The city and the nickname are still unchosen.</p>
+  <dl class="facts">
+    <div>
+      <dt>Placeholder slug</dt>
+      <dd>{{ franchise.slug }}</dd>
+    </div>
+    <div>
+      <dt>First season</dt>
+      <dd>{{ franchise.first_season }}</dd>
+    </div>
+    <div>
+      <dt>Conference</dt>
+      <dd>{{ franchise.conference }}</dd>
+    </div>
+    <div>
+      <dt>Division</dt>
+      <dd>{{ franchise.division }}</dd>
+    </div>
+    <div>
+      <dt>Division order</dt>
+      <dd>{{ franchise.slot_order }}</dd>
+    </div>
+  </dl>
+  <section>
+    <h2>Opening staff</h2>
+    <ul class="people">
+      <li>
+        <span class="choice-title">Opening general manager</span>
+        <span class="choice-note">Placeholder for the shared GM already employed here.</span>
+      </li>
+      <li>
+        <span class="choice-title">Opening head coach</span>
+        <span class="choice-note">Placeholder for the shared head coach already employed here.</span>
+      </li>
+    </ul>
+  </section>
+  <section>
+    <h2>Also in {{ franchise.division }}</h2>
+    <ul class="mates">
+      {% for mate in franchise.mates %}
+        <li><a href="{% url 'setupflow:overview' mate.slug %}">{{ mate.name }}</a></li>
+      {% endfor %}
+    </ul>
+  </section>
+  <form id="take-club" method="post" action="{% url 'setupflow:overview' franchise.slug %}">
+    {% csrf_token %}
+  </form>
+{% endblock %}
+
+{% block actions %}
+  <div class="actionbar">
+    <a class="button button-secondary" href="{% url 'setupflow:franchises' %}">Back</a>
+    <button class="button" type="submit" form="take-club">{% if taken %}Continue{% else %}Take this club{% endif %}</button>
+  </div>
+{% endblock %}

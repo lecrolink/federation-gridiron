@@ -1,0 +1,13 @@
+<fieldset class="choices">
+  <legend>{{ legend }}</legend>
+  {% if help %}<p class="help">{{ help }}</p>{% endif %}
+  {% for option in options %}
+    <label class="choice">
+      <input type="radio" name="{{ name }}" value="{{ option.value }}"{% if option.value == selected %} checked{% endif %}>
+      <span class="choice-body">
+        <span class="choice-title">{{ option.label }}</span>
+        {% if option.note %}<span class="choice-note">{{ option.note }}</span>{% endif %}
+      </span>
+    </label>
+  {% endfor %}
+</fieldset>

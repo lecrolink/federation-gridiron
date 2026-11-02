@@ -1,0 +1,24 @@
+{% extends "setupflow/base.html" %}
+
+{% block title %}Coach instructions{% endblock %}
+
+{% block content %}
+  <p class="kicker">{{ franchise.name }}</p>
+  <h1>Instructions for the head coach</h1>
+  <p class="lede">Set the lean on offense, defense, and fourth down. The head coach still sets the lineup and the game plan.</p>
+  {% include "setupflow/includes/errors.html" %}
+  <form id="coach-form" method="post" action="{% url 'setupflow:coach' franchise.slug %}">
+    {% csrf_token %}
+    {% include "setupflow/includes/radios.html" with legend="Offensive emphasis" name="offensive_emphasis" options=offenses selected=state.offensive_emphasis %}
+    {% include "setupflow/includes/radios.html" with legend="Defensive emphasis" name="defensive_emphasis" options=defenses selected=state.defensive_emphasis %}
+    {% include "setupflow/includes/radios.html" with legend="Fourth down" name="fourth_down" options=fourths selected=state.fourth_down %}
+    {% include "setupflow/includes/radios.html" with legend="Playing time" name="playing_time" options=playing_times selected=state.playing_time help="Let the coach decide unless you want veterans or youth to play." %}
+  </form>
+{% endblock %}
+
+{% block actions %}
+  <div class="actionbar">
+    <a class="button button-secondary" href="{% url 'setupflow:gm' franchise.slug %}">Back</a>
+    <button class="button" type="submit" form="coach-form">Review</button>
+  </div>
+{% endblock %}

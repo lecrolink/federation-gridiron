@@ -1,0 +1,91 @@
+{% extends "setupflow/base.html" %}
+
+{% block title %}Review{% endblock %}
+
+{% block content %}
+  <p class="kicker">{{ franchise.name }}</p>
+  <h1>Your opening choices</h1>
+  <p class="lede">These choices are in a cookie on this browser. The 1970 draft is the next opening step, and it is outside this prototype.</p>
+  <section class="recap">
+    <header>
+      <h2>Club</h2>
+      <a href="{% url 'setupflow:overview' franchise.slug %}">Change</a>
+    </header>
+    <p>{{ franchise.name }}</p>
+    <p class="choice-note">{{ franchise.conference }} · {{ franchise.division }} · order {{ franchise.slot_order }}</p>
+  </section>
+  <section class="recap">
+    <header>
+      <h2>General manager</h2>
+      <a href="{% url 'setupflow:staff' franchise.slug %}">Change</a>
+    </header>
+    <p>{{ staff.gm_line }}</p>
+    <p class="choice-note">{{ staff.gm_detail }}</p>
+  </section>
+  <section class="recap">
+    <header>
+      <h2>Head coach</h2>
+      <a href="{% url 'setupflow:staff' franchise.slug %}">Change</a>
+    </header>
+    <p>{{ staff.hc_line }}</p>
+    <p class="choice-note">{{ staff.hc_detail }}</p>
+  </section>
+  <section class="recap">
+    <header>
+      <h2>General manager instructions</h2>
+      <a href="{% url 'setupflow:gm' franchise.slug %}">Change</a>
+    </header>
+    <dl class="facts">
+      <div>
+        <dt>Direction</dt>
+        <dd>{{ instructions.direction }}</dd>
+      </div>
+      <div>
+        <dt>Position groups</dt>
+        <dd>{% if instructions.priorities %}{{ instructions.priorities|join:", " }}{% else %}Left to the general manager{% endif %}</dd>
+      </div>
+      <div>
+        <dt>Trade appetite</dt>
+        <dd>{{ instructions.trade }}</dd>
+      </div>
+      <div>
+        <dt>Veteran preference</dt>
+        <dd>{{ instructions.veterans }}</dd>
+      </div>
+    </dl>
+  </section>
+  <section class="recap">
+    <header>
+      <h2>Head coach instructions</h2>
+      <a href="{% url 'setupflow:coach' franchise.slug %}">Change</a>
+    </header>
+    <dl class="facts">
+      <div>
+        <dt>Offense</dt>
+        <dd>{{ instructions.offense }}</dd>
+      </div>
+      <div>
+        <dt>Defense</dt>
+        <dd>{{ instructions.defense }}</dd>
+      </div>
+      <div>
+        <dt>Fourth down</dt>
+        <dd>{{ instructions.fourth }}</dd>
+      </div>
+      <div>
+        <dt>Playing time</dt>
+        <dd>{{ instructions.playing_time }}</dd>
+      </div>
+    </dl>
+  </section>
+  <form id="reset-form" method="post" action="{% url 'setupflow:reset' %}">
+    {% csrf_token %}
+  </form>
+{% endblock %}
+
+{% block actions %}
+  <div class="actionbar">
+    <a class="button button-secondary" href="{% url 'setupflow:coach' franchise.slug %}">Back</a>
+    <button class="button" type="submit" form="reset-form">Start over</button>
+  </div>
+{% endblock %}
