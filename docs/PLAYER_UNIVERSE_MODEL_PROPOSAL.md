@@ -276,7 +276,7 @@ Display only. The simulator reads `board_rank` and the rating profile, not these
 - Foreign keys: `player` `CASCADE`.
 - Fields: `season_year`; `class_standing` choices `freshman`, `sophomore`, `junior`, `senior`; `games` and `starts`; plus the season-stat columns that apply to college volume, listed under season statistics. Unused columns stay 0.
 - Unique: `(player, season_year)`.
-- Checks: four seasons before the player's anchor year; `starts <= games <= 12`.
+- Checks: four seasons before the player's anchor year when an anchor is stored; `starts <= games`. There is no permanent games maximum. College schedule length, including a later postseason, is a publication or era-rule check once those rules exist. `PositiveSmallIntegerField` already rejects a negative count.
 - Indexes: `(player, season_year)`.
 - Immutable after publish.
 - Rows: 87,792 at four seasons per identity.
@@ -360,7 +360,7 @@ Head coaches, coordinators, and historical position coaches are one person table
 - Ownership: shared.
 - Primary key: `BigAutoField`. Public key: `universe_key`, prefix `c-`.
 - Foreign keys: `release` `CASCADE`.
-- Fields: `name`; `birth_year`; `specialty` choices `offense`, `defense`, `both`; `former_role` choices `player`, `college_coach`, `coordinator`, `position_coach`; `preferred_offense` from `power_run`, `option`, `pro_style`, `west_coast`, `air_raid`; `preferred_defense` from `stop_run`, `balanced`, `pressure_quarterback`; `strength_1`, `strength_2`, `weakness`; `trait_1`, `trait_2`; `debut_year`. The initial 100 head coaches are `both`. `west_coast` is legal only when `debut_year` is 1987 or later. `air_raid` is legal only when `debut_year` is 2004 or later. Specialty does not mean the two scheme ratings are equal.
+- Fields: `name`; `birth_year`; `specialty` choices `offense`, `defense`, `both`; `former_role` choices `player`, `college_coach`, `coordinator`, `position_coach`; `preferred_offense` from `power_run`, `option`, `pro_style`, `west_coast`, `air_raid`; `preferred_defense` from `stop_run`, `balanced`, `pressure_quarterback`; `strength_1`, `strength_2`, `weakness`; `trait_1`, `trait_2`; `debut_year`. Specialty is background and orientation. It limits the coordinator chair and does not stop the person from becoming a head coach. A coach with specialty `offense` may hold a head-coach post and keeps `offense` after promotion. The generator may still give the original 1970 head-coach pool specialty `both`; that is not a schema rule. `west_coast` is legal only when `debut_year` is 1987 or later. `air_raid` is legal only when `debut_year` is 2004 or later. Specialty does not mean the two scheme ratings are equal.
 - Unique: `universe_key`. The 100 initial head coaches have distinct strength, weakness, trait, and history signatures.
 - Checks: strengths differ; traits differ; scheme enums respect the debut year.
 - Indexes: `(release, debut_year, specialty)`.
@@ -383,15 +383,16 @@ Head coaches, coordinators, and historical position coaches are one person table
 
 ### UniverseStaffPost
 
-A pre-1970 job. Display. It does not change when a timeline fires someone.
+Shared employment before the person can be hired. Display. It does not change when a timeline fires someone, and it is not a playable-timeline appointment.
 
 - Ownership: shared.
 - Primary key: `BigAutoField`.
-- Foreign keys: `gm` null, `coach` null, `franchise` null, all `CASCADE`. Exactly one of gm or coach is set. A college post may have a null franchise.
-- Fields: `role` choices `gm`, `head_coach`, `offensive_coordinator`, `defensive_coordinator`, `position_coach`, `college_head_coach`; `start_year`, `end_year`; `wins`, `losses`, `ties`, `playoff_appearances`, `championships` `PositiveSmallIntegerField`; `ended_by` choices `resigned`, `fired`, `promoted`, `retired`, `post_completed`.
+- Foreign keys: `gm` null, `coach` null, both `CASCADE`. Exactly one of gm or coach is set. `franchise` to `UniverseFranchise`, `PROTECT`, null. `college` to `College`, `PROTECT`, null.
+- Fields: `organization_name` `CharField(255)`, blank when another employer is set; `role` choices `gm`, `personnel_director`, `scout`, `college_coach`, `head_coach`, `offensive_coordinator`, `defensive_coordinator`, `position_coach`, `college_head_coach`; `start_year`, `end_year`; `wins`, `losses`, `ties`, `playoff_appearances`, `championships` `PositiveSmallIntegerField`; `ended_by` choices `resigned`, `fired`, `promoted`, `retired`, `post_completed`.
+- Employer: exactly one of `franchise`, `college`, or a nonempty `organization_name`. A college role (`college_coach`, `college_head_coach`) does not name a Federation franchise. A pro chair (`gm`, `personnel_director`, `head_coach`, `offensive_coordinator`, `defensive_coordinator`) does not name a shared college. `scout` and `position_coach` may use any one employer. `organization_name` is the outside organization when the employer is not a shared college and not a Federation franchise.
 - Unique: none required. Successive posts are allowed.
-- Checks: years end by 1969; `end_year >= start_year`; coordinator roles match specialty (`offense` may be offensive coordinator, `defense` may be defensive coordinator, `both` may hold either or a head-coach post).
-- Indexes: `(gm, start_year)`; `(coach, start_year)`; `(franchise, start_year)`.
+- Checks: `end_year >= start_year`; `end_year` is no later than the person's `debut_year - 1`; a post that names a Federation franchise also ends before the release's first playable season. An external or college post may continue through the season before debut, including years after play has begun for other people. `offensive_coordinator` requires specialty `offense` or `both`. `defensive_coordinator` requires specialty `defense` or `both`. `head_coach`, `position_coach`, and `college_head_coach` permit `offense`, `defense`, or `both`. Promotion to head coach does not change specialty. Biography values that stay off this post enum: GM `former_role` `player`, `personnel`, and `cap_analyst` (the dated personnel job is `personnel_director`); coach `former_role` `player`, `college_coach`, and `coordinator` (dated posts use `college_head_coach`, `offensive_coordinator`, and `defensive_coordinator`). No post role was added or renamed for this correction.
+- Indexes: `(gm, start_year)`; `(coach, start_year)`; `(franchise, start_year)`; `(college, start_year)`.
 - Immutable after publish.
 - Rows: several thousand across 1,610 people. The exact count is a generator output, not a schedule identity.
 - Created at release publication.
@@ -455,7 +456,7 @@ Defense: `tackles`, `tackles_for_loss`, `sacks` in tenths, `quarterback_hits`, `
 
 Kicking: `fg_made`, `fg_attempts`, `fg_long`, `xp_made`, `xp_attempts`, `kickoff_touchbacks`, `punts`, `punt_yards` `IntegerField`, `punts_inside_20`, `punt_touchbacks`, `punt_long`.
 
-Checks on a pro row: `starts <= games`; `games` does not exceed that season's `schedule_length`; `completions <= pass_attempts`; `fumbles_lost <= fumbles`; `sacks` is 0–250 on a defensive line season. The service applies the tighter per-position ranges from the design. College games are at most 12.
+Checks on a season row: `starts <= games`; `completions <= pass_attempts`; `fumbles_lost <= fumbles`; made kicks do not exceed attempts; the other numerator-versus-denominator checks in the phase 2 migration; `sacks` is 0–250. Counts are nonnegative because they are `PositiveSmallIntegerField` values. `games` versus that season's `schedule_length`, and any college schedule length, belong to a later era-rule or publication-validation phase. Phase 2 does not store a permanent college games maximum. The service applies the tighter per-position ranges from the design.
 
 ## Timeline models
 
@@ -998,7 +999,8 @@ Existing `League`, `Conference`, `Division`, `Team`, and `MovementPath` rows rem
 
 - Models: `College`, `UniversePlayer`, `PlayerRatingProfile`, `UniverseGM`, `GMRatingProfile`, `UniverseCoach`, `CoachRatingProfile`, `UniverseCollegeSeason`, `UniverseProStint`, `UniverseProSeason`, `UniverseStaffPost`, `UniverseAward`.
 - Depends on: phase 1 franchises, for origin franchise and pro stints.
-- Validation: one profile per person; every component 0–100 and initial at or under potential; 19-position enum; 1970–2029 prospects have null origin pick fields; trait and staff-signature checks; college seasons are four per player when that default is on.
+- Validation: one profile per person; every component 0–100 and initial at or under potential; 19-position enum; 1970–2029 prospects have null origin pick fields; trait and staff-signature checks; college seasons are four per player when that default is on. Phase 2 does not make that count of four a database invariant.
+- Technical notes from implementation, not game-rule changes: `draft_class` and `origin_profile` are added with phase 3, when `DraftClass` and `EraRuleProfile` exist. The `(draft_class, board_rank)` unique constraint arrives with that foreign key. `UniverseAward` stores `release` so one honor per release, season, kind, and slot can be a real unique key; non-all-league rows use an empty `slot` because MySQL treats nulls as distinct. History rows point at `UniverseFranchise` with `PROTECT`. Shared pro years are the ten seasons before the release's first playable season, not a hardcoded 1960–1969 check. `UniverseStaffPost.role` accepts every role named in the design or in this proposal: GM posts may be `gm`, `personnel_director`, `scout`, or `college_coach`; coach posts may be `head_coach`, `offensive_coordinator`, `defensive_coordinator`, `position_coach`, or `college_head_coach`. The design's `origin_draft_franchise` is `UniversePlayer.origin_franchise`. The design's single award `staff` reference is `gm` or `coach`. Django's cross-database index name limit is 30 characters, so the three franchise indexes are `universe_prostint_fr_idx`, `universe_proseason_fr_idx`, and `universe_staffpost_fr_idx` on the columns this proposal lists. Every shared staff post ends no later than `debut_year - 1`. A post that names a Federation franchise also ends before the release's first playable season. An incoming person may keep an external or college post through the season before debut. `games` versus `schedule_length`, including college schedule length, waits for a later rule phase. Phase 2 does not cap college games at 12. Initial-staff signature uniqueness and the exact debut age bands stay publication checks. The database age check is only that debut falls between 20 and 80 years after birth. Published-release immutability remains `clean`, `save`, and instance `delete`, not a database trigger. Bounded lists use the explicit ordered columns already named in this proposal.
 - Rows: 21,948 players and the same number of rating profiles, 87,792 college seasons, 11,520 historical pro seasons, 462 GMs, 1,148 coaches, and their profiles, once a generator runs. The migration itself inserts nothing.
 - League data: untouched.
 - Rollback: drop the people tables. Phase 1 remains.
