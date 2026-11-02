@@ -979,7 +979,7 @@ Exactly one of `player` or `staff` is set. All-league rows name a position as `s
 |-------|------|---------------|------------|
 | `season_year` | smallint | the four years before the anchor year | All |
 | `class_standing` | enum | `freshman` `sophomore` `junior` `senior` | All |
-| `games`, `starts` | smallint | 0–12 | All |
+| `games`, `starts` | smallint | nonnegative; starts do not exceed games. No permanent season-length cap. | All |
 | Passing, rushing, receiving, defense, kicking columns | same definitions as pro seasons | same ranges, college volume | The player's position group |
 
 ---
@@ -1279,13 +1279,15 @@ Strengths add a bonus when the sim resolves that kind of decision. The weakness 
 
 #### GM career history
 
-`UniverseStaffPost` for years ending ≤ 1969 (initial cohort) or ≤ `debut_year − 1` (incoming). Use: Display. Ratings are what the sim reads; the posts are generated to agree with those ratings.
+`UniverseStaffPost` ends no later than `debut_year − 1`. A post that names a Federation franchise also ends before the release's first playable season, so shared history does not assign one franchise job after timeline play begins. A college or other external post may run through the season before debut. Use: Display. Ratings are what the sim reads; the posts are generated to agree with those ratings. Timeline employment with a Federation franchise stays on the timeline.
 
 | Field | Layer | Type | Range / units | Origin | Use |
 |-------|-------|------|---------------|--------|-----|
 | `role` | Shared | enum | `gm` `personnel_director` `scout` `college_coach` | Generator | Display |
-| `franchise` | Shared | FK, nullable | null for a college post | Generator | Display |
-| `start_year`, `end_year` | Shared | smallint | through the year before they are hireable | Generator | Display |
+| `franchise` | Shared | FK, nullable | one employer source; a Federation franchise | Generator | Display |
+| `college` | Shared | FK, nullable | one employer source; a shared college | Generator | Display |
+| `organization_name` | Shared | string, blank | one employer source; another external organization, ≤ 255 | Generator | Display |
+| `start_year`, `end_year` | Shared | smallint | through the year before debut; a franchise post also ends before play begins | Generator | Display |
 | `wins`, `losses`, `ties` | Shared | smallint | ≥ 0; ties allowed; 0 if the post had no games | Generator | Display |
 | `playoff_appearances` | Shared | smallint | 0–20 | Generator | Display |
 | `championships` | Shared | smallint | 0–`playoff_appearances` | Generator | Display |
@@ -1319,7 +1321,7 @@ Coaches are one shared person table. Head coaches, offensive coordinators, defen
 | `former_role` | Shared | enum | `player` `college_coach` `coordinator` `position_coach` | Generator | Display |
 | `specialty` | Shared | enum | `offense` `defense` `both` | Generator | Both |
 
-The initial 100 head coaches have `specialty = both`. Offensive coordinators are `offense`. Defensive coordinators are `defense`. Specialty limits which coordinator chair a person may hold. It does not mean the two scheme ratings are equal. `offensive_scheme` and `defensive_scheme` are the abilities. A `both` head coach can be a strong offensive coach and a weak defensive coach. Specialty does not change when the person is promoted, fired, or sent back to a coordinator chair.
+The generator may give the initial 100 head coaches `specialty = both`. That pool choice is not a schema rule. Offensive coordinators are `offense` or `both`. Defensive coordinators are `defense` or `both`. `head_coach`, `position_coach`, and `college_head_coach` permit `offense`, `defense`, or `both`. Specialty describes background and orientation. It does not stop a person from becoming a head coach, and it does not change when a coordinator is promoted. A coach with specialty `offense` may become a head coach and remain `offense`. It does not mean the two scheme ratings are equal. `offensive_scheme` and `defensive_scheme` are the abilities.
 
 #### Ability
 
@@ -1726,7 +1728,7 @@ Undrafted signings create a contract and a stint and no pick row. Expansion-draf
 |-------|---------|------|-------|
 | `season_year` | College season | smallint | the four years before the anchor |
 | `class_standing` | Year in school | enum | `freshman` `sophomore` `junior` `senior` |
-| `games`, `starts` | Games and starts | smallint | 0–12 |
+| `games`, `starts` | Games and starts | smallint | nonnegative; starts do not exceed games. Schedule length is a later rule, not a permanent 12-game cap. |
 | Passing, rushing, receiving, defense, kicking, punting columns | Same names as the pro season, for the player's position group | same types | college-sized ranges of the pro columns |
 
 ### Pro season statistics
@@ -1852,13 +1854,13 @@ Ability ratings other than `reputation` have shared `initial` and `potential` an
 
 Job stability is not a stored personality stat. Firing probability comes from results, `leadership`, `reputation`, and the owner's patience with the club. The outcome is `reason_ended = fired` on the stint.
 
-Career history before he is hireable is `UniverseStaffPost`: `role` (`gm`, `personnel_director`, `scout`, `college_coach`), franchise or null, years, wins, losses, ties, playoff appearances, championships, and `ended_by` (`resigned`, `fired`, `promoted`, `retired`, `post_completed`). Those rows are shared, visible, exact, display only, generated to agree with the ratings, and they never change.
+Career history before he is hireable is `UniverseStaffPost`: `role` (`gm`, `personnel_director`, `scout`, `college_coach`), exactly one employer (`franchise`, `college`, or `organization_name`), years, wins, losses, ties, playoff appearances, championships, and `ended_by` (`resigned`, `fired`, `promoted`, `retired`, `post_completed`). Those rows are shared, visible, exact, display only, generated to agree with the ratings, and they never change. A Federation franchise post ends before play begins. An external post may run through the year before debut.
 
 Timeline employment is `StaffStint`: role `gm`, franchise or null, start and end year, `reason_ended` (`opening_replace`, `fired`, `retired`, `hired_elsewhere`, `promoted`, `timeline_complete`). The stint is timeline state, visible, exact, and both sim and display. Wins, losses, ties, playoff appearances, and championships during the stint are derived from that timeline's standings. They are not stored twice. They are visible and exact.
 
 ### Head coaches
 
-The same identity rules as GMs apply, with key prefix `c-`. `specialty` is `offense`, `defense`, or `both`. The initial 100 head coaches are `both`. Offensive coordinators are `offense`. Defensive coordinators are `defense`. Specialty does not change on promotion. `former_role` is `player`, `college_coach`, `coordinator`, or `position_coach`.
+The same identity rules as GMs apply, with key prefix `c-`. `specialty` is `offense`, `defense`, or `both`. The generator may still make the original 1970 head-coach pool `both`. Offensive-coordinator posts require `offense` or `both`. Defensive-coordinator posts require `defense` or `both`. Head coach, position coach, and college head coach permit any specialty. Specialty does not change on promotion. `former_role` is `player`, `college_coach`, `coordinator`, or `position_coach`.
 
 Ability movement matches the GM rules. `preferred_offense` and `preferred_defense` never change. Scheme ratings can rise inside potential. A 1970 `power_run` coach does not become an `air_raid` coach. `reputation` moves with season results, playoff results, awards, and firings.
 
@@ -1869,7 +1871,7 @@ Ability movement matches the GM rules. `preferred_offense` and `preferred_defens
 | `birth_year` | Year of birth | smallint | head coaches about 32–65 in 1970; coordinators may be younger | Shared | Visible | Both | Generator | Never | Exact |
 | `debut_year` | First year he can be hired | smallint | 1970, or 1971–2029 | Shared | Visible | Both | Generator | Never | Exact |
 | `former_role` | Path into this career | enum | `player` `college_coach` `coordinator` `position_coach` | Shared | Visible | Display | Generator | Never | Exact |
-| `specialty` | Which coordinator chair he may hold | enum | `offense` `defense` `both` | Shared | Visible | Both | Generator | Never, including after promotion to head coach | Exact |
+| `specialty` | Background and orientation. It limits the coordinator chair and does not restrict head coach. | enum | `offense` `defense` `both` | Shared | Visible | Both | Generator | Never, including after promotion to head coach | Exact |
 | `age` | Age that season | derived | `season_year − birth_year` | Derived | Visible | Display | Formula | +1 per season | Exact |
 | `offensive_scheme` | Quality of his offense inside `preferred_offense` | smallint | 0–100 | Shared initial and potential; Timeline current | Hidden | Both | Generator, then experience | Toward potential. The enum does not change. | Scout estimate, then Exact |
 | `defensive_scheme` | Quality of his defense inside `preferred_defense` | smallint | 0–100 | same | Hidden | Both | same | Toward potential | Scout estimate, then Exact |
@@ -1897,7 +1899,7 @@ Ability movement matches the GM rules. `preferred_offense` and `preferred_defens
 
 Roster fit is not a second stored rating. The sim combines `preferred_offense`, `preferred_defense`, `adaptability`, and the GM's `scheme_fit` when the roster is built and when playing time is assigned. The owner sees that as a fit label on a player, from the player audit.
 
-Coach posts before the debut use the GM post shape with `role` in `head_coach`, `offensive_coordinator`, `defensive_coordinator`, `position_coach`, `college_head_coach`. They are shared, visible, exact, and display only. Timeline stints use role `head_coach`, `offensive_coordinator`, `defensive_coordinator`, or `position_coach`. Season record, playoff appearances, and championships during a stint are derived from timeline standings. Firings, awards, and reputation after 1970 are timeline facts. The pre-1970 record never changes.
+Coach posts before debut use the GM post shape with `role` in `head_coach`, `offensive_coordinator`, `defensive_coordinator`, `position_coach`, `college_head_coach`. They are shared, visible, exact, and display only. A Federation franchise post ends before the first playable season. A college or external post may run through the year before debut. Timeline stints use role `head_coach`, `offensive_coordinator`, `defensive_coordinator`, or `position_coach`. Season record, playoff appearances, and championships during a stint are derived from timeline standings. Firings, awards, and reputation after the person is hireable are timeline facts. The shared post never changes after publication.
 
 ### What this audit added
 
@@ -2118,7 +2120,7 @@ The playable horizon is 60 seasons, 1970 through 2029 inclusive.
 
 ### Not a reason to add a second staff table
 
-Coordinator identities share the coach table. `specialty = both` only controls eligibility. Scheme ratings control ability. A coordinator's later promotions and demotions are new stints on the same person.
+Coordinator identities share the coach table. Specialty limits the coordinator chair only. Any specialty may become a head coach, and promotion does not change specialty. Scheme ratings control ability. A coordinator's later promotions and demotions are new stints on the same person.
 
 ---
 

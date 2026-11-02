@@ -145,6 +145,19 @@ COACH_POST_ROLES = (
 
 STAFF_POST_ROLES = GM_POST_ROLES + COACH_POST_ROLES
 
+COLLEGE_POST_ROLES = ('college_coach', 'college_head_coach')
+
+# Pro chairs are a Federation franchise or an outside organization.
+# College chairs are a shared college or an outside organization name.
+# Scout and position-coach posts may use any one of those employers.
+PRO_CHAIR_ROLES = (
+    'gm',
+    'personnel_director',
+    'head_coach',
+    'offensive_coordinator',
+    'defensive_coordinator',
+)
+
 PLAYER_AWARDS = (
     'mvp', 'opoy', 'dpoy', 'oroy', 'droy',
     'all_league_1', 'all_league_2', 'all_star',
@@ -742,10 +755,6 @@ class UniverseCollegeSeason(SeasonStatColumns, ReleaseChild):
                 fields=['player', 'season_year'],
                 name='unique_college_season_player_year',
             ),
-            models.CheckConstraint(
-                condition=models.Q(games__lte=12),
-                name='universe_college_games',
-            ),
             *_stat_constraints('college_stat'),
         ]
         indexes = [
@@ -1224,6 +1233,14 @@ class UniverseStaffPost(ReleaseChild):
         blank=True,
         related_name='staff_posts',
     )
+    college = models.ForeignKey(
+        College,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='staff_posts',
+    )
+    organization_name = models.CharField(max_length=255, blank=True, default='')
     role = models.CharField(max_length=32, choices=Role.choices)
     start_year = models.PositiveSmallIntegerField()
     end_year = models.PositiveSmallIntegerField()
@@ -1263,6 +1280,39 @@ class UniverseStaffPost(ReleaseChild):
                 condition=models.Q(role__in=STAFF_POST_ROLES),
                 name='universe_staff_post_role',
             ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        franchise__isnull=False,
+                        college__isnull=True,
+                        organization_name='',
+                    )
+                    | models.Q(
+                        franchise__isnull=True,
+                        college__isnull=False,
+                        organization_name='',
+                    )
+                    | (
+                        models.Q(franchise__isnull=True, college__isnull=True)
+                        & ~models.Q(organization_name='')
+                    )
+                ),
+                name='universe_staff_post_employer',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(role__in=COLLEGE_POST_ROLES)
+                    | models.Q(franchise__isnull=True)
+                ),
+                name='universe_staff_post_college_role',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(role__in=PRO_CHAIR_ROLES)
+                    | models.Q(college__isnull=True)
+                ),
+                name='universe_staff_post_pro_chair',
+            ),
         ]
         indexes = [
             models.Index(
@@ -1276,6 +1326,10 @@ class UniverseStaffPost(ReleaseChild):
             models.Index(
                 fields=['franchise', 'start_year'],
                 name='universe_staffpost_fr_idx',
+            ),
+            models.Index(
+                fields=['college', 'start_year'],
+                name='universe_staffpost_col_idx',
             ),
         ]
 
@@ -1295,30 +1349,64 @@ class UniverseStaffPost(ReleaseChild):
         return 'gm'
 
     def extra_clean(self, errors):
+        if self.organization_name:
+            self.organization_name = self.organization_name.strip()
         release = self.bound_release()
         if release is None:
             return
-        if self.end_year >= release.first_season_year:
+        person = self.gm if self.gm_id else self.coach if self.coach_id else None
+        if person is not None and self.end_year > person.debut_year - 1:
             errors['end_year'] = (
-                'A shared staff post ends before the release\'s first playable season.'
+                'A shared staff post ends no later than the year before debut.'
             )
         if self.franchise_id and self.franchise.release_id != release.id:
             errors['franchise'] = 'The franchise must belong to the same release.'
-        college_roles = {'college_coach', 'college_head_coach'}
-        if self.role not in college_roles and not self.franchise_id:
-            errors['franchise'] = 'A pro staff post names a franchise.'
+        elif (
+            self.franchise_id
+            and self.end_year >= release.first_season_year
+            and 'end_year' not in errors
+        ):
+            errors['end_year'] = (
+                'A Federation franchise post ends before the first playable season.'
+            )
+        if self.college_id and self.college.release_id != release.id:
+            errors['college'] = 'The college must belong to the same release.'
+        employers = (
+            bool(self.franchise_id),
+            bool(self.college_id),
+            bool(self.organization_name),
+        )
+        if sum(employers) != 1:
+            errors['organization_name'] = (
+                'A staff post names exactly one employer: a franchise, a college, '
+                'or an external organization.'
+            )
+        if self.role in COLLEGE_POST_ROLES and self.franchise_id:
+            errors['franchise'] = 'A college post does not use a Federation franchise.'
+        if self.role in PRO_CHAIR_ROLES and self.college_id:
+            errors['college'] = (
+                'That pro chair names a franchise or an external organization.'
+            )
         if self.gm_id and self.role not in GM_POST_ROLES:
             errors['role'] = 'That role belongs on a coach post.'
         if self.coach_id and self.role not in COACH_POST_ROLES:
             errors['role'] = 'That role belongs on a GM post.'
         if self.coach_id:
             specialty = self.coach.specialty
-            if self.role == 'offensive_coordinator' and specialty == 'defense':
-                errors['role'] = 'A defensive coach does not hold the offensive chair.'
-            if self.role == 'defensive_coordinator' and specialty == 'offense':
-                errors['role'] = 'An offensive coach does not hold the defensive chair.'
-            if self.role == 'head_coach' and specialty != 'both':
-                errors['role'] = 'A shared head-coach post requires specialty both.'
+            if self.role == 'offensive_coordinator' and specialty not in (
+                'offense',
+                'both',
+            ):
+                errors['role'] = (
+                    'An offensive coordinator post requires specialty offense or both.'
+                )
+            if self.role == 'defensive_coordinator' and specialty not in (
+                'defense',
+                'both',
+            ):
+                errors['role'] = (
+                    'A defensive coordinator post requires specialty defense or both.'
+                )
 
 
 class UniverseAward(ReleaseChild):
