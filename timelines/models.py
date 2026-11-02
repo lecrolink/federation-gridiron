@@ -237,6 +237,12 @@ def _check_lifecycle(player, rows, errors, field='status'):
         errors[field] = 'Lifecycle status matches the open roster membership.'
 
 
+def _saved_player(player_id):
+    if not player_id:
+        return None
+    return TimelinePlayer.objects.filter(pk=player_id).first()
+
+
 def _deferring():
     return _deferred_players.get() is not None
 
@@ -1728,20 +1734,21 @@ class PlayerSeasonRating(TimelineChild):
     def extra_clean(self, errors):
         if not self.overlay_id or not self.season_id:
             return
-        overlay = self.overlay
+        stored = _saved_player(self.overlay_id)
         season = self.season
-        if overlay.timeline_id != season.timeline_id:
+        if stored is None:
+            errors['overlay'] = 'The rating belongs to a saved player.'
+            return
+        if stored.timeline_id != season.timeline_id:
             errors['season'] = 'The season belongs to the player\'s timeline.'
-        if overlay.retired_year is not None and season.season_year > overlay.retired_year:
+        if stored.retired_year is not None and season.season_year > stored.retired_year:
             errors['season'] = 'A retired player has no rating after the retirement season.'
         if not self.pk and season.phase == Timeline.Phase.COMPLETE:
             errors['season'] = 'A completed season does not gain a rating row.'
-        try:
-            profile = overlay.player.rating_profile
-        except PlayerRatingProfile.DoesNotExist:
+        profile = PlayerRatingProfile.objects.filter(player_id=stored.player_id).first()
+        if profile is None:
             errors['overlay'] = 'The shared player has a rating profile.'
-            profile = None
-        if profile is not None:
+        else:
             for component in PLAYER_COMPONENTS:
                 name = f'current_{component}'
                 if getattr(self, name) > getattr(profile, f'potential_{component}'):
@@ -1890,12 +1897,14 @@ class RosterMembership(TimelineChild):
     def extra_clean(self, errors):
         if not self.overlay_id or not self.season_id:
             return
-        overlay = self.overlay
+        stored = _saved_player(self.overlay_id)
         season = self.season
-        timeline = overlay.timeline
-        if overlay.timeline_id != season.timeline_id:
+        if stored is None:
+            errors['overlay'] = 'The roster membership belongs to a saved player.'
+            return
+        if stored.timeline_id != season.timeline_id:
             errors['season'] = 'The season belongs to the player\'s timeline.'
-        if overlay.retired_year is not None and season.season_year > overlay.retired_year:
+        if stored.retired_year is not None and season.season_year > stored.retired_year:
             errors['season'] = (
                 'A retired player has no membership after the retirement season.'
             )
@@ -1903,7 +1912,7 @@ class RosterMembership(TimelineChild):
             errors['season'] = 'A completed season does not gain a roster membership.'
         if self.role == self.Role.RESERVE and season.phase in RESERVE_BLOCKED_PHASES:
             errors['role'] = 'Reserve is legal from the roster-cut phase onward.'
-        player = overlay.player
+        player = stored.player
         allowed = {player.position}
         if player.secondary_position_1:
             allowed.add(player.secondary_position_1)
@@ -1914,7 +1923,7 @@ class RosterMembership(TimelineChild):
                 'The roster position is the player\'s primary position or a listed secondary.'
             )
         if self.franchise_id:
-            if self.franchise.release_id != timeline.release_id:
+            if self.franchise.release_id != stored.timeline.release_id:
                 errors['franchise'] = 'The franchise belongs to this timeline\'s release.'
             else:
                 from universe.models import FranchiseSeasonMembership
@@ -1970,11 +1979,11 @@ class RosterMembership(TimelineChild):
             ):
                 errors['availability'] = 'A completed season keeps availability.'
         if not _deferring():
-            rows = list(overlay.roster_memberships.select_related('season'))
+            rows = list(stored.roster_memberships.select_related('season'))
             if self.pk:
                 rows = [row for row in rows if row.pk != self.pk]
             rows.append(self)
-            _check_lifecycle(overlay, rows, errors, field='role')
+            _check_lifecycle(stored, rows, errors, field='role')
 
 
 class DevelopmentEvent(TimelineChild):
@@ -2038,11 +2047,14 @@ class DevelopmentEvent(TimelineChild):
     def extra_clean(self, errors):
         if not self.overlay_id or not self.season_id:
             return
-        overlay = self.overlay
+        stored = _saved_player(self.overlay_id)
         season = self.season
-        if overlay.timeline_id != season.timeline_id:
+        if stored is None:
+            errors['overlay'] = 'The development event belongs to a saved player.'
+            return
+        if stored.timeline_id != season.timeline_id:
             errors['season'] = 'The season belongs to the player\'s timeline.'
-        if overlay.retired_year is not None and season.season_year > overlay.retired_year:
+        if stored.retired_year is not None and season.season_year > stored.retired_year:
             errors['season'] = (
                 'A retired player has no development after the retirement season.'
             )
