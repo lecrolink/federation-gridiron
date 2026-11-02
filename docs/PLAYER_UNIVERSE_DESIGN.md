@@ -121,17 +121,66 @@ The football clock is this integer year plus a phase. `TIME_ZONE` does not defin
 A new timeline is pinned to a published release and starts **before** the 1970 season, with the shared 1969 world still intact.
 
 1. **Choose a franchise.** One of the 24 founding clubs. Stored as `Timeline.owned_franchise`. A normal timeline starts in 1970. In 1976 and 1996 the owner may stay or apply for an expansion club, as described in [Owner access to expansion](#owner-access-to-expansion).
-2. **Keep or replace that franchise's GM and head coach.** The shared snapshot already employs one GM and one head coach on each franchise (24 of each). The other 76 GMs and 76 head coaches are unemployed and are the only legal opening hires. Replacing writes timeline staff stints only. The other 23 franchises keep their shared GM and head coach until later timeline events.
-3. **Complete the 1970 rookie draft.** Materialize the shared 1970 class into this timeline. Draft order comes from the shared 1969 standings (worst record picks first). The owner drafts for the owned franchise. AI GMs draft for the others, starting from their shared tendencies. Picks are timeline rows. The class list itself is not modified.
-4. **Set a few broad instructions** for the owned franchise's GM and head coach. Four GM directives and four coach directives, defined in the data dictionary. AI franchises start from directives derived from the shared staff profile, so every timeline begins with the same AI tendencies.
-5. **GMs reduce rosters to the 1970 limit** (40 active + 8 taxi) after the draft. That reduction is a timeline result. The shared opening roster remains the pre-draft roster.
-6. **Simulate the 1970 season** (14 games under the `run-first` era). Phases then follow the usual loop: offseason, next year's shared draft class, season, through the 2029 season. If the shared schedule says new franchises enter before a season, that offseason runs the expansion event, then that year's shared draft. After 2029 the phase is `complete`. No 2030 draft is generated.
+2. **Keep or replace the GM, then the head coach.** The shared snapshot already employs one of each on every founding franchise. The other 76 in each role are the only legal opening hires. The default is to keep both. Replacing writes timeline staff stints only.
+3. **Set team direction, retention priorities, and trade preference.** These are the broad instructions in [Owner experience](#owner-experience). They replace a screen full of separate toggles.
+4. **Rookie draft.** Materialize the shared 1970 class. Draft order comes from the shared 1969 standings, worst record first. The owner may make the owned club's picks or hand the draft to the GM. AI GMs draft for the other clubs from their shared tendencies. Picks are timeline rows. The class list is not modified.
+5. **Confirm the last instructions** and let the GMs cut each roster to 40 active and 8 taxi. The shared opening roster remains the pre-draft roster.
+6. **Simulate the 1970 season** (14 games under profile `y1970`). Later offseasons use the same seven-step flow, then the next shared class, through 2029. An expansion offseason runs the expansion event before that year's draft. After 2029 the phase is `complete`. No 2030 draft is generated.
 
-Phases on the timeline: `choose_franchise`, `staff`, `draft`, `instructions`, `roster_cut`, `regular`, `playoffs`, `offseason`, `complete`.
+Phases on the timeline: `choose_franchise`, `staff`, `direction`, `draft`, `instructions`, `roster_cut`, `regular`, `playoffs`, `offseason`, `complete`.
 
-The shared snapshot is identical until step 1 writes the first timeline decision. Steps 1–4 are owner decisions. Step 5 and the 1970 games are the first simulated events. A timeline RNG seed is drawn at creation and is used only once simulation starts (steps 5 and 6), not to generate the people.
+The shared snapshot is identical until step 1 writes the first timeline decision. Steps 1–4 are owner decisions, and several of them have a one-choice default. The 1970 games are the first simulated events. Match seeds are derived from the universe seed and the decision fingerprint, as specified under [Deterministic scouting and results](#deterministic-scouting-and-results). They are not drawn independently for each timeline. Identical opening choices on the same release produce the same 1970 season.
 
-Whether two timelines that make the same choices in steps 1–4 must then produce a byte-identical 1970 season is unresolved. This design allows the season simulator to use the timeline seed, so identical opening decisions can still diverge once the season runs. The opening identities, ratings, histories, rosters, and draft class cannot diverge before those decisions.
+---
+
+## Owner experience
+
+The database holds the full rating vector, the histories, and the era rules. The normal screen does not ask the owner to set them. Detail is one step away. Exact truth stays hidden.
+
+### What the owner sees immediately
+
+- Name, age, primary position, and experience.
+- Contract status: years left, and from 1995 the cap percent. Before 1995, a short label such as inexpensive, ordinary, or expensive, derived from ledger units.
+- Recent statistics, the last season and the career line in summary.
+- Health and availability: healthy, week-to-week, or out, plus weeks remaining when known.
+- One overall scouting grade, derived from the revealed components that matter at his position. It is a grade, not the simulator's input.
+- A potential range, taken from the potential scout band. It is a range, not the exact potential.
+- Scheme fit: poor, fair, or good.
+- A few strengths, a few weaknesses, and a short personality note from the revealed tags.
+
+### What is available on request
+
+- The component scout estimates, each with its confidence band.
+- College seasons and professional season lines.
+- Transaction history: drafts, stints, trades, and free-agent moves.
+- Injury history.
+- Awards.
+- Development as a sentence, such as "his pass rush improved after the coaching change." The delta log stays hidden.
+- Full contract terms in ledger units, and in cap percent once a cap exists.
+- A comparison against other players at the position.
+
+### What stays hidden
+
+- Exact `initial`, `current`, and `potential` ratings.
+- Exact potential as a single number.
+- Simulator coefficients, including special-teams score weights and position weights.
+- Seeds and fingerprints.
+- The development formula and its intermediate numbers.
+- Hidden AI decision weights for other clubs.
+
+### Offseason flow
+
+A normal offseason is seven decisions. Each one has a default. The GM and head coach then run the roster.
+
+1. **GM.** Keep, or replace from the eligible pool. Default: keep.
+2. **Head coach.** Keep, or replace. Default: keep. Coordinator hiring stays with them.
+3. **Team direction.** One of compete, balanced, or rebuild. That single choice sets veteran preference, free-agency posture, and playing-time preference together.
+4. **Retention or protection.** Up to three position groups to prioritize. In 1976 and 1996 this is also where a staying owner states what to protect, and an expansion owner states what to chase. The GM names the players.
+5. **Trade preference.** Low, medium, or high. Future picks move only as far as that year's `future_pick_years` allows. The owner does not pick the partner or the contract.
+6. **Rookie draft.** The owner makes the club's picks, or hands the draft to the GM. The default is to hand it over. The owner can take the draft back for one round.
+7. **Final instructions.** Offensive emphasis, defensive emphasis, and fourth-down tendency. Then the season simulates.
+
+An optional involved mode, off by default, lets the owner pin up to five named players to protect or to target in an expansion year. It does not open the full rating editor or the full depth chart.
 
 ---
 
@@ -189,49 +238,200 @@ Draws use HMAC-SHA256 of the release seed and a named key (`f"{universe_key}:wei
 
 ## Eras
 
+Rules are fictional Federation Gridiron rules. They borrow the broad shape of football history. They are not a description of the NFL or any real league.
+
 | Layer | Question | Effect on an existing person |
 |-------|----------|------------------------------|
 | **Origin era** | What kind of footballer or coach was created for this cohort? | Stored on the person and left in place. |
-| **Season era** | What roster limit, schedule length, injury climate, and cap rules apply in the year being played? | The person is unchanged. The sim reads the era for the timeline's current year. |
+| **Season rule profile** | What roster, draft, contract, waiver, cap, schedule, and playoff rules apply this year? | The person is unchanged. The sim reads `EraRuleProfile` for the timeline's current year. |
 
-| Key | Years | Active | Taxi | Draft rounds | Schedule | Generation emphasis |
-|-----|-------|--------|------|--------------|----------|---------------------|
-| `run-first` | 1970–1977 | 40 | 8 | 17 | 14 | Fullbacks on every roster, fewer receivers, run-block ahead of pass-block, passing traits rarer at the top, higher injury cost |
-| `passing-rules` | 1978–1986 | 45 | 8 | 12 | 16 | Receiver and coverage traits more common |
-| `timing-specialists` | 1987–1994 | 47 | 8 | 8 | 16 | Designated pass rush and nickel coverage become ordinary |
-| `cap-and-size` | 1995–2003 | 53 | 8 | 7 | 16 | Heavier linemen; salary cap becomes a sim constraint |
-| `spread-influence` | 2004–2013 | 53 | 8 | 7 | 16 | More receiver depth, edge speed ahead of bulk |
-| `modern-passing` | 2014–2029 | 53 | 8 | 7 | 16 through 2020, 17 from 2021 | Hybrid skill profiles more common |
+`EraRuleProfile` is shared, versioned data on the universe release. One row covers every season in a contiguous span where the full rule tuple is constant. A timeline looks up the row for its `season_year`. It does not invent a local rule. Two timelines on one release play under the same profile in the same year.
 
-These roster and draft-round defaults are per team, not a league-size constant. They are not a claim that the game replays a real league's calendar. A season with more active franchises uses the same per-team quota and the same round count, multiplied by `N(year)`. Each era owns a position quota that sums to its active limit and another that sums to its taxi limit. The generator refuses a quota that does not sum. Later-era quotas are data, filled before publish. Direction across eras: FB counts fall, WR and CB counts rise, draft rounds shrink, linemen get heavier.
+### Market eras
 
-### 1970 active quota (40 veterans, before the rookie draft)
+Player movement uses three markets. Roster size and schedule length still change inside a market. Those operational changes are separate profile rows below.
 
-| Position | Count |
-|----------|-------|
+| Market | Seasons | How a veteran changes teams |
+|--------|---------|------------------------------|
+| `controlled` | 1970–1986 | The current club keeps veteran rights when a contract ends. Trades, releases, waivers, and the draft move players. There is no unrestricted free agency and no salary cap. |
+| `transitional` | 1987–1994 | Limited free agency exists. Restrictions and draft-pick compensation still favor the current club. There is no salary cap. |
+| `modern` | 1995–2029 | Unrestricted free agency begins for veterans who have enough accrued seasons. A salary cap begins. Cap management becomes a simulation input. |
+
+| Rule | 1970–1986 controlled | 1987–1994 transitional | 1995–2029 modern | Status |
+|------|----------------------|------------------------|------------------|--------|
+| Active roster | 40 through 1977, then 45 | 47 | 53 | Working design |
+| Taxi squad | 8 | 8 | 8 | Working design |
+| Injured reserve | Maximum 2. Minimum stay 8 weeks. No return the same season. Does not count against the active limit. | Maximum 3. Minimum stay 4 weeks. One player may return after the minimum. | Maximum 4. Minimum stay 4 weeks. Up to two may return. | Needs approval |
+| Draft rounds | 17 through 1977, then 12 | 8 | 7 | Working design |
+| Rookie contracts | 1–3 years. The club controls the player. No draft-slot wage scale. | 2–3 years. Still club-controlled. | 4 years. Pay is ordered by draft slot as a percent of that year's cap. Undrafted rookies get 1 year at the minimum. No fifth-year option. | The lengths are the recommendation. The slot-percent table needs approval. |
+| Veteran contracts | 1–5 years. The club keeps the player's rights at the end of the deal. | 1–5 years. Fewer than 4 accrued seasons: club-controlled. 4 or more: restricted free agency with a tender. | 1–5 years, up to 7 on the timeline copy. 4 accrued seasons: unrestricted. Fewer than 4: restricted. | The 4-season threshold needs approval. |
+| Trade deadline | Through the Tuesday after week 8. | Same | Same | Week 8 needs approval. Trades themselves are required in every era. |
+| Future draft picks | May be traded, at most 1 year ahead. | At most 2 years ahead. | At most 3 years ahead. | The year limits need approval. |
+| Waivers | Every release passes through waivers. Claim order is the inverse of the prior standings. The claim takes the existing contract. | Players under 4 accrued seasons always hit waivers. Older players hit waivers only before the trade deadline. | Players under 4 accrued seasons hit waivers. Older players are unrestricted if released after the roster-reduction date. | Follows the 4-season threshold. |
+| Free-agency type | Veteran reserve. No unrestricted class. | Restricted free agency with compensation. | Unrestricted plus restricted. | Working design for the type. |
+| Retention | Veteran reserve. The club tenders a qualifying offer to keep rights. | Restricted tender. The original club may match. | Restricted tender below 4 seasons. One franchise tag per club per season. | Tag formula needs approval. |
+| Compensation for a lost free agent | None, because the player does not leave as a free agent. | One draft pick in round 1, 2, or 3, set by the tender. | None for an unrestricted player. A draft pick for a restricted player. A tagged player does not leave. | Tender rounds need approval. |
+| Salary cap | Off. | Off. | On. The amount is not set in this document. | The on/off switch is the working design. The amount needs approval. |
+| Minimum salary | A ledger-unit floor. The number is not set. | Same | Once a cap exists, the recommended shape is a small percent of that cap. The percent is not set. | Needs approval. |
+| Franchise tag | Not used. | Not used. | One per club. Recommended salary: the average of the five highest charges at that position from the prior season. | The formula needs approval. It does not set the cap. |
+| Playoff field | 1970–1975: 8 teams, 3 division winners and 1 wild card per conference. 1976–1986: 8 teams, 2 division winners and 2 wild cards per conference. | 8 teams, 2 division winners and 2 wild cards per conference. | 1995: still 8 teams, because the league has 28 clubs. 1996–2029: 12 teams, 4 division winners and 2 wild cards per conference. Top two seeds get a bye. | Needs approval. |
+| Schedule length | 14 games through 1977, then 16. | 16 | 16 through 2020, then 17. | Working design |
+| Overtime | 1970–1973: regular season may end tied. 1974–1986: one 15-minute sudden-death period, then a tie. Playoffs continue until there is a winner. | Sudden death, same as 1974. | 1995–2011: sudden death. 2012–2029: each team may possess the ball once unless the first team scores a touchdown. One period in the regular season. Playoffs continue. | The 1974 and 2012 changes need approval. |
+| Statistics | Sacks are recorded in every year. Leaderboards treat them as unofficial through 1986. | Sacks are an official statistic. | Same | Working design |
+| Style of play | `run-first` through 1977, then `passing-rules`. Higher injury cost early. Fullbacks are common. | `timing-specialists`. Pass rush and nickel coverage become ordinary. | `cap-and-size` through 2003, `spread-influence` through 2013, then `modern-passing`. | Working design for generation emphasis. Numeric sim weights need approval. |
+
+Trades of players and of draft picks are legal in every market, before that year's deadline, and only as far into the future as that market allows. A trade is a timeline transaction. It does not create a person.
+
+### Money
+
+Contract figures are integer **ledger units**, not a 60-year series of nominal dollars. The old 20,000–250,000 opening range is withdrawn.
+
+Before 1995 the cap is off, so units are a negotiation scale only. From 1995 the owner interface shows each contract as a percent of that season's cap. The stored number stays in units. This document does not choose the cap total or the minimum. A 1995-or-later profile cannot be published while `cap_limit` is empty. The recommended shape, which still needs approval, is to set the minimum as a small percent of whatever cap is approved, so the owner never has to read an inflated dollar figure.
+
+### EraRuleProfile fields
+
+| Field | What it stores |
+|-------|----------------|
+| `profile_key` | Stable id, unique on the release. |
+| `first_year`, `last_year` | Inclusive span. Spans do not overlap. |
+| `market` | `controlled`, `transitional`, or `modern`. |
+| `style_key` | Generation and sim emphasis: `run-first`, `passing-rules`, `timing-specialists`, `cap-and-size`, `spread-influence`, `modern-passing`. |
+| `active_limit`, `taxi_limit` | Roster caps. |
+| `active_quota`, `taxi_quota` | A count for each of the 19 positions. Each map must sum to its limit. Publish is refused otherwise. |
+| `ir_max`, `ir_min_weeks`, `ir_returns_allowed` | Injured-reserve rule. |
+| `draft_rounds` | Rookie-draft length. |
+| `rookie_contract_years_min`, `rookie_contract_years_max` | Rookie deal length. |
+| `rookie_slot_scale` | Null until 1995. Then an ordered table of cap percents by pick. Empty until approved. |
+| `veteran_contract_years_min`, `veteran_contract_years_max` | Veteran deal length. |
+| `accrued_seasons_for_ufa` | Null in the controlled market. The transitional market uses this as the restricted threshold. The modern market uses it as the unrestricted threshold. |
+| `trade_deadline_week` | Last week in which a trade is legal. |
+| `future_pick_years` | How many future drafts may be traded. |
+| `waiver_rule` | `all_releases`, `veterans_until_deadline`, or `veterans_until_cutdown`. |
+| `free_agency_type` | `reserve`, `restricted`, or `unrestricted_and_restricted`. |
+| `fa_compensation` | `none`, `tender_pick`, or `restricted_only`. |
+| `cap_status` | `off` or `on`. |
+| `cap_limit` | Null while the cap is off, and null until approved while the cap is on. |
+| `minimum_salary` | Ledger units. Null until approved. |
+| `franchise_tag` | `off`, or `top_five_position_average`. |
+| `playoff_format` | `eight_team_3_and_1`, `eight_team_2_and_2`, or `twelve_team_4_and_2`. |
+| `schedule_length` | 14, 16, or 17. |
+| `overtime_rule` | `tie`, `sudden_death`, or `both_teams_possess`. |
+| `sack_leaderboard` | `unofficial` or `official`. |
+
+### Profile calendar
+
+These rows are the working calendar. Market rules change on the boundaries in the table above. Roster, playoff, overtime, and schedule rows split where those values change.
+
+| Profile | Years | Market | Active | Taxi | Rounds | Games | Playoff | Overtime | Cap |
+|---------|-------|--------|--------|------|--------|-------|---------|----------|-----|
+| `y1970` | 1970–1973 | controlled | 40 | 8 | 17 | 14 | 8, three winners and one wild card | Tie allowed | Off |
+| `y1974` | 1974–1975 | controlled | 40 | 8 | 17 | 14 | 8, three winners and one wild card | Sudden death | Off |
+| `y1976` | 1976–1977 | controlled | 40 | 8 | 17 | 14 | 8, two winners and two wild cards | Sudden death | Off |
+| `y1978` | 1978–1986 | controlled | 45 | 8 | 12 | 16 | 8, two winners and two wild cards | Sudden death | Off |
+| `y1987` | 1987–1994 | transitional | 47 | 8 | 8 | 16 | 8, two winners and two wild cards | Sudden death | Off |
+| `y1995` | 1995 | modern | 53 | 8 | 7 | 16 | 8, two winners and two wild cards | Sudden death | On, amount unset |
+| `y1996` | 1996–2011 | modern | 53 | 8 | 7 | 16 | 12, four winners and two wild cards | Sudden death | On, amount unset |
+| `y2012` | 2012–2020 | modern | 53 | 8 | 7 | 16 | 12 | Both teams may possess | On, amount unset |
+| `y2021` | 2021–2029 | modern | 53 | 8 | 7 | 17 | 12 | Both teams may possess | On, amount unset |
+
+Style keys on those rows: `run-first` for 1970–1977, `passing-rules` for 1978–1986, `timing-specialists` for 1987–1994, `cap-and-size` for 1995–2003, `spread-influence` for 2004–2013, and `modern-passing` for 2014–2029. A season with more franchises uses the same per-team quota and the same round count, multiplied by `N(year)`.
+
+### Positions
+
+There are **19** primary positions:
+
+`QB`, `HB`, `FB`, `WR`, `TE`, `LT`, `LG`, `C`, `RG`, `RT`, `DE`, `DT`, `ILB`, `OLB`, `CB`, `FS`, `SS`, `K`, `P`.
+
+Left and right offensive-line positions are separate. A hole at left tackle is not filled by a right tackle unless that player lists the other side as a secondary position. `HB` is the halfback. The earlier labels `RB`, `OT`, `OG`, `LB`, and `S` are retired.
+
+These are roster roles, not primary positions. A player may hold several at once. Holding one does not change `position`.
+
+`kick_returner`, `punt_returner`, `long_snapper`, `kick_coverage`, `punt_coverage`, `emergency_kicker`, `emergency_punter`.
+
+### Position quotas
+
+Every profile stores an active quota and a taxi quota. The generator refuses the release unless the active counts sum to `active_limit` and the taxi counts sum to `taxi_limit`. Future profiles use that same check. They do not get a free-form depth chart that can drift off the limit.
+
+The 1970 opening roster, profiles `y1970`, `y1974`, and `y1976`, active limit 40:
+
+| Position | Active |
+|----------|--------|
 | QB | 2 |
-| RB | 2 |
+| HB | 2 |
 | FB | 2 |
 | WR | 4 |
 | TE | 2 |
-| OT | 3 |
-| OG | 3 |
+| LT | 2 |
+| LG | 1 |
 | C | 2 |
-| DT | 4 |
+| RG | 1 |
+| RT | 2 |
 | DE | 3 |
-| LB | 6 |
+| DT | 4 |
+| OLB | 4 |
+| ILB | 2 |
 | CB | 3 |
-| S | 2 |
+| FS | 1 |
+| SS | 1 |
 | K | 1 |
 | P | 1 |
 
-Taxi quota (8): QB 1, RB 1, WR 1, OL 2, DL 1, LB 1, DB 1.
+Those 19 counts sum to 40. Taxi for every profile in this design, summing to 8: QB 1, HB 1, WR 1, LG 1, RG 1, DE 1, ILB 1, FS 1. On the 1970 organization, LT, LG, C, RG, and RT each have two players once taxi is included. FS has one active player and one taxi player. SS has one active player and no taxi player. A corner or strong safety who lists `FS` as a secondary position is the emergency free safety.
 
-The 1970 rookies are not in this quota. They enter through the draft, and the post-draft cut returns each franchise to 40 + 8.
+Recommended quotas for the later limits, same taxi eight:
+
+| Position | 45 active, 1978–1986 | 47 active, 1987–1994 | 53 active, 1995–2029 |
+|----------|----------------------|----------------------|----------------------|
+| QB | 2 | 2 | 2 |
+| HB | 2 | 2 | 2 |
+| FB | 2 | 1 | 1 |
+| WR | 6 | 7 | 9 |
+| TE | 2 | 2 | 2 |
+| LT | 2 | 2 | 2 |
+| LG | 2 | 2 | 2 |
+| C | 2 | 2 | 2 |
+| RG | 1 | 2 | 2 |
+| RT | 2 | 2 | 2 |
+| DE | 3 | 3 | 4 |
+| DT | 4 | 4 | 4 |
+| OLB | 4 | 4 | 4 |
+| ILB | 2 | 2 | 3 |
+| CB | 4 | 5 | 6 |
+| FS | 1 | 1 | 2 |
+| SS | 2 | 2 | 2 |
+| K | 1 | 1 | 1 |
+| P | 1 | 1 | 1 |
+
+The 45-man row sums to 45, the 47-man row to 47, and the 53-man row to 53. Direction: fullbacks decline, receivers and corners rise, and both guard spots gain a second active player. These three rows are the recommended fill. Rejecting an active limit means rewriting that row and rechecking the sum, and it also changes the expansion arithmetic below.
+
+The 1970 rookies are not in the opening quota. They enter through the draft, and the post-draft cut returns each franchise to that year's active limit plus taxi.
+
+### Special-teams selection
+
+`return_vision` and `special_teams` are stored components, not derived scores.
+
+`return_vision` is the ability to find a lane and to choose a return or a fair catch. Speed and elusiveness still decide what happens after the choice. Awareness is ordinary football intelligence, and it does not by itself make a returner.
+
+`special_teams` is coverage, blocking, and lane discipline. Deriving it from speed, tackling, and discipline would force every fast tackler to be a good gunner and would make a dedicated special-teams player impossible. Both are new components. The vocabulary is **33** integers.
+
+The head coach assigns roles each week from healthy active players. The assignment is deterministic from the ratings, the injury list, and the coach's fatigue and injury-management ratings. The owner does not pick the units in the normal interface.
+
+| Role | Who is eligible | Recommended score | Depth |
+|------|-----------------|-------------------|-------|
+| Kick returner | `HB`, `WR`, `CB`, `FS`, `SS` | `0.40 return_vision + 0.25 speed + 0.20 elusiveness + 0.15 agility`, plus 5 if the primary position is `HB` or `WR` | 2 |
+| Punt returner | `WR`, `CB`, `HB`, `FS`, `SS` | `0.35 return_vision + 0.25 catching + 0.20 agility + 0.20 speed` | 2 |
+| Long snapper | `C`, `TE`, `ILB`, `OLB` | `0.50 special_teams + 0.30 discipline + 0.20 awareness`, plus 15 if the primary position is `C`. From 1970 through 1986, the starting center snaps when he is within 10 points of the leader. From 1987 on, the highest score wins, so the starting center can stay an offensive player. | 1 |
+| Kick coverage and punt coverage | Anyone except the kicker or punter, the returner, and the snapper | `0.40 special_teams + 0.25 speed + 0.20 tackling + 0.15 discipline`. A high `fatigue_management` or `injury_management` lowers the score of current starters so they are less often on the unit. | 10 each |
+| Emergency kicker | Any healthy player when no healthy `K` is on the roster | `kick_power + kick_accuracy`. Ties prefer `P`, then `QB`. | 1 for the weeks the kicker is out |
+| Emergency punter | Any healthy player when no healthy `P` is on the roster | `punt_power + punt_accuracy`. Ties prefer `K`, then `QB`. | 1 for the weeks the punter is out |
+
+The score weights are sim coefficients. They sit with the other unset numeric weights and need approval. The eligible positions, the role list, and the rule that a role does not change primary position are the working design.
+
+`TimelineSpecialTeamsRole` stores the result: player, season, week, role, and depth. One player may have several rows in the same week.
 
 ### Ratings vocabulary
 
-One component set for every era: **31** integers, 0–100, higher is better. Eras change how often high values are drawn. They do not add a column per decade. A displayed overall is derived from the components that matter for the player's position. The sim does not read that overall, and overall is not stored.
+One component set for every era: **33** integers, 0–100, higher is better. Eras change how often high values are drawn. They do not add a column per decade. A displayed overall is derived from the components that matter for the player's position. The sim does not read that overall, and overall is not stored.
 
 | Group | Components |
 |-------|------------|
@@ -239,7 +439,7 @@ One component set for every era: **31** integers, 0–100, higher is better. Era
 | Mental | `awareness`, `discipline`, `processing` |
 | Offense | `throw_power`, `throw_accuracy`, `catching`, `route_running`, `carrying`, `elusiveness`, `run_blocking`, `pass_blocking` |
 | Defense | `tackling`, `coverage`, `pass_rush`, `run_defense` |
-| Special teams | `kick_power`, `kick_accuracy`, `punt_power`, `punt_accuracy` |
+| Special teams | `kick_power`, `kick_accuracy`, `punt_power`, `punt_accuracy`, `return_vision`, `special_teams` |
 | Personality | `work_ethic`, `leadership`, `temperament`, `clutch`, `consistency`, `adaptability` |
 
 Physical measurables outside that scale: `height_in`, `weight_lb`, `handedness`.
@@ -530,16 +730,66 @@ The new franchise, its GM candidates, its head-coach candidates, and that year's
 
 The pick updates roster stints in that timeline only. The universe player row is unchanged. Two timelines can give the same expansion club different veterans because their earlier seasons produced different rosters.
 
-Supplemental rookies or free agents, if a rule allows them, are drawn from that year's shared draft class or from the shared free-agent pool already sized with `N(year)`. They are not a private list generated when the timeline runs the expansion draft.
+Supplemental rookies or free agents, if a rule allows them, are drawn from that year's shared draft class or from the free-agent pool already in that timeline. They are not a private list generated when the timeline runs the expansion draft.
+
+### Recommended expansion draft
+
+These numbers assume the working roster limits: 40 active and 8 taxi in 1976 (48 players), and 53 active and 8 taxi in 1996 (61 players). They are the recommended system. They are not final if those limits are rejected, because the selection counts are the numbers that make the arithmetic reach the limit. No step creates a person who is not already in the universe.
+
+Both years use the same shape.
+
+- Existing clubs cut to the active-plus-taxi limit before protection.
+- Each club protects a fixed count. The list must include the club's only quarterback, only kicker, and only punter when the club has exactly one of that position. A second specialist can be exposed. The protect count itself does not grow.
+- Everyone else under contract is exposed. The exposed count is the limit minus the protect count.
+- A club loses at most the stated maximum. The draft is built so every club loses exactly that maximum.
+- Selection snakes. Odd rounds run `expansion-year-01` through `04`. Even rounds run the other way. Slug order is the order. There is no lottery.
+- Injured players may be selected. The injury moves with them.
+- A player on an expiring contract may be selected. The timeline contract moves with him. The new club may later renegotiate under that year's market rules.
+- After the veteran draft, each new club may sign up to the free-agent allowance from players already unsigned in that timeline.
+- In the rookie draft, each new club picks at the end of every round, in slug order. That is picks 25–28 in 1976 and picks 29–32 in 1996.
+- After the draft, new clubs have first claim on the undrafted pool, snake order, until each is at the limit or the pool is empty.
+- A new club may not trade a pick or release a player if the players still available in the expansion pool, the free-agent pool, its remaining picks, and the undrafted pool could no longer reach the limit.
+- The draftable class in each expansion year includes at least four kickers and four punters inside the existing class size, so a new club can draft one. An emergency role covers the first weeks if it does not.
+
+| Rule | 1976 | 1996 |
+|------|------|------|
+| Clubs entering | 4 | 4 |
+| Existing clubs | 24 | 28 |
+| Roster target | 48 | 61 |
+| Draft rounds | 17 | 7 |
+| Undrafted pool | 56 | 64 |
+| Protected | 32 | 50 |
+| Exposed | 16 | 11 |
+| Maximum lost by one existing club | 3 | 6 |
+| Selected by each new club | 18 | 42 |
+| Order | Snake, slug order | Snake, slug order |
+| Free-agent allowance | 8 | 10 |
+| Rookie picks | 17, at the end of each round | 7, at the end of each round |
+
+1976 arithmetic: `18 × 4 = 72` veteran selections, and `24 × 3 = 72`, so every existing club loses exactly 3 of its 16 exposed players. Each new club then has 17 rookie picks. `18 + 17 = 35`. The club needs 13 more to reach 48 if it signs no free agents. `13 × 4 = 52`, and the undrafted pool has 56, so four undrafted prospects remain for the rest of the league. Signing some of the eight allowed free agents lowers the undrafted need. Every one of those players already exists.
+
+1996 arithmetic: `42 × 4 = 168` veteran selections, and `28 × 6 = 168`, so every existing club loses exactly 6 of its 11 exposed players. `42 + 7 = 49`. The club needs 12 undrafted players if it signs no free agents. `12 × 4 = 48`, and the pool has 64, so 16 remain. The larger veteran haul is required because a 61-man roster and a 7-round draft cannot be filled from rookies alone.
+
+Staffing order in an expansion offseason:
+
+1. The owner stays or applies.
+2. The award is recorded. A single-player application is automatic.
+3. The new club hires a GM, then a head coach, from the shared pool.
+4. That GM and coach hire the coordinators. The owner is not asked to.
+5. The owner sets up to three position priorities and compete-or-accumulate. A staying owner's priorities are protection priorities. An expansion owner's priorities are acquisition priorities.
+6. Existing GMs file the protection lists. Expansion GMs do not.
+7. The GM runs the snake draft. Involved mode, if the owner turned it on, lets the owner pin five names. Otherwise the GM selects.
+8. Free agency, then the rookie draft, then undrafted priority.
+9. The head coach sets the depth chart and the special-teams roles.
 
 ### Owner access to expansion
 
 A normal timeline still begins in 1970 on a founding franchise. In the 1976 offseason and again in the 1996 offseason, before the expansion draft, the owner makes a few choices. The GM and head coach carry out the detail.
 
 1. **Stay or apply.** The owner keeps the current franchise, or applies for one expansion franchise. Applying is the only pursuit action. There is no separate purchase price in this design.
-2. **If the owner stays,** they name up to `players_protected` core players to protect. The GM protects the rest of the allowed list and runs the existing roster.
+2. **If the owner stays,** they name up to three position groups to protect. The GM files the 32 or 50 man list, including the required sole quarterback, kicker, and punter. Involved mode can pin five names. The GM fills the rest.
 3. **If the owner is awarded an expansion franchise,** `owned_franchise` changes. The former franchise becomes bot-controlled, with its current GM, coach, and roster. The new franchise starts with no players and no staff.
-4. **Building the new franchise.** The owner sets broad priorities only: which positions to favor in the expansion draft, and the same directive enums already used for the GM and coach (`draft_approach`, `veteran_preference`, `free_agency`, `offensive_emphasis`, `defensive_emphasis`). The GM and head coach, once hired from the shared candidate pool, execute the expansion draft, free agency, the rookie draft, and the depth chart. The owner does not pick every reserve.
+4. **Building the new franchise.** The owner sets up to three position groups to chase, and compete or accumulate. The GM and head coach, once hired, run the expansion draft, free agency, the rookie draft, the undrafted fill, and the depth chart.
 
 The new club's players, GM, and head coach are people who already exist on the release. The expansion draft only chooses among veterans already in that timeline. The rookie class that year is the shared class sized with `N(1976) = 28` or `N(1996) = 32`.
 
@@ -548,7 +798,7 @@ The new club's players, GM, and head coach are people who already exist on the r
 | Situation | Proposed handling |
 |-----------|-------------------|
 | Single-player timeline, owner applies for one of the four clubs | Automatic acceptance. The other three expansion clubs are bot-run. |
-| Several human owners want the same expansion club | A fair selection among the applicants: a random draw using a seed stored with the league, not first-click wins. Each human can be awarded at most one expansion club. Leftover clubs are bot-run. |
+| Several human owners want the same expansion club | A fair selection among the applicants. The recommended draw is HMAC-SHA256 of the universe seed, the year, the franchise slug, and the sorted applicant ids. It is reproducible. It is not first-click, and it is not an unrepeatable random call. Each human can be awarded at most one expansion club. Leftover clubs are bot-run. The choice of this method still needs approval. |
 | Owner does not apply | They remain with the current franchise. Bots run every expansion club. |
 
 Whether a separate game mode may start a timeline already in 1976 or 1996, skipping 1970, remains unresolved. The default mode does not.
@@ -586,7 +836,7 @@ All of these are one shared row per player (`UniversePlayer`).
 | `birth_year` | Shared | smallint | 1920–2008 | Generator | Both |
 | `birth_day` | Shared | smallint | 1–365 | Generator | Both |
 | `college` | Shared | FK | known college slug | Generator | Display |
-| `position` | Shared | enum | `QB` `RB` `FB` `WR` `TE` `OT` `OG` `C` `DT` `DE` `LB` `CB` `S` `K` `P` | Generator | Both |
+| `position` | Shared | enum | `QB` `HB` `FB` `WR` `TE` `LT` `LG` `C` `RG` `RT` `DE` `DT` `ILB` `OLB` `CB` `FS` `SS` `K` `P` | Generator | Both |
 | `secondary_positions` | Shared | 0–2 enums | same position list, excluding `position` | Generator | Both |
 | `handedness` | Shared | enum | `left` `right` | Generator | Display |
 | `height_in` | Shared | smallint | 64–84 inches | Generator, era distribution | Both |
@@ -623,6 +873,8 @@ Stored on the shared player as `initial` and `potential`, and on the timeline pl
 | `tackling`, `run_defense`, `pass_rush`, `coverage` | Defense |
 | `kick_power`, `kick_accuracy` | Kicker distance and make rate. Near a low baseline for everyone else. |
 | `punt_power`, `punt_accuracy` | Punter distance and placement. Near a low baseline for everyone else. |
+| `return_vision` | Finding a return lane and choosing a return or a fair catch. |
+| `special_teams` | Coverage, blocking, and lane discipline. |
 | `work_ethic`, `leadership` | Development and teammate effects |
 | `temperament` | Penalties, durability of performance after errors |
 | `clutch` | Late-game and high-leverage modifier |
@@ -648,9 +900,9 @@ Injury susceptibility is `durability`, not a second tag. Scheme fit is not store
 | `depth` | Shared | smallint | ≥ 1 on a team; null if free agent | Generator | Both |
 | `position` | Shared | enum | same as the player | Generator | Both |
 | `years` | Shared template | smallint | 1–5 remaining entering 1970 | Generator | Both |
-| `salary_per_year` | Shared template | int | 1970 dollars, 20,000–250,000 | Generator | Display before 1995; Both from the cap era on the timeline copy |
-| `guaranteed` | Shared template | int | 1970 dollars, 0–salary × years | Generator | Display before 1995; Both once the cap exists, on the timeline copy |
-| `signing_bonus` | Shared template | int | 1970 dollars | Generator | Display |
+| `salary_per_year` | Shared template | int | ledger units. The scale is unset until approved. | Generator | Display before 1995; Both from the cap era on the timeline copy |
+| `guaranteed` | Shared template | int | ledger units, 0–salary × years | Generator | Display before 1995; Both once the cap exists, on the timeline copy |
+| `signing_bonus` | Shared template | int | ledger units | Generator | Display |
 | `start_year`, `end_year` | Shared template | smallint | `end_year` ≥ 1970, `start_year` ≤ 1970 | Generator | Both |
 
 The timeline copy is the contract that can be cut or extended. The template is not.
@@ -678,7 +930,7 @@ The timeline copy is the contract that can be cut or extended. The template is n
 | `staff` | Shared | FK, nullable | GM or head coach, or null | Generator | Display |
 | `franchise` | Shared | FK | team at the time | Generator | Display |
 
-Exactly one of `player` or `staff` is set. All-league rows name a position as `slot` (`QB`, `RB`, …).
+Exactly one of `player` or `staff` is set. All-league rows name a position as `slot`, using one of the 19 primary positions (`QB`, `HB`, and the rest).
 
 ### College history
 
@@ -739,7 +991,7 @@ Primary sim readers: `throw_power`, `throw_accuracy`, `awareness`, `processing`,
 
 Passer rating is derived for display from attempts, completions, yards, touchdowns, and interceptions.
 
-#### Running back and fullback
+#### Halfback and fullback
 
 | Field | Type | Range / units |
 |-------|------|---------------|
@@ -753,7 +1005,7 @@ Passer rating is derived for display from attempts, completions, yards, touchdow
 | `drops` | smallint | 0–`targets` − `receptions` |
 | `run_block_snaps` | smallint | 0–offensive snaps | 
 
-`run_block_snaps` is Both for fullbacks and Display for tailbacks.
+`run_block_snaps` is Both for fullbacks and Display for halfbacks.
 
 #### Wide receiver and tight end
 
@@ -770,7 +1022,7 @@ Passer rating is derived for display from attempts, completions, yards, touchdow
 | `run_block_snaps` | smallint | 0–`offensive_snaps` |
 | `pass_block_snaps` | smallint | 0–offensive snaps |
 
-#### Offensive line (`OT`, `OG`, `C`)
+#### Offensive line (`LT`, `LG`, `C`, `RG`, `RT`)
 
 | Field | Type | Range / units | Use |
 |-------|------|---------------|-----|
@@ -794,7 +1046,7 @@ Passer rating is derived for display from attempts, completions, yards, touchdow
 
 The same tenths-of-a-sack encoding is used for linebacker sack totals.
 
-#### Linebacker
+#### Linebacker (`ILB`, `OLB`)
 
 Same defensive columns as the line, with higher tackle ranges (`tackles` 0–200, `sacks` usually lower). Add:
 
@@ -805,7 +1057,7 @@ Same defensive columns as the line, with higher tackle ranges (`tackles` 0–200
 | `completions_allowed` | smallint | 0–`targets_in_coverage` |
 | `interceptions` | smallint | 0–10 |
 
-#### Defensive back (`CB`, `S`)
+#### Defensive back (`CB`, `FS`, `SS`)
 
 | Field | Type | Range / units |
 |-------|------|---------------|
@@ -854,7 +1106,7 @@ Created for opening-cohort players at `start_timeline`, for a draft class when t
 | `timeline` | Timeline | FK | | Owner's new timeline | Both |
 | `player` | Timeline | FK | universe player | Shared template | Both |
 | `status` | Timeline | enum | `prospect` `active` `taxi` `reserve` `free_agent` `retired` | Timeline sim, or the opening copy | Both |
-| `current` ratings | Timeline | 31 × smallint | 0–100, ≤ potential | Copied from `initial`, then Timeline sim | Both. Hidden as exact numbers. The owner sees `TimelineScoutComponent` until evaluation sets uncertainty to 0. |
+| `current` ratings | Timeline | 33 × smallint | 0–100, ≤ potential | Copied from `initial`, then Timeline sim | Both. Hidden as exact numbers. The owner sees `TimelineScoutComponent` until evaluation sets uncertainty to 0. |
 | `seasons_played` | Timeline | smallint | 0–60, pro seasons inside this timeline only | Derived, may be cached | Display |
 | `career_altering_injuries` | Timeline | smallint | 0–10 | Timeline sim | Both |
 
@@ -862,7 +1114,7 @@ Unique `(timeline, player)`.
 
 #### Scout report
 
-`TimelineScoutReport` is one row per overlay. `TimelineScoutComponent` is one row per component per kind (`ability` or `potential`). The sim never reads these rows. Field-by-field visibility is in the characteristic audit. Owned-roster reports start with uncertainty 20 and reach 0 after four weeks on the roster or 100 snaps, whichever comes first. Other players start between 25 and 60. Potential often stays uncertain. When ability uncertainty hits 0, `revealed_value` is set to `current`.
+`TimelineScoutReport` is one row per overlay. `TimelineScoutComponent` is one row per component per kind (`ability` or `potential`). The sim never reads these rows. It reads `current`. Field-by-field visibility is in the characteristic audit. The first report, and every later refresh, is the deterministic function in [Deterministic scouting and results](#deterministic-scouting-and-results). Owned-roster reports start with uncertainty 20 and reach 0 after four weeks on the roster or 100 snaps, whichever comes first. Other players start between 25 and 60, tightened when the evaluating GM has a higher `talent_evaluation`. Potential often stays uncertain. When ability uncertainty hits 0, `revealed_value` is set to `current`.
 
 #### Roster stint
 
@@ -894,9 +1146,9 @@ One open stint per player. A trade closes one stint and opens another in that ti
 | Field | Layer | Type | Range / units | Origin | Use |
 |-------|-------|------|---------------|--------|-----|
 | `years` | Timeline | smallint | 1–7 | Copied from the opening template, or created at signing | Both |
-| `salary_per_year` | Timeline | int | dollars. Before 1995, display and negotiation flavor. From 1995, cap accounting | same | Both from 1995; Display before |
-| `guaranteed` | Timeline | int | dollars | same | same |
-| `signing_bonus` | Timeline | int | dollars | same | Display; Sim from 1995 (cap proration) |
+| `salary_per_year` | Timeline | int | ledger units. Before 1995, display and negotiation flavor. From 1995, cap accounting | same | Both from 1995; Display before |
+| `guaranteed` | Timeline | int | ledger units | same | same |
+| `signing_bonus` | Timeline | int | ledger units | same | Display; Sim from 1995 (cap proration) |
 | `start_year`, `end_year` | Timeline | smallint | 1970–2035 (a 2029 signing can run past the final season) | same | Both |
 | `status` | Timeline | enum | `active` `expired` `cut` `retired` | Timeline sim | Both |
 | `franchise` | Timeline | FK | catalog team | same | Both |
@@ -1028,7 +1280,7 @@ Coaches are one shared person table. Head coaches, offensive coordinators, defen
 | `former_role` | Shared | enum | `player` `college_coach` `coordinator` `position_coach` | Generator | Display |
 | `specialty` | Shared | enum | `offense` `defense` `both` | Generator | Both |
 
-The initial 100 head coaches have `specialty = both`. Offensive coordinators are `offense`. Defensive coordinators are `defense`. Specialty limits the coordinator chair. It does not change when the person is promoted to head coach.
+The initial 100 head coaches have `specialty = both`. Offensive coordinators are `offense`. Defensive coordinators are `defense`. Specialty limits which coordinator chair a person may hold. It does not mean the two scheme ratings are equal. `offensive_scheme` and `defensive_scheme` are the abilities. A `both` head coach can be a strong offensive coach and a weak defensive coach. Specialty does not change when the person is promoted, fired, or sent back to a coordinator chair.
 
 #### Ability
 
@@ -1088,7 +1340,7 @@ Recommended 1970 coordinator pool, same identities in every timeline:
 
 Incoming floor, 1971–2029: `4 + E(year)` offense-specialty candidates and `4 + E(year)` defense-specialty candidates. With `E` only in 1976 and 1996, that is 244 per specialty and **488** incoming coordinators. Initial 80 plus 488 is **568** coordinator identities. GM and head-coach identities stay **1,042**. All staff identities in the recommended database are **1,610**.
 
-Version 1 need not show coordinator hiring. The rows are still generated with the release so a head-coach firing can promote that club's coordinator by closing his stint with `promoted` and opening a `head_coach` stint on the same `universe_key`. An expansion club can hire from the shared coordinator pool. Do not generate a separate position-coach labor pool. The `position_coach` role exists so historical posts, and a later promotion, use this same table. Generating only head coaches now and adding coordinators in a second schema would split staff history.
+Version 1 need not show coordinator hiring. The rows are still generated with the release. The same person can remain a coordinator, move to another club, be promoted after a firing, enter an offseason as a head-coach candidate, or return to coordinator work after being fired as a head coach. Each change appends a stint on the same `universe_key`. Pre-1970 posts and timeline stints stay one career. A promotion closes the coordinator stint with `promoted` and opens a `head_coach` stint. A later demotion closes the head-coach stint with `fired` and opens a coordinator stint. An expansion club hires from this shared pool. Do not generate a separate position-coach labor pool. The `position_coach` role exists so historical posts use this same table.
 
 ---
 
@@ -1125,7 +1377,7 @@ GM rows leave coach fields null, and the reverse. The UI shows the current direc
 | `season_index` | Timeline | smallint | 1–60 | Timeline sim | Both |
 | `season_year` | Timeline | smallint | 1970–2029, equals `1969 + season_index` | Derived | Both |
 | `phase` | Timeline | enum | see opening sequence | Timeline sim | Both |
-| `rng_seed` | Timeline | int | drawn at creation | Generator of the timeline, not the universe seed | Sim |
+| `decision_fingerprint` | Timeline | string | hash of the decisions and resolved results so far. Not an independent random seed. | Derived | Sim |
 | `start_season_year` | Timeline | smallint | `1970`, `1976`, or `1996`. The only supported value until a product decision says otherwise is `1970`. | Owner, default 1970 | Both |
 
 `start_season_year` is stored so a later mode can begin in an expansion year without a new table. This document does not define that mode's skipped seasons. A normal timeline uses 1970.
@@ -1139,14 +1391,25 @@ GM rows leave coach fields null, and the reverse. The UI shows the current direc
 | `season_year` | Timeline | smallint | 1976 or 1996 | The schedule | Both |
 | `decision` | Timeline | enum | `stay` `apply` | Owner | Both |
 | `target_franchise` | Timeline | FK, null | one expansion club that year, required when the decision is `apply` | Owner | Both |
-| `protected_players` | Timeline | list of player FKs | up to `players_protected`, only when the decision is `stay` | Owner names the core. The GM fills the rest of the protection list. | Sim |
-| `draft_position_priorities` | Timeline | 0–2 enums | the GM `positional_priority` vocabulary, only when the decision is `apply` | Owner | Sim |
+| `protection_priorities` | Timeline | 0–3 enums | position groups, only when the decision is `stay` | Owner. The GM files the full protect list. | Sim |
+| `pinned_players` | Timeline | 0–5 player FKs | only in involved mode | Owner | Sim |
+| `draft_position_priorities` | Timeline | 0–3 enums | the GM `positional_priority` vocabulary, only when the decision is `apply` | Owner | Sim |
 | `outcome` | Timeline | enum | `pending` `awarded` `declined` `stayed` | Timeline sim | Both |
 | `selection_method` | Timeline | enum | `not_needed` `automatic` `fair_draw` | Timeline sim | Display |
 
-The owner does not set the rest of the roster, the contract figures, or the depth chart. The GM and head coach do. In a single-player timeline, `apply` is `automatic`. When several human owners apply for the same club, the method is unresolved; `fair_draw` is the candidate, using a seed stored with that league rather than first-click. Each human can be awarded at most one expansion club.
+The owner does not set the rest of the roster, the contract figures, or the depth chart. The GM and head coach do. In a single-player timeline, `apply` is `automatic`. When several human owners apply for the same club, the method is unresolved. The candidate is `fair_draw`, implemented as the HMAC described in the expansion section. Each human can be awarded at most one expansion club.
 
 ---
+
+## Deterministic scouting and results
+
+True identity, original ratings, potential, college history, and pre-1970 statistics are shared. A scouting report is timeline data, because the GM who is looking changes the report. The report is still reproducible.
+
+The noise for a component is an HMAC-SHA256 of the universe seed together with the evaluating GM's `universe_key`, the player's `universe_key`, the component, the kind (`ability` or `potential`), the season, the week, and a generation counter. The generation counter advances when the GM changes, when the player reaches 100 snaps on the owned roster, or when four owned-roster weeks have passed. The same release, the same franchise, the same GM, the same coach, and the same owner decisions produce the same initial report. A different GM produces a different HMAC and, through `talent_evaluation`, a tighter or wider band. How many points of `talent_evaluation` tighten the band is a coefficient and needs approval. The direction is fixed: a better evaluator sees a narrower band.
+
+The simulator never reads `revealed_value` or `uncertainty`. It reads `current`, which was copied from shared `initial` and then moved only by the development rules.
+
+Match results use the same idea. The timeline does not store an independent random seed. For a week, the match seed is an HMAC of the universe seed, the season, the week, and a fingerprint of every owner decision and every already-resolved result on that timeline. The fingerprint does not include the timeline id. Two timelines that make the same opening choices therefore play the same 1970 season. Changing one choice changes the fingerprint from that point forward. Replay value comes from a different decision, not from a hidden coin flip. That is the recommendation for fair comparison across timelines.
 
 ## Historical consistency
 
@@ -1179,7 +1442,7 @@ These values may diverge after timeline decisions begin:
 | Directives and expansion choice | Owner decisions |
 | Season results | Timeline RNG after kickoff, even when two owners make the same opening choices |
 
-A particular player always enters the 1970 draft, if he is in that class, with the same name, college, body, college statistics, original talent, and scouting profile. A GM or coach always begins with the same biography, abilities, employment history, and reputation. Drafting, hiring, playing time, injuries, development, results, firings, and timeline randomness may then send those careers apart.
+A particular player always enters the 1970 draft, if he is in that class, with the same name, college, body, college statistics, original talent, and the same true ratings. The initial scout report matches whenever the evaluating GM matches. A GM or coach always begins with the same biography, abilities, employment history, and reputation. Drafting, hiring, playing time, injuries, development, results, and firings may then send those careers apart. Those later results are deterministic given the decision fingerprint. They are not a fresh random draw.
 
 ---
 
@@ -1213,7 +1476,7 @@ Shared characteristics are exact in the database. Hidden means the owner is not 
 |-------------|---------|------|-------|-------|------------|--------|-----------|---------|------------|
 | `reported_tags` | Trait tags the owner has been told | set | 0–3 of the trait enum | Timeline | Partial | Display | Noisy copy of the true tags at entry | Replaced by the true tags when the player is evaluated | Scout estimate until then, then Exact |
 | `tag_uncertainty` | How wrong the tag report may be | smallint | 0–100 | Timeline | Hidden | Display | 20 on the owned roster, 25–60 otherwise | Falls to 0 on evaluation | Not shown. It controls the report. |
-| `component` | Which rating the row describes | enum | the 31 components | Timeline | Visible as a label | Display | Created with the overlay | The label does not change | Exact label |
+| `component` | Which rating the row describes | enum | the 33 components | Timeline | Visible as a label | Display | Created with the overlay | The label does not change | Exact label |
 | `kind` | Current ability or potential | enum | `ability` `potential` | Timeline | Visible | Display | Both kinds are created | Does not change | Exact label |
 | `revealed_value` | The number shown to the owner | smallint | 0–100 | Timeline | Visible | Display | HMAC noise around the true value, width from uncertainty | Moves when the report is refreshed. Equals `current` at uncertainty 0. | Scout estimate, then Exact |
 | `uncertainty` | Remaining fog | smallint | 0 exact, 100 unknown | Timeline | Partial, shown as a confidence band | Display | Owned roster starts at 20. Other players start at 25–60. | Falls to 0 after 4 weeks on the owned roster or 100 snaps, whichever comes first. That threshold is tunable. Potential often stays above 0. | The band is the estimate. The true rating stays hidden until 0. |
@@ -1231,7 +1494,7 @@ Age and experience are not stored. `age = season_year − birth_year`. Pro exper
 | `birth_year` | Year of birth | smallint | 1920–2008 | Shared | Visible | Both | Drawn from cohort age, then `birth_year = anchor − age` | Never | Exact |
 | `birth_day` | Day of year, for ordering ages | smallint | 1–365 | Shared | Visible | Display | Uniform draw | Never | Exact |
 | `college` | School | FK | college slug | Shared | Visible | Display | `EraCollegeWeight` | Never | Exact |
-| `position` | Primary position | enum | `QB` `RB` `FB` `WR` `TE` `OT` `OG` `C` `DT` `DE` `LB` `CB` `S` `K` `P` | Shared | Visible | Both | Roster quota or class mix | Never | Exact |
+| `position` | Primary position | enum | the 19 positions `QB` `HB` `FB` `WR` `TE` `LT` `LG` `C` `RG` `RT` `DE` `DT` `ILB` `OLB` `CB` `FS` `SS` `K` `P` | Shared | Visible | Both | Roster quota or class mix | Never | Exact |
 | `secondary_positions` | Other positions he can play | 0–2 enums | same list, excluding primary | Shared | Visible | Both | Generator. Cross-group values are rare. | Never | Exact |
 | `handedness` | Throwing or kicking hand | enum | `left` `right` | Shared | Visible | Display. A small accuracy interaction for `QB`, `K`, and `P`. | Generator | Never | Exact |
 | `height_in` | Height | smallint | 64–84 | Shared | Visible | Both | Position and era distribution | Never | Exact |
@@ -1247,7 +1510,7 @@ Age and experience are not stored. `age = season_year − birth_year`. Pro exper
 | `age` | Age that season | derived | `season_year − birth_year` | Derived | Visible | Both | Formula | +1 each season | Exact |
 | `experience` | Completed pro seasons | derived | shared seasons before 1970, plus timeline seasons | Derived | Visible | Both | Formula | +1 for each pro season played | Exact |
 
-### Original talent, growth, and the 31 components
+### Original talent, growth, and the 33 components
 
 `initial` and `potential` exist for every component. They are shared, hidden, exact, generated by HMAC draws under the origin era's frequencies, and they never change. Effect is Sim. `initial` also seeds `current`. The owner never sees these cells. The owner sees the scout component row.
 
@@ -1280,6 +1543,8 @@ Age and experience are not stored. `age = season_year − birth_year`. Pro exper
 | `kick_accuracy` | Make rate separate from distance | Snaps, coaching, age. Near a low baseline off `K`. |
 | `punt_power` | Punt distance | Age, injury. Near a low baseline off `P`. |
 | `punt_accuracy` | Placement, including inside the 20 | Snaps, coaching. Near a low baseline off `P`. |
+| `return_vision` | Finding a lane and choosing a return or a fair catch | Slow. Snaps on returns can raise it. Near a low baseline for linemen. |
+| `special_teams` | Coverage, blocking, and lane discipline | Snaps on special teams, coaching. |
 | `work_ethic` | Practice and development effort | Slow. Age and a career-altering injury can move it. |
 | `leadership` | Teammate effect | Slow. Same. |
 | `temperament` | Composure after errors | Slow. A career-altering injury or a long injury year can lower it. |
@@ -1291,20 +1556,20 @@ There is no stored `overall`, no stored `scheme_fit`, and no stored `football_iq
 
 ### How positions use the components
 
-Every position stores the same 31 components. Low baselines keep non-position skills from dominating. The sim weights the rows below. Those weights are season configuration, not player columns. Secondary positions use the same ratings, with `adaptability` reducing the penalty for playing off the primary position.
+Every position stores the same 33 components. Low baselines keep non-position skills from dominating. The sim weights the rows below. Those weights are season configuration, not player columns. Secondary positions use the same ratings, with `adaptability` reducing the penalty for playing off the primary position.
 
 | Position | Components that decide play | Position-specific season record |
 |----------|-----------------------------|----------------------------------|
 | `QB` | `throw_power`, `throw_accuracy`, `awareness`, `processing`, `clutch`, `consistency`, plus mobility from `speed` and `elusiveness` | Passing line and quarterback rushing |
-| `RB` | `speed`, `acceleration`, `agility`, `carrying`, `elusiveness`, `catching`, `stamina` | Rushing and receiving |
+| `HB` | `speed`, `acceleration`, `agility`, `carrying`, `elusiveness`, `catching`, `stamina`, `return_vision` | Rushing, receiving, and returns when assigned |
 | `FB` | `strength`, `run_blocking`, `carrying`, `catching` | Rushing, receiving, `run_block_snaps` |
-| `WR` | `speed`, `acceleration`, `agility`, `catching`, `route_running` | Receiving, a small rushing line |
+| `WR` | `speed`, `acceleration`, `agility`, `catching`, `route_running`, `return_vision` | Receiving, a small rushing line, and returns when assigned |
 | `TE` | `catching`, `route_running`, `run_blocking`, `pass_blocking`, `strength` | Receiving and block snaps |
-| `OT`, `OG`, `C` | `strength`, `run_blocking`, `pass_blocking`, `awareness`, `discipline` | Block snaps, `sacks_allowed`. The position enum picks alignment. There is no separate center-snap rating. |
+| `LT`, `LG`, `C`, `RG`, `RT` | `strength`, `run_blocking`, `pass_blocking`, `awareness`, `discipline` | Block snaps and `sacks_allowed`. The position is the side and the alignment. There is no separate center-snap rating. A center's long-snap work uses `special_teams` when he holds that role. |
 | `DT`, `DE` | `strength`, `pass_rush`, `run_defense`, `speed` | Tackles, sacks in tenths, hits, forced fumbles |
-| `LB` | `tackling`, `coverage`, `run_defense`, `awareness`, `speed` | Defensive line columns plus coverage |
+| `ILB`, `OLB` | `tackling`, `coverage`, `run_defense`, `awareness`, `speed`, `special_teams` | Defensive line columns plus coverage |
 | `CB` | `speed`, `agility`, `coverage`, `awareness` | Coverage, interceptions, passes defended |
-| `S` | `coverage`, `tackling`, `awareness`, `speed`, `run_defense` | Coverage and tackles |
+| `FS`, `SS` | `coverage`, `tackling`, `awareness`, `speed`, `run_defense` | Coverage and tackles |
 | `K` | `kick_power`, `kick_accuracy`, `clutch`, `consistency` | Field goals, extra points, touchbacks |
 | `P` | `punt_power`, `punt_accuracy`, `consistency` | Punts, inside-20, touchbacks |
 
@@ -1343,9 +1608,9 @@ Opening veterans have a shared template. The timeline copy is the living contrac
 | Field | Meaning | Type | Range | Layer | Visibility | Effect | Generated | Changes | Owner sees |
 |-------|---------|------|-------|-------|------------|--------|-----------|---------|------------|
 | `years` | Seasons on the deal | smallint | template 1–5; timeline deal 1–7 | Shared template, then Timeline | Visible | Both | Generator, then GM negotiation | Extensions and new deals | Exact. Contracts are public. |
-| `salary_per_year` | Annual pay | int | 1970 template 20,000–250,000; later deals in nominal dollars of the signing year | same | Visible | Display before 1995. Both from the 1995 cap. | same | New contract | Exact |
-| `guaranteed` | Guaranteed dollars | int | 0 through salary × years | same | Visible | same | same | New contract | Exact |
-| `signing_bonus` | Bonus | int | dollars of the signing year | same | Visible | Display. Sim from 1995 through cap proration. | same | New contract | Exact |
+| `salary_per_year` | Annual pay | int | ledger units. Shown as a cap percent from 1995. | same | Visible | Display before 1995. Both from the 1995 cap. | same | New contract | Exact |
+| `guaranteed` | Guaranteed ledger units | int | 0 through salary × years | same | Visible | same | same | New contract | Exact |
+| `signing_bonus` | Bonus | int | ledger units of the signing year | same | Visible | Display. Sim from 1995 through cap proration. | same | New contract | Exact |
 | `start_year`, `end_year` | Span | smallint | timeline end year may run through 2035 | same | Visible | Both | same | Cuts set status, not a rewritten start | Exact |
 | `status` | Living state | enum | `active` `expired` `cut` `retired` | Timeline | Visible | Both | Sim | Cut, expiry, retirement | Exact |
 | `franchise` | Club that holds the deal | FK | a franchise | Timeline | Visible | Both | Signing | A new deal on a trade or free-agent signing | Exact |
@@ -1377,7 +1642,7 @@ The shared `board_rank` is the public board. The timeline pick is what this time
 | `prospect` | Shared player | FK | a draftable prospect | Timeline | Visible | Both | same | Written once | Exact |
 | Award `kind` | Honor | enum | `mvp` `opoy` `dpoy` `oroy` `droy` `all_league_1` `all_league_2` `all_star` `coach_of_year` `executive_of_year` | Shared before 1970, Timeline from 1970 | Visible | Shared: Display. Timeline: Display, and Sim for the next offseason's reputation and development. | Generator, or timeline sim | Written once | Exact |
 | Award `slot` | All-league position | enum | a position, only for all-league rows | same | Visible | Display | same | Written once | Exact |
-| `component`, `delta`, `reason` | Development audit | enum, smallint, enum | component is one of the 31; delta −20 to +20; reason `age` `snaps` `injury` `coaching` | Timeline | Hidden | Display | Sim | Append-only | Hidden. The owner sees the refreshed scout number, not the delta log. |
+| `component`, `delta`, `reason` | Development audit | enum, smallint, enum | component is one of the 33; delta −20 to +20; reason `age` `snaps` `injury` `coaching` | Timeline | Hidden | Display | Sim | Append-only | Hidden. The owner sees a plain-language summary, not the delta log. |
 
 Undrafted signings create a contract and a stint and no pick row. Expansion-draft picks are `TimelineExpansionPick`, not a second copy of the player.
 
@@ -1422,15 +1687,15 @@ Common columns, every position:
 | `QB` | `rush_attempts` | Rushes | smallint | 0–200 |
 | `QB` | `rush_yards` | Rushing yards | int | −100–1,500 |
 | `QB` | `rush_touchdowns` | Rushing touchdowns | smallint | 0–20 |
-| `RB`, `FB` | `rush_attempts` | Rushes | smallint | 0–450 |
-| `RB`, `FB` | `rush_yards` | Rushing yards | int | −50–2,500 |
-| `RB`, `FB` | `rush_touchdowns` | Rushing touchdowns | smallint | 0–30 |
-| `RB`, `FB` | `targets` | Targets | smallint | 0–150 |
-| `RB`, `FB` | `receptions` | Receptions | smallint | 0–`targets` |
-| `RB`, `FB` | `receiving_yards` | Receiving yards | int | −20–1,200 |
-| `RB`, `FB` | `receiving_touchdowns` | Receiving touchdowns | smallint | 0–15 |
-| `RB`, `FB` | `drops` | Drops | smallint | 0–`targets` − `receptions` |
-| `RB`, `FB` | `run_block_snaps` | Run-block snaps | smallint | 0–offensive snaps. Both for fullbacks. Display for tailbacks. |
+| `HB`, `FB` | `rush_attempts` | Rushes | smallint | 0–450 |
+| `HB`, `FB` | `rush_yards` | Rushing yards | int | −50–2,500 |
+| `HB`, `FB` | `rush_touchdowns` | Rushing touchdowns | smallint | 0–30 |
+| `HB`, `FB` | `targets` | Targets | smallint | 0–150 |
+| `HB`, `FB` | `receptions` | Receptions | smallint | 0–`targets` |
+| `HB`, `FB` | `receiving_yards` | Receiving yards | int | −20–1,200 |
+| `HB`, `FB` | `receiving_touchdowns` | Receiving touchdowns | smallint | 0–15 |
+| `HB`, `FB` | `drops` | Drops | smallint | 0–`targets` − `receptions` |
+| `HB`, `FB` | `run_block_snaps` | Run-block snaps | smallint | 0–offensive snaps. Both for fullbacks. Display for tailbacks. |
 | `WR`, `TE` | `targets` | Targets | smallint | 0–220 |
 | `WR`, `TE` | `receptions` | Receptions | smallint | 0–`targets` |
 | `WR`, `TE` | `receiving_yards` | Receiving yards | int | −20–2,000 |
@@ -1441,29 +1706,29 @@ Common columns, every position:
 | `WR`, `TE` | `rush_touchdowns` | Rushing touchdowns | smallint | 0–8 |
 | `WR`, `TE` | `run_block_snaps` | Run-block snaps | smallint | 0–`offensive_snaps` |
 | `WR`, `TE` | `pass_block_snaps` | Pass-block snaps | smallint | 0–offensive snaps |
-| `OT`, `OG`, `C` | `run_block_snaps` | Run-block snaps | smallint | 0–`offensive_snaps` |
-| `OT`, `OG`, `C` | `pass_block_snaps` | Pass-block snaps | smallint | 0–`offensive_snaps` |
-| `OT`, `OG`, `C` | `sacks_allowed` | Sacks allowed | smallint | 0–20 |
-| `DT`, `DE`, `LB` | `tackles` | Tackles | smallint | 0–120 on the line; 0–200 for linebackers |
-| `DT`, `DE`, `LB` | `tackles_for_loss` | Tackles for loss | smallint | 0–30 |
-| `DT`, `DE`, `LB` | `sacks` | Sacks in tenths | smallint | 0–250. 75 means 7.5. |
-| `DT`, `DE`, `LB` | `quarterback_hits` | Hits on the quarterback | smallint | 0–40 |
-| `DT`, `DE`, `LB` | `forced_fumbles` | Forced fumbles | smallint | 0–10 |
-| `DT`, `DE`, `LB` | `fumble_recoveries` | Fumble recoveries | smallint | 0–8 |
-| `DT`, `DE`, `LB` | `passes_defended` | Passes defended | smallint | 0–15 |
-| `DT`, `DE`, `LB` | `defensive_touchdowns` | Defensive touchdowns | smallint | 0–4 |
-| `LB` | `coverage_snaps` | Snaps in coverage | smallint | 0–`defensive_snaps` |
-| `LB` | `targets_in_coverage` | Targets allowed | smallint | 0–80 |
-| `LB` | `completions_allowed` | Completions allowed | smallint | 0–`targets_in_coverage` |
-| `LB` | `interceptions` | Interceptions | smallint | 0–10 |
-| `CB`, `S` | `tackles` | Tackles | smallint | 0–140 |
-| `CB`, `S` | `interceptions` | Interceptions | smallint | 0–15 |
-| `CB`, `S` | `passes_defended` | Passes defended | smallint | 0–30 |
-| `CB`, `S` | `targets_in_coverage` | Targets in coverage | smallint | 0–140 |
-| `CB`, `S` | `completions_allowed` | Completions allowed | smallint | 0–`targets_in_coverage` |
-| `CB`, `S` | `yards_allowed` | Yards allowed | int | 0–1,500 |
-| `CB`, `S` | `forced_fumbles` | Forced fumbles | smallint | 0–8 |
-| `CB`, `S` | `defensive_touchdowns` | Defensive touchdowns | smallint | 0–4 |
+| `LT`, `LG`, `C`, `RG`, `RT` | `run_block_snaps` | Run-block snaps | smallint | 0–`offensive_snaps` |
+| `LT`, `LG`, `C`, `RG`, `RT` | `pass_block_snaps` | Pass-block snaps | smallint | 0–`offensive_snaps` |
+| `LT`, `LG`, `C`, `RG`, `RT` | `sacks_allowed` | Sacks allowed | smallint | 0–20 |
+| `DT`, `DE`, `ILB`, `OLB` | `tackles` | Tackles | smallint | 0–120 on the line; 0–200 for linebackers |
+| `DT`, `DE`, `ILB`, `OLB` | `tackles_for_loss` | Tackles for loss | smallint | 0–30 |
+| `DT`, `DE`, `ILB`, `OLB` | `sacks` | Sacks in tenths | smallint | 0–250. 75 means 7.5. |
+| `DT`, `DE`, `ILB`, `OLB` | `quarterback_hits` | Hits on the quarterback | smallint | 0–40 |
+| `DT`, `DE`, `ILB`, `OLB` | `forced_fumbles` | Forced fumbles | smallint | 0–10 |
+| `DT`, `DE`, `ILB`, `OLB` | `fumble_recoveries` | Fumble recoveries | smallint | 0–8 |
+| `DT`, `DE`, `ILB`, `OLB` | `passes_defended` | Passes defended | smallint | 0–15 |
+| `DT`, `DE`, `ILB`, `OLB` | `defensive_touchdowns` | Defensive touchdowns | smallint | 0–4 |
+| `ILB`, `OLB` | `coverage_snaps` | Snaps in coverage | smallint | 0–`defensive_snaps` |
+| `ILB`, `OLB` | `targets_in_coverage` | Targets allowed | smallint | 0–80 |
+| `ILB`, `OLB` | `completions_allowed` | Completions allowed | smallint | 0–`targets_in_coverage` |
+| `ILB`, `OLB` | `interceptions` | Interceptions | smallint | 0–10 |
+| `CB`, `FS`, `SS` | `tackles` | Tackles | smallint | 0–140 |
+| `CB`, `FS`, `SS` | `interceptions` | Interceptions | smallint | 0–15 |
+| `CB`, `FS`, `SS` | `passes_defended` | Passes defended | smallint | 0–30 |
+| `CB`, `FS`, `SS` | `targets_in_coverage` | Targets in coverage | smallint | 0–140 |
+| `CB`, `FS`, `SS` | `completions_allowed` | Completions allowed | smallint | 0–`targets_in_coverage` |
+| `CB`, `FS`, `SS` | `yards_allowed` | Yards allowed | int | 0–1,500 |
+| `CB`, `FS`, `SS` | `forced_fumbles` | Forced fumbles | smallint | 0–8 |
+| `CB`, `FS`, `SS` | `defensive_touchdowns` | Defensive touchdowns | smallint | 0–4 |
 | `K` | `fg_made` | Field goals made | smallint | 0–45 |
 | `K` | `fg_attempts` | Field goals attempted | smallint | 0–50, ≥ made |
 | `K` | `fg_long` | Longest field goal | smallint | 0–65 yards; 0 if none made |
@@ -1569,6 +1834,7 @@ Coach posts before the debut use the GM post shape with `role` in `head_coach`, 
 | `consistency`, `adaptability` | Game-to-game variance and scheme changes were not in the 27-component list. |
 | `secondary_positions` | Position flexibility had no field. |
 | `kick_power`, `kick_accuracy`, `punt_power`, `punt_accuracy` | One `kicking` number and one `punting` number could not separate distance from accuracy. |
+| `return_vision`, `special_teams` | Return decisions and coverage play are not the same thing as speed, tackling, or awareness. Deriving them would tie those profiles together. |
 | `cap_management`, `patience` | Trade negotiation was doing two jobs, and patience existed only as a trait some GMs never drew. |
 | `coach_evaluation`, `veteran_preference`, `pick_trade_willingness`, `positional_priority`, `reputation` on the GM | The prior GM list could not separate coach hiring, youth versus veterans, pick trading, positional bias, or a reputation that moves with results. |
 | `preparation`, `fatigue_management`, `injury_management`, `fourth_down_aggression`, `adaptability`, `leadership`, `veteran_preference`, `reputation` on the coach | Clock management was present, but fourth down, weekly preparation, fatigue, injury return, season-to-season adaptability, and locker-room leadership were missing or collapsed into `motivation`. |
@@ -1596,7 +1862,7 @@ Coach posts before the debut use the GM post shape with `role` in `head_coach`, 
 | Did not add a coach `roster_fit` rating | Roster fit is `preferred_*` plus `adaptability` plus the GM's `scheme_fit`. |
 | Did not add a second transaction table | Stints, contracts, draft picks, expansion picks, injuries, and awards are the transactions. |
 
-The component count is 31. The previous draft of this file used 27 and treated overall as a derived display value, which is unchanged: overall is still not a sim input.
+The component count is 33. An earlier pass used 31, and the draft before that used 27. Overall remains a derived display grade. The simulator reads the components.
 
 ---
 
@@ -1670,9 +1936,9 @@ Roster-slot seasons, using the era roster defaults and `N(year)`:
 | Contracts | one per two slot-seasons | 51,676 |
 | Staff stints | 4-year mean tenure. GM and head coach only are 2 roles. Seating coordinators as well is 4 roles. | 896 for GM and head coach; 1,792 if coordinators are seated |
 | Awards | a fixed annual honor list, not N(year) | about 3,500 |
-| Expansion-draft picks | `players_protected` and picks per new club, still unset | not knowable yet |
+| Expansion-draft picks | recommended 18 and 42 per new club | 72 in 1976 and 168 in 1996, 240 together, if the roster limits hold |
 
-Changing the 1978 roster from 53 to another number changes only the years that use that era. Changing 1996–2029 from 32 teams is a new schedule, not a tuning of these defaults.
+Changing the 1978 active roster from 45 changes the 1978–1986 slot seasons only. Changing 1996–2029 from 32 teams is a new schedule. Splitting the old 15 position labels into 19 positions does not change these row counts, because the active and taxi limits are unchanged. Adding `return_vision` and `special_teams` adds two rating columns per player, not two people. The 20,884 playable identities and the 1,792 franchise-seasons stay as stated while the roster and round figures hold.
 
 ### Obsolete 32-team estimate
 
@@ -1699,6 +1965,8 @@ A future implementation can turn these into tests. This document does not add th
 13. An expansion draft inserts timeline picks only. It does not change the universe player count.
 14. Every timeline on a release has the same conference slug, division slug, and `slot_order` for each franchise-season, matching the 24-, 28-, and 32-team tables in this document.
 15. A player's `universe_key`, name, birth, college, body, position, `initial` ratings, `potential`, traits, and pre-1970 history are identical on every timeline. `current` ratings and 1970–2029 results are not.
+16. Every active quota sums to that profile's active limit, and every taxi quota sums to that profile's taxi limit. The position enum has 19 values.
+17. The same decision fingerprint on the same release produces the same scout report for a given GM and player, and the same week of results. The simulator does not read the scout report.
 
 ---
 
@@ -1738,49 +2006,47 @@ Scoring, schedules, payments, and public pages stay outside this design. Season 
 
 ## Unresolved decisions
 
-These do not change the shared-universe versus per-timeline split. The expansion schedule, the three alignment shapes, the stay-or-apply owner flow, and the characteristic list in the audit are decided as written. What follows can still change row counts or block a publishable release.
+The position list, the 33 components, the market boundaries, the deterministic seed rule, the coordinator career path, and the recommended expansion arithmetic are written as the design. Items below still need an explicit approval before a model proposal should be treated as final, or they change a number the generator must emit.
 
-The playable horizon is 60 seasons, 1970 through 2029 inclusive. No contraction, relocation, or further expansion is scheduled. Confirming that empty set is part of publishing the release.
+The playable horizon is 60 seasons, 1970 through 2029 inclusive. No contraction, relocation, or further expansion is scheduled.
 
-| Decision | Working value | If it changes |
-|----------|----------------|---------------|
-| 1970 roster and later era limits | 40 + 8, then the era table, per active franchise. Later-era position quotas are not filled in yet. | Opening cohort and `slots(year)` scale directly. Quotas must sum to the era limit before publish. |
-| Free-agent pool and undrafted pool | 5 per founding franchise in 1970, and 2 undrafted prospects per active franchise per draft. | Linear in those per-team constants and in `N(year)`. |
-| Incoming staff floor | 8 head coaches and 6 GMs per year, plus at least one of each per expansion franchise. Coordinators: 4 per specialty, plus one per expansion franchise. | A larger candidate pool adds shared identities only. |
-| Opening hire pool | The 76 unemployed head coaches and 76 unemployed GMs. | Poaching before the draft would change a second franchise's staff in that timeline only. |
-| Rating draw distributions | Era tables say which traits are more common. They do not give the numeric distribution. | Required before generation. Not a new column. |
-| Scout noise and the evaluation threshold | Uncertainty 20 on the owned roster, 25–60 otherwise, clearing after 4 weeks or 100 snaps. | Changes the owner display. The sim still reads `current`. |
-| Development function | The formula is sketched. Coefficients are not set. | Changes timeline `current`. It does not change `initial` or `potential`. |
-| Identical decisions, then the 1970 season | The season sim may use the timeline RNG, so results can diverge after kickoff. | A fully deterministic season would require the sim to ignore that seed when decisions match. |
-| Dollar scale and the cap | Amounts are nominal dollars of the contract year. The 1970 veteran range is 20,000–250,000. The 1995 cap number is not set. | The cap number is required before generating or simulating a cap season. It is an era field, not a person field. |
-| College counting stats | Stored, 4 seasons per player, display only. About 48–80 schools. | Dropping them removes the college rows. The school count is a generation choice. |
-| Archive mean career | 5 years inside 1960–1969, implying 1,032 archive players. | The generator should emit the real headcount. The 11,520 historical season lines stay fixed. |
-| Injury planning rate | 30 per franchise-season, used only as a row estimate. | Does not change the injury columns. |
-| Position-weight table | The audit names which components matter by position. The numeric weights are not set. | Required before the match engine. Not a player column. |
-| Weight and height | Fixed on the shared person for life. | A timeline weight column would be a schema change. This design does not add one. |
+| Decision | Working value | Why it is still open |
+|----------|----------------|----------------------|
+| Active and taxi limits | 40/8, then 45/8, 47/8, and 53/8. Quotas in this document sum to those limits. | Rejecting a limit rewrites that quota and the 1976 or 1996 expansion counts. |
+| Cap total and minimum salary | Ledger units. Cap turns on in 1995. No amount is chosen. | A 1995 profile cannot be published with an empty cap. |
+| Rookie slot percents | 4-year deals from 1995, ordered by pick. | The percent table is empty. |
+| Accrued-season threshold | 4 seasons. | It defines restricted and unrestricted classes. |
+| Future-pick window and trade-deadline week | 1, then 2, then 3 years. Deadline after week 8. | The existence of trades is decided. The numbers are not. |
+| Injured reserve | 2, then 3, then 4, with the return rules in the market table. | The counts are a recommendation. |
+| Playoff field and overtime years | 8 teams, then 12 from 1996. Ties through 1973. Sudden death from 1974. Both-teams possession from 2012. | The formats are a recommendation. |
+| Franchise-tag formula | Average of the top five charges at the position, one tag per club, from 1995. | The formula needs approval. It does not set the cap. |
+| Special-teams score weights and other sim coefficients | The formulas are written. The numbers are recommendations. | They do not add columns. |
+| How far `talent_evaluation` tightens a scout band | Better evaluators get narrower bands. | The slope is unset. |
+| Free-agent pool and undrafted pool | 5 per founding franchise in 1970, and 2 undrafted prospects per active franchise. | These set the 120 free agents and the undrafted class sizes the expansion math uses. |
+| Rating draw distributions | Era tables say which traits are more common. | Required before generation. Not a new column. |
+| Development coefficients | The formula is sketched. | Changes timeline `current` only. |
+| Archive mean career | 5 years, implying 1,032 archive players. | The 11,520 historical lines stay if the 48-man pre-1970 roster stays. |
+| College count | About 48–80 schools, four seasons stored. | Generation choice. |
+| Names, cities, and permanent slugs | Placeholders only. | Not required to generate a placeholder release. |
+| Multi-human expansion award | HMAC fair draw is the candidate. Single-player apply is automatic. | The method needs approval. |
+| A mode that starts in 1976 or 1996 | Column exists. Default remains 1970. | Product choice. |
+| Identical 1970 seasons | Recommended: yes, from the decision fingerprint, with no per-timeline coin flip. | Confirm this recommendation before models lock the seed. |
 
-### Expansion decisions still required
+### Not a reason to add a second staff table
 
-| Decision | What this document already fixes | Still open |
-|----------|----------------------------------|------------|
-| Which seasons add clubs | 1976 adds 4. 1996 adds 4. `N` is 24, then 28, then 32 through 2029. | Nothing on the year list, unless a later decision adds a departure, a relocation, or another expansion. |
-| Names, cities, and permanent slugs | Placeholders `founding-01` … `founding-24`, `expansion-1976-01` … `04`, `expansion-1996-01` … `04`. | The real identities. Placeholders are enough to generate a release. |
-| Alignment | The 24-, 28-, and 32-team tables, including `slot_order`. Shared. Not standings-based. | Nothing, unless the placeholder assignment itself is rejected. |
-| Owner access | Stay or apply. Awarding a club bots the old franchise. The new club starts empty. The owner sets priorities and, if staying, names core players to protect. Single-player apply is automatic. | The multi-human rule when several owners want the same club. `fair_draw` is the candidate. Whether a separate mode may start in 1976 or 1996. `start_season_year` already exists and defaults to 1970. |
-| Expansion-draft integers | The event has fields for protection count, picks per new club, order, roster rules, free-agent rules, rookie slot, and hiring. | The values. Publishing with those fields empty is refused. |
-
-### Not a reason to rebuild the person tables later
-
-Coordinator identities share the coach table. Scout estimates are their own timeline rows. Original ratings stay on the universe person, and `current` stays on the timeline overlay. Overall is not a column. Accepting or revising this audit is the schema decision. The numeric rows in the tables above can be locked as the working defaults without adding fields.
+Coordinator identities share the coach table. `specialty = both` only controls eligibility. Scheme ratings control ability. A coordinator's later promotions and demotions are new stints on the same person.
 
 ---
 
 ## Document status
 
 - Describes `leagues` as it exists on `main`, including the 32-team generator. This design does not change that generator.
+- Confirms 19 primary positions and treats returner, snapper, coverage, and emergency kicker or punter as roster roles.
+- Confirms 33 rating components, including `return_vision` and `special_teams`.
 - Confirms the shared schedule: 24 franchises for 1970–1975, 28 for 1976–1995, and 32 for 1996–2029. Names and cities stay placeholders.
 - Confirms the playable timeline as 60 seasons, 1970 through 2029 inclusive. Franchise-seasons are exactly 1,792.
-- If the era roster and round defaults hold: 20,884 playable player identities, 21,916 including the archive assumption, 16,028 draftable prospects, 103,352 roster-slot seasons, 1,042 GM and head-coach identities, and 1,610 staff identities with coordinators included. Those player and staff totals move if the defaults move.
+- If the era roster and round figures hold: 20,884 playable player identities, 21,916 including the archive assumption, 16,028 draftable prospects, 103,352 roster-slot seasons, 1,042 GM and head-coach identities, and 1,610 staff identities with coordinators. The 19-position split does not change those counts.
+- Recommends the 1976 and 1996 expansion drafts at 72 and 168 veteran picks. Those counts move if the roster limits move.
+- Recommends deterministic scouting and a decision-fingerprint match seed so identical opening choices produce the same 1970 season.
 - The retired totals of 28,384 and 17,424 stay labeled obsolete.
-- Audits every player, GM, and head-coach characteristic, including scout estimates, and recommends generating coordinators on the coach table now.
 - Adds no application code, database models, migrations, fixtures, settings, generated people, or database rows.
