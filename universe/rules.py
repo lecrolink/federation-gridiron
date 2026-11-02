@@ -8,7 +8,7 @@ does not generate people or insert rows.
 from django.db import models
 
 from universe.models import UniverseFranchise, UniverseRelease
-from universe.people import POSITIONS, ReleaseChild
+from universe.people import DEFENSE_SCHEMES, OFFENSE_SCHEMES, POSITIONS, ReleaseChild
 
 
 MARKETS = ('controlled', 'transitional', 'modern')
@@ -291,6 +291,62 @@ for _position in POSITIONS:
         _quota_name('taxi', _position),
         models.PositiveSmallIntegerField(),
     )
+
+
+SCHEME_SIDES = ('offense', 'defense')
+
+
+class EraAllowedScheme(ReleaseChild):
+    """One offense or defense scheme that may be newly assigned in this era.
+
+    The row belongs to an ``EraRuleProfile``. It does not store a scheme on
+    a staff season rating, and it does not rewrite historical employment.
+    Hiring and season-advancement checks are later services.
+    """
+
+    profile = models.ForeignKey(
+        EraRuleProfile,
+        on_delete=models.CASCADE,
+        related_name='allowed_schemes',
+    )
+    side = models.CharField(max_length=16)
+    scheme = models.CharField(max_length=32)
+
+    class Meta:
+        app_label = 'universe'
+        ordering = ['profile', 'side', 'scheme']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['profile', 'side', 'scheme'],
+                name='unique_era_allowed_scheme',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(side='offense', scheme__in=OFFENSE_SCHEMES)
+                    | models.Q(side='defense', scheme__in=DEFENSE_SCHEMES)
+                ),
+                name='universe_era_scheme_side',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.side} {self.scheme}'
+
+    def bound_release(self):
+        if not self.profile_id:
+            return None
+        return self.profile.release
+
+    def guard_field(self):
+        return 'profile'
+
+    def extra_clean(self, errors):
+        if self.side == 'offense' and self.scheme not in OFFENSE_SCHEMES:
+            errors['scheme'] = 'An offensive row must use an offensive scheme.'
+        elif self.side == 'defense' and self.scheme not in DEFENSE_SCHEMES:
+            errors['scheme'] = 'A defensive row must use a defensive scheme.'
+        elif self.side not in SCHEME_SIDES:
+            errors['side'] = 'The scheme side is offense or defense.'
 
 
 class EraCollegeWeight(ReleaseChild):
