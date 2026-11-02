@@ -576,11 +576,11 @@ class HistoricalStanding(models.Model):
         return super().delete(*args, **kwargs)
 
 
-def _reject_published_child(instance, release, errors):
+def _reject_published_child(instance, release, errors, new_row_field='franchise'):
     if release.status != UniverseRelease.Status.PUBLISHED:
         return
     if not instance.pk:
-        errors['franchise'] = 'A published release cannot gain new rows.'
+        errors[new_row_field] = 'A published release cannot gain new rows.'
         return
     previous = _previous(instance)
     if previous is None:
@@ -604,3 +604,6 @@ def _require_slug(value, field_name, errors):
         validate_slug(value)
     except ValidationError:
         errors[field_name] = 'Enter a nonempty slug.'
+
+
+from universe import people as _people  # noqa: E402,F401
