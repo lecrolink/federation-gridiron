@@ -1,13 +1,13 @@
 # Federation Gridiron — Player Universe Model Proposal
 
-This document translates [PLAYER_UNIVERSE_DESIGN.md](PLAYER_UNIVERSE_DESIGN.md) into a concrete Django model architecture. Phase 1 is the `universe` app and its five models. Later phases in this file are still proposals: they do not add models, migrations, services, seed files, generated people, tests, or database rows.
+This document translates [PLAYER_UNIVERSE_DESIGN.md](PLAYER_UNIVERSE_DESIGN.md) into a concrete Django model architecture. Phases 1–3 are the `universe` app. Phase 4 is the `timelines` app's core tables. The migration inserts nothing. Later phases in this file are still proposals: they do not add models, migrations, services, seed files, generated people, tests, or database rows.
 
-The project on `main` is Django 5.2 with `DEFAULT_AUTO_FIELD = BigAutoField` and MySQL. `universe` holds the shared release. `timelines` is still only proposed.
+The project on `main` is Django 5.2 with `DEFAULT_AUTO_FIELD = BigAutoField` and MySQL. `universe` holds the shared release. `timelines` holds one campaign's humans, control history, directives, expansion choices, and audit foundation.
 
 | App | Owns | Who writes it |
 |-----|------|----------------|
 | `universe` | One published release and the people, rules, and franchise history shared by every timeline | A generator, once, at publication |
-| `timelines` | One owner's playthrough | Timeline services. They reference universe rows and never update them |
+| `timelines` | One campaign. A single-player campaign has one human. Other franchises are bots and have no participant row. | Timeline services. They reference universe rows and never update them. Phase 4 creates the tables and inserts nothing. |
 
 `leagues.Team` stays a franchise-catalog record. A user's roster, contracts, staff, and results are timeline rows. They are never columns on `Team`, and timeline code does not insert `League`, `Conference`, `Division`, or `Team` or update `Team.league`, `Team.conference`, or `Team.division`.
 
@@ -29,7 +29,7 @@ Default, unless a model below names a different behavior:
 - Every foreign key from a timeline-owned row to `Timeline`, and every foreign key from one timeline-owned row to another, uses `on_delete=CASCADE`. A timeline-to-timeline `PROTECT` would make Django raise `ProtectedError` while deleting the campaign. That link is not used.
 - Every foreign key from a timeline-owned row to a shared row uses `on_delete=PROTECT`. Deleting the timeline removes the referencing row. It does not remove the shared row.
 - Every foreign key from a shared child to `UniverseRelease` uses `on_delete=CASCADE`. Sibling links between shared children, such as a player pointing at a college or a draft class, use `PROTECT`, so deleting a college cannot delete players. A release that still has a timeline cannot be deleted, because `Timeline.release` is `PROTECT`. Shared people therefore survive for as long as any timeline pins the release. An unpublished release with no timeline is removed by deleting children from the leaves inward, then the release. A single `release.delete()` is not the rollback path, because those sibling `PROTECT` links would raise `ProtectedError`.
-- `Timeline.owner` points at `settings.AUTH_USER_MODEL` with `on_delete=CASCADE`. Deleting that user deletes that user's timelines and, through them, their timeline state. It does not delete another user's timelines or any shared row.
+- `Timeline.created_by` and `TimelineParticipant.user` point at `settings.AUTH_USER_MODEL` with `on_delete=SET_NULL` and `null=True`. Deleting an account does not delete the campaign, another participant, the control history, or any shared row. The earlier single-owner `Timeline.owner` `CASCADE` is not used, because a later timeline may have more than one human and deleting one account must not erase that shared history. Account deletion nulls the reference in the database and does not run model validation. An active participant whose user is then null no longer represents a playable human. That franchise is treated as bot-controlled until a future account-recovery or commissioner service reassigns it. Historical control rows remain. Phase 4 does not implement that reassignment. Deleting the timeline still cascades only its own rows.
 - No shared person uses `on_delete=CASCADE` toward a timeline row. A shared delete cannot wipe a campaign.
 - `UniverseFranchise.catalog_team` points at `leagues.Team` with `on_delete=PROTECT` and `null=True`. It stays null while names are placeholders. Setting it never grants timeline code permission to write the `Team` row.
 
@@ -90,7 +90,7 @@ Versioned rules for a contiguous span of seasons. Nine working rows: `y1970`, `y
 - Foreign keys: `release` to `UniverseRelease`, `CASCADE`.
 - Fields: `first_year` and `last_year` `PositiveSmallIntegerField`; `market` choices `controlled`, `transitional`, `modern`; `style_key` choices `run-first`, `passing-rules`, `timing-specialists`, `cap-and-size`, `spread-influence`, `modern-passing`; `active_limit` and `taxi_limit` `PositiveSmallIntegerField`; nineteen `quota_active_*` and nineteen `quota_taxi_*` `PositiveSmallIntegerField` columns, one per primary position; `ir_max`, `ir_min_weeks`, `ir_returns_allowed` `PositiveSmallIntegerField`; `draft_rounds` `PositiveSmallIntegerField`; `rookie_contract_years_min` and `rookie_contract_years_max`; `veteran_contract_years_min` and `veteran_contract_years_max`; `accrued_seasons_for_ufa` `PositiveSmallIntegerField`, null in the controlled market; `trade_deadline_week` `PositiveSmallIntegerField`; `future_pick_years` `PositiveSmallIntegerField`; `waiver_rule`, `free_agency_type`, `fa_compensation`, `cap_status`, `franchise_tag`, `playoff_format`, `overtime_rule`, and `sack_leaderboard` as `CharField` choices from the design; `schedule_length` `PositiveSmallIntegerField`; `cap_limit` and `minimum_salary` `BigIntegerField`, null while unset; `rookie_slot_scale` `JSONField`, null until 1995 and until a percent table is configured. The slot table is the one JSON field on this row because its length is the draft, not a fixed 33.
 - Unique: `(release, profile_key)`.
-- Database checks: `first_year <= last_year`; the nineteen `quota_active_*` columns sum to `active_limit`; the nineteen `quota_taxi_*` columns sum to `taxi_limit`; contract-year spans are ordered and at least 1; the trade deadline is from 1 through `schedule_length`; enum values; `cap_status = on` implies `market = modern`; `cap_status = off` implies `cap_limit` is null; a controlled market has null `accrued_seasons_for_ufa` and the other markets set it. Model validation places the span inside the parent release. It does not hardcode 1970–2029, 14, 16, 17, or the confirmed quota totals. Overlapping spans are a publication check. A modern profile with a null `cap_limit` is refused by the publication service and is not a database check, because a draft release may leave the amount unset. `minimum_salary` and `rookie_slot_scale` may also stay null until a number is approved.
+- Database checks: `first_year <= last_year`; the nineteen `quota_active_*` columns sum to `active_limit`; the nineteen `quota_taxi_*` columns sum to `taxi_limit`; contract-year spans are ordered and at least 1; the trade deadline is from 1 through `schedule_length`; enum values; `cap_status = on` implies `market = modern`; `cap_status = off` implies `cap_limit` is null; a controlled market has null `accrued_seasons_for_ufa` and the other markets set it. `schedule_length` is the number of regular-season games each franchise plays. It is not the highest calendar week. A 17-game season can occupy 18 weeks when one week is a bye. Model validation places the span inside the parent release. It does not hardcode 1970–2029, 14, 16, 17, or the confirmed quota totals. Overlapping spans are a publication check. A modern profile with a null `cap_limit` is refused by the publication service and is not a database check, because a draft release may leave the amount unset. `minimum_salary` and `rookie_slot_scale` may also stay null until a number is approved.
 - Indexes: `(release, first_year, last_year)`.
 - Immutable after the release is published. Mutable while the release is `draft`.
 - Rows: 9 per release.
@@ -462,20 +462,48 @@ Checks on a season row: `starts <= games`; `completions <= pass_attempts`; `fumb
 
 ### Timeline
 
-One owner's campaign. Not a `leagues.League`.
+One campaign. Not a `leagues.League`, and not limited to one human forever. The human who starts it is `created_by`. Who controls a franchise is `TimelineFranchiseControl`.
 
 - Ownership: timeline.
 - Primary key: `BigAutoField`. Public key: none required beyond the id. `name` is display, not unique.
-- Foreign keys: `owner` to the auth user, `CASCADE`; `release` `PROTECT`; `owned_franchise` to `UniverseFranchise`, `PROTECT`.
-- Fields: `name` `CharField(255)`; `season_index` `PositiveSmallIntegerField`; `phase` choices `choose_franchise`, `staff`, `direction`, `draft`, `instructions`, `roster_cut`, `regular`, `playoffs`, `offseason`, `complete`; `start_season_year` `PositiveSmallIntegerField`, default 1970, legal values 1970, 1976, 1996; `decision_audit` `CharField(64)`, null. This audit hash records decisions for inspection. It is not a random seed. `persist_snap_draws` `BooleanField`, default false; `created_at`.
-- Unique: none across owners. Two timelines may share a name.
-- Checks: `season_index` is 1–60; the derived season year `1969 + season_index` is 1970–2029; `owned_franchise` belongs to `release`; a 1970 start owns a founding franchise. Start-year eligibility is not read from `FranchiseSeasonMembership.owner_selectable`. The normal game begins in 1970. Rules for a later start belong in timeline-start configuration in a later phase. Phase 1 does not add that configuration. An expansion award may change `owned_franchise` without setting the shared `owner_selectable` flag false.
-- Indexes: `(owner, release)`; `(release, phase)`.
-- Immutable: `owner`, `release`, `start_season_year`, `created_at`. Mutable: `name`, `owned_franchise` (only when an expansion award moves the owner), `season_index`, `phase`, `decision_audit`, `persist_snap_draws`.
-- Rows: one per campaign. Unbounded across users. Zero in this document.
-- Created at timeline creation.
+- Foreign keys: `created_by` to the auth user, `SET_NULL`, null; `release` `PROTECT`. There is no `owned_franchise` column.
+- Fields: `name` `CharField(255)`; `start_season_year` and `current_season_year` `PositiveSmallIntegerField`; `season_index` `PositiveSmallIntegerField`; `phase` choices `choose_franchise`, `staff`, `direction`, `draft`, `instructions`, `roster_cut`, `regular`, `playoffs`, `offseason`, `complete`; `status` choices `active`, `completed`, `archived`; `decision_audit` `CharField(64)`, null. The design's `decision_fingerprint` is this hash. It records decisions for inspection. It is not a random seed. `persist_snap_draws` `BooleanField`, default false; `created_at`; `updated_at`; `completed_at`, null while `active`.
+- Unique: none across campaigns. Two timelines may share a name.
+- Database checks: the name is nonempty; phase and status are in the lists above; `season_index` is at least 1; `current_season_year` is at least `start_season_year`; `current_season_year = start_season_year + season_index - 1`; `completed_at` is null exactly while `status` is `active`. Model validation places both years inside the parent release, requires a published release when the timeline is created, and requires `phase = complete` when `status` is `completed`. It does not hardcode 1970, 1976, 1996, or a 60-season cap. The creation path, which this phase does not implement, sets `start_season_year` to the release's first playable season. For the confirmed release that year is 1970. A later start in 1976 or 1996 can use the same columns. Start-year eligibility is not read from `FranchiseSeasonMembership.owner_selectable`. An expansion award changes a control stint. It does not set the shared `owner_selectable` flag false.
+- Indexes: `(created_by, release)`; `(release, status)`.
+- Immutable while the timeline is `active`: `created_by`, `release`, `start_season_year`, `created_at`. Mutable: `name`, `current_season_year`, `season_index`, `phase`, `decision_audit`, `persist_snap_draws`. `completed` may become `archived`. An `archived` timeline cannot be changed. A `completed` or `archived` timeline accepts no new child rows through `clean()` and `save()`.
+- Rows: one per campaign. Unbounded across users. Zero in this migration.
+- Created at timeline creation. This phase does not create one.
 
-There is no stored random seed and no timeline id inside the draw. `decision_audit` may be recomputed. Changing it does not change HMAC inputs.
+There is no stored random seed and no timeline id inside the draw. `decision_audit` may be recomputed. Changing it does not change HMAC inputs. There is no billing or free-versus-paid field.
+
+### TimelineParticipant
+
+One human account in one campaign. A single-player timeline has one `active` row. A future multiplayer timeline may have several. Bot-controlled franchises do not get a row. Phase 4 does not invite, wait, synchronize, or add a commissioner.
+
+- Ownership: timeline.
+- Primary key: `BigAutoField`.
+- Foreign keys: `timeline` `CASCADE`; `user` to the auth user, `SET_NULL`, null after the account is deleted.
+- Fields: `status` choices `active` or `departed`; `joined_season`; `departed_at`, null while active; `joined_at`; `updated_at`.
+- Unique: `(timeline, user)`. MySQL allows more than one null user, which is how two removed accounts can remain on the history. An active row must still have a user when it is saved through the model.
+- Database checks: status is `active` or `departed`; `departed_at` is null exactly when the status is `active`. Model validation places `joined_season` inside the timeline and the release.
+- Indexes: `(timeline, status)`.
+- Immutable: `timeline`, `user`, `joined_season`. A `departed` row is not reopened.
+- Rows: one on a normal single-player campaign. Zero in this migration.
+
+### TimelineFranchiseControl
+
+Which participant controls which shared franchise, including a move to an expansion club. A franchise with no open row is bot-controlled. History remains after the participant changes clubs.
+
+- Ownership: timeline.
+- Primary key: `BigAutoField`.
+- Foreign keys: `timeline` `CASCADE`; `participant` `CASCADE`; `franchise` `PROTECT`.
+- Fields: `first_controlled_season`; `final_controlled_season`, null while open; `reason_ended` choices `expansion_switch`, `departed`, `timeline_complete`, `released`, null while open. Two stored generated columns, `open_participant_key` and `open_franchise_key`, are the participant id and the franchise id while the stint is open and null when it is closed.
+- Unique: `open_participant_key`; `(timeline, open_franchise_key)`. Closed rows store null and do not collide. That enforces one open franchise per participant and one open human per franchise. Overlapping closed ranges are application validation, because a MySQL unique index cannot express them.
+- Database checks: an open row has a null final season and a null reason; a closed row has a final season at least the first season and a reason from the list. Model validation requires the same timeline on the participant, the franchise's release, seasons inside the timeline, the release, and the franchise's active span.
+- Indexes: `(timeline, franchise)`; `(participant, first_controlled_season)`.
+- Immutable: timeline, participant, franchise, and the first season. The close is written once.
+- Rows: one open stint on a normal single-player campaign. Zero in this migration. Awarding an expansion club is a later service: it closes this stint with `expansion_switch` and opens another. Phase 4 does not run that service. An open stint whose participant user has been set null by account deletion remains as history and is not a playable human control. The franchise is bot-controlled until a later recovery service reassigns it.
 
 ### TimelineSeason
 
@@ -484,13 +512,13 @@ The clock for one year of one timeline.
 - Ownership: timeline.
 - Primary key: `BigAutoField`.
 - Foreign keys: `timeline` `CASCADE`; `profile` to `EraRuleProfile`, `PROTECT`.
-- Fields: `season_index`; `season_year`; `phase` same family as the header, for that year; `expansion_gate` choices `not_expansion`, `ready`, `blocked`.
+- Fields: `season_index`; `season_year`; `phase` the same family as the header, for that year; `expansion_gate` choices `not_expansion`, `ready`, `blocked`, default `not_expansion`; `setup_complete`, `directives_locked`, `regular_season_simulated`, and `postseason_complete` `BooleanField`, default false; `completed_at`, null unless `phase` is `complete`. The shorter words setup, regular season, postseason, and complete are these booleans plus `phase` values `regular`, `playoffs`, and `complete`. The header's finer phases remain the stored vocabulary.
 - Unique: `(timeline, season_year)`.
-- Checks: `season_year = 1969 + season_index`; the profile's span contains the year. For 1976 and 1996, `expansion_gate` becomes `ready` from the shared expansion arithmetic: veterans, rookie picks, and reserved undrafted prospects. It is not `blocked` because the timeline has too few free agents. Taxi does not count. A failure of the shared arithmetic is a release-publication error, not a reason to invent a person at season entry.
-- Indexes: `(timeline, season_year)`.
-- Immutable: `season_index`, `season_year`, `profile`. Mutable: `phase`, `expansion_gate`.
-- Rows: 60 per completed timeline. The 1970 row is created with the timeline. Later rows are created at season entry.
-- Created at timeline creation for 1970, then at season entry.
+- Database checks: phase and expansion gate are in their lists; `season_index` is at least 1; directives lock only after setup is complete; the regular season is marked simulated only after directives are locked, which also requires setup to be complete; postseason completion follows regular-season simulation; `phase = complete` requires `postseason_complete`, and therefore the earlier milestones; `completed_at` is set exactly when `phase` is `complete`. The opening flow does not lock directives before setup is complete. Model validation places the year inside the timeline and the release, requires `season_year = start_season_year + season_index - 1`, requires the profile to belong to the release and cover the year, and refuses `directives_locked` while an `OwnerDirective` for that season is still unlocked. It does not hardcode `1969 + season_index`. The header phase and the season phase are both stored. They are not forced to be equal. For 1976 and 1996, a later service may set `expansion_gate` to `ready` from the shared expansion arithmetic. It is not `blocked` because the timeline has too few free agents. Taxi does not count. A failure of the shared arithmetic is a release-publication error, not a reason to invent a person at season entry.
+- Indexes: the unique key; `(profile, season_year)`.
+- Immutable: `season_index`, `season_year`, `profile`, `timeline`. Mutable while the timeline is active: `phase`, `expansion_gate`, and the progress flags.
+- Rows: 60 per completed timeline once a campaign is played through. This phase creates none of them, including the opening year.
+- Created later, at timeline creation for the opening season, then at season entry. Not by this migration.
 
 ### SimulationAuditRecord
 
@@ -500,11 +528,11 @@ The HMAC is not stored. It is recomputed from the release seed and the coordinat
 
 - Ownership: timeline.
 - Primary key: `BigAutoField`.
-- Foreign keys: `timeline` `CASCADE`; `game` to `ScheduleGame`, `CASCADE`, null for a development or transaction event that is not inside a game.
-- Fields: `season_year`; `week` `PositiveSmallIntegerField`; `franchise_key_a` and `franchise_key_b` `CharField(64)`, stored in sorted order; `event_index` `PositiveIntegerField`; `event_type` `CharField(32)`; `outcome_code` `CharField(64)`; `participant_keys` `CharField(255)`; `pre_state_hash` and `post_state_hash` `CharField(64)`, null; `snap_detail` `JSONField`, null. `snap_detail` is written only when `Timeline.persist_snap_draws` is true.
-- Unique: `(timeline, season_year, week, franchise_key_a, franchise_key_b, event_index, event_type)`.
-- Checks: franchise keys belong to the release; week is 0 through the schedule length; `snap_detail` is null when the timeline is not persisting snap draws.
-- Indexes: that unique key; `(game, event_index)`.
+- Foreign keys: `kickoff` to `GameKickoffState`, `CASCADE`. `ScheduleGame` does not exist yet, so an out-of-game development or transaction event is not this row. The season, week, and franchise coordinates live on the kickoff.
+- Fields: `event_index` `PositiveIntegerField`; `event_type` `CharField(32)`; `participants` `JSONField`, null, a compact list of stable identifiers; `outcome_code` `CharField(64)`; `pre_state_hash` and `post_state_hash` `CharField(64)`, null; `detail` `JSONField`, null. `detail` is the optional snap payload. It is written only when `Timeline.persist_snap_draws` is true. The random draw is not a column.
+- Unique: `(kickoff, event_index)`.
+- Database checks: event type and outcome code are nonempty. Model validation requires a 64-character digest when a state hash is present, refuses `detail` unless the timeline stores snap draws, and refuses edits after insert.
+- Indexes: the unique key; `(kickoff, event_type)`.
 - Immutable once written. A changed decision does not rewrite earlier rows. If the new game produces a different event sequence, later indexes are a different log. A hash that does not match a reconstruction is a failed verification.
 - Rows: the default log is the ordered plays or events the product keeps, plus persistent results such as injuries, scoring plays, development, and transactions. That is tens of thousands of rows per timeline, not one full snapshot per snap. Snap-detail rows are written only when `persist_snap_draws` is true, which can reach the low millions and is off by default. Mid-game checkpoints are not a table in this proposal. They can be added later without changing the draw coordinates.
 - Created during simulation.
@@ -521,42 +549,42 @@ Scout noise uses the same HMAC with a different coordinate string: player key, c
 
 - Ownership: timeline.
 - Primary key: `BigAutoField`.
-- Foreign keys: `timeline` `CASCADE`; `event` to `ExpansionEvent`, `PROTECT`; `target_franchise` `PROTECT`, null.
-- Fields: `decision` choices `stay` or `apply`; `protection_priority_1` through `_3`, null; `draft_priority_1` through `_3`, null; `outcome` choices `pending`, `awarded`, `declined`, `stayed`; `selection_method` choices `not_needed`, `automatic`, `fair_draw`.
-- Unique: `(timeline, event)`.
-- Checks: `apply` requires a target franchise that belongs to the event; `stay` leaves the target null; at most three priorities are set. Pinned names are `ExpansionPin`, below, so the five-player cap is a count check rather than five sparse columns mixed with priorities.
+- Foreign keys: `timeline` `CASCADE`; `participant` `CASCADE`; `event` to `ExpansionEvent`, `PROTECT`; `controlled_franchise` and `target_franchise` to `UniverseFranchise`, `PROTECT`. The target is null.
+- Fields: `decision` choices `stay` or `apply`; `resolution` choices `pending`, `awarded`, `not_awarded`, `withdrawn`. The earlier `declined` is `not_awarded`. The earlier `stayed` is `decision = stay`, not a second resolution. `selection_method` choices `not_needed`, `automatic`, `fair_draw`; `resolved_at`, null while pending. Position-group protection and acquisition priorities stay on `OwnerDirective`. The full protection list remains the later `ExpansionProtection` model. This row does not store it.
+- Unique: `(participant, event)`. Several participants may apply for the same target. That is why the unique key is not `(timeline, event)`.
+- Database checks: `apply` requires a target and `stay` forbids one; `awarded` and `not_awarded` require `apply`; `resolved_at` is null exactly while `resolution` is `pending`. Model validation requires the event's release, a target that is one of that event's `ExpansionClub` rows, `not_needed` when staying, and `automatic` or `fair_draw` when the resolution is `awarded`. While the choice is pending, the participant must have an open control stint for `controlled_franchise`. Phase 4 does not award the club or close that stint.
 - Indexes: `(event, target_franchise, decision)`.
-- Immutable: `event`. Mutable until the award is recorded: decision, target, priorities. `outcome` and `selection_method` change once, from `pending` to the result.
-- Rows: 2 per timeline that reaches both expansion years. None until that offseason.
-- Created at season entry for 1976 and 1996.
+- Immutable: timeline, participant, and event. Mutable until the resolution leaves `pending`.
+- Rows: up to one per participant per expansion year. None until that offseason. Zero in this migration.
+- Created later, at season entry for an expansion year. Single-player `apply` may later resolve as `automatic`. A multiplayer collision may later use `fair_draw`. Neither resolver is implemented here.
 
 ### ExpansionPin
 
 - Ownership: timeline.
 - Primary key: `BigAutoField`.
-- Foreign keys: `choice` `CASCADE`; `player` to `TimelinePlayer`, `CASCADE`.
-- Fields: none beyond the keys. Present only in involved mode.
-- Unique: `(choice, player)`.
-- Checks: at most 5 pins per choice, enforced in `full_clean()`.
-- Indexes: the unique key.
-- Immutable once the expansion draft starts.
-- Rows: 0–5 per expansion choice.
-- Created at season entry, when the owner pins.
+- Foreign keys: `choice` `CASCADE`; `player` to `UniversePlayer`, `PROTECT`. The proposal's `TimelinePlayer` link waits for the overlay phase. The pin stores the shared identity so this phase does not create overlays.
+- Fields: `priority` `PositiveSmallIntegerField`, 1 through 5.
+- Unique: `(choice, player)`; `(choice, priority)`.
+- Database checks: priority is 1 through 5, so one choice holds at most five pins. Model validation requires an `apply` choice and a player from the timeline's release. Pins are not allowed on a stay. The normal mode stores zero pins. These rows are not expansion selections and not a protection list.
+- Indexes: the unique keys.
+- Immutable once written. A change deletes the pin and inserts another while the choice is still pending.
+- Rows: 0–5 per expansion choice. Zero in this migration.
+- Created later, if the owner turns involved mode on.
 
 ### OwnerDirective
 
-Append-only instructions. The current row is the latest effective week. AI clubs get a starting row derived from shared staff tags. Phase 3 reserves this shape and does not create the table. The owner does not receive a control for every contract, depth-chart spot, transaction, or player component.
+One explicit row for one human participant and one `TimelineSeason`. It is not JSON and it is not one slider per rating. Bot franchises have no participant, so they do not get this row. A later service may still derive their tendencies from shared staff tags. That service is not this table. The owner does not receive a control for every contract, depth-chart spot, transaction, or player component.
 
 - Ownership: timeline.
 - Primary key: `BigAutoField`.
-- Foreign keys: `timeline` `CASCADE`; `franchise` `PROTECT`.
-- Fields: `role` choices `gm` or `head_coach`; `effective_year`; `effective_week`. GM rows: `team_direction` choices `compete`, `balanced`, `rebuild`; `priority_group_1`, `priority_group_2`, `priority_group_3` from the GM position-group vocabulary, filled in order, each null; `trade_appetite` choices `low`, `medium`, `high`; `veteran_preference` choices `youth`, `balanced`, `veterans`, defaulted from team direction unless the owner overrides it; `draft_participation` choices `owner` or `gm`, default `gm`. Coach rows: `offensive_emphasis` choices `run`, `balanced`, `pass`; `defensive_emphasis` choices `stop_run`, `balanced`, `pressure_quarterback`; `fourth_down` choices `conservative`, `balanced`, `aggressive`; `playing_time` choices `veterans`, `balanced`, `develop_youth`, null when unset. GM rows leave coach fields null and the reverse.
-- Unique: `(timeline, franchise, role, effective_year, effective_week)`.
-- Checks: GM rows leave coach fields null and the reverse; the first owned-franchise row is the timeline's opening week 0 before the season simulates. The GM still builds contracts, cuts, signings, trades, expansion selections, undrafted signings, and the roster. The head coach still sets the depth chart, weekly lineup, special teams, fatigue, injuries, coordinators, and play calls.
-- Indexes: `(timeline, franchise, role, effective_year, effective_week)`.
-- Immutable: every field after insert. A change inserts a new row.
-- Rows: a handful per franchise per timeline, more if the owner edits often. Planning size is under a few thousand per timeline.
-- Created at timeline creation for the opening instruction, then whenever the owner or an AI club changes course.
+- Foreign keys: `timeline` `CASCADE`; `participant` `CASCADE`; `season` `CASCADE`.
+- Fields, with the defaults an owner can accept without touching the screen: `team_direction` choices `compete`, `balanced`, `rebuild`, default `balanced`; `priority_group_1`, `priority_group_2`, `priority_group_3` from `quarterback`, `skill`, `offensive_line`, `defensive_line`, `linebacker`, `defensive_back`, `special_teams`, each null. Those keys are the broad groups: quarterback, skill positions, offensive line, defensive line, linebackers, defensive backs, and special teams. `trade_appetite` choices `low`, `medium`, `high`, default `medium`; `veteran_preference` choices `automatic`, `youth`, `balanced`, `veterans`, default `automatic`; `draft_participation` choices `owner_selects` or `delegate_to_gm`, default `delegate_to_gm`; `offensive_emphasis` choices `run`, `balanced`, `pass`, default `balanced`; `defensive_emphasis` choices `stop_run`, `balanced`, `pressure_quarterback`, default `balanced`; `fourth_down` choices `conservative`, `balanced`, `aggressive`, default `balanced`; `playing_time` choices `automatic`, `veterans`, `balanced`, `develop_youth`, default `automatic`; `locked` `BooleanField`, default false.
+- Unique: `(participant, season)`.
+- Database checks: every choice is in its list; priority 2 requires priority 1; priority 3 requires priority 2; the three priorities are distinct when set. Model validation requires the participant and the season to belong to the timeline. `automatic` veteran preference means the GM derives veterans from `compete`, youth from `rebuild`, and balanced from `balanced`. `automatic` playing time uses that same derivation for the head coach. The stored value stays `automatic` until the owner picks an explicit one. The GM still builds contracts, cuts, signings, trades, expansion selections, undrafted signings, and the roster. The head coach still sets the depth chart, weekly lineup, special teams, fatigue, injuries, coordinators, and play calls.
+- Indexes: `(timeline, season)`.
+- Mutable until the season locks directives. A season with `directives_locked` cannot gain a directive, and an existing unlocked directive may change only by setting `locked`. Instruction fields cannot change after that lock. A row that is already `locked` cannot be edited. The simulation that locks it is not implemented in this phase. Weekly append-only rows for AI clubs remain deferred.
+- Rows: one per human participant per season once a campaign starts. Zero in this migration.
+- Created later, with the season, not by this migration.
 
 ### TimelineStaff
 
@@ -857,7 +885,7 @@ The fixture. Its identity is the replay game id.
 - Foreign keys: `timeline` `CASCADE`; `home` and `away` to `UniverseFranchise`, `PROTECT`.
 - Fields: `season_year`; `week`; `kind` choices `regular` or `playoff`; `played` `BooleanField`.
 - Unique: `(timeline, season_year, week, home, away)`.
-- Checks: home and away differ; both memberships exist for that shared season; week is inside the schedule length for regular games.
+- Checks: home and away differ; both memberships exist for that shared season. This later model decides which calendar weeks exist, which are byes, how many games each franchise plays, whether a franchise is scheduled in a week, and how postseason weeks are numbered. `schedule_length` remains games per franchise, not the maximum week.
 - Indexes: `(timeline, season_year, week)`.
 - Immutable: teams, year, week, kind. Mutable: `played`.
 - Rows: 14,280 regular-season games per completed timeline if the schedule lengths hold (1,008 + 392 + 3,808 + 224 + 6,400 + 2,448). Playoff games add a few hundred more, depending on byes and the field.
@@ -869,14 +897,14 @@ The inputs required to start one game. This is the MVP snapshot. It is written o
 
 - Ownership: timeline.
 - Primary key: `BigAutoField`.
-- Foreign keys: `game` `OneToOneField` to `ScheduleGame`, `CASCADE`; `profile` to `EraRuleProfile`, `PROTECT`.
-- Fields: `inputs` `JSONField`. Each entry names a participant `universe_key`, side, availability, fatigue, injury flag, and the 33 current ratings at kickoff. `input_hash` `CharField(64)` is the SHA-256 of `inputs`. JSON is used here because the snapshot is immutable, one document per game, and not the live rating table. `PlayerCurrentRating` remains the authority during the season. The snapshot is the copy the replay needs after those live values have moved on.
-- Unique: the one-to-one.
-- Checks: both clubs on the game are represented; every listed player belongs to the timeline.
-- Indexes: the one-to-one.
+- Foreign keys: `timeline` `CASCADE`; `season` to `TimelineSeason`, `CASCADE`; `home` and `away` to `UniverseFranchise`, `PROTECT`; `profile` to `EraRuleProfile`, `PROTECT`. The `ScheduleGame` one-to-one waits until that fixture exists. `game_key` `CharField(64)` is the stable identity until then. It must be the same for comparable timelines. It is not derived from the timeline id, the timeline primary key, the kickoff primary key, or another timeline-specific identifier. A later schedule service should derive it from the universe release, the season, the calendar week or round, the home franchise key, the away franchise key, and the game type when needed. The timeline owns the row. The key retrieves the same underlying random sequence. Phase 4 does not implement that service or the HMAC.
+- Fields: `week` `PositiveSmallIntegerField`, a positive calendar week, not a count of games; `inputs` `JSONField`, the canonical kickoff payload. Each entry may name a participant `universe_key`, side, availability, fatigue, injury flag, and the ratings at kickoff. `input_hash` `CharField(64)` is the digest of `inputs`. JSON is used here because the snapshot is an audit document, not the live rating table. `PlayerCurrentRating` remains the later authority during the season. The snapshot is the copy the replay needs after those live values have moved on. `created_at`.
+- Unique: `(timeline, game_key)`; `(timeline, season, week, home, away)`.
+- Database checks: `game_key` and `input_hash` are nonempty; `week` is at least 1. Model validation requires the season, both franchises, and the era profile to belong to the timeline's release, the profile to cover the season and match the season's profile, both franchises to be active that season, and home and away to differ. It also requires a 64-character `input_hash`. It does not compare `week` with `schedule_length`. It refuses edits after insert.
+- Indexes: the unique keys; `(timeline, season, week)`.
 - Immutable once written.
-- Rows: one per played game.
-- Created during simulation, at kickoff.
+- Rows: one per played game, once simulation exists. Zero in this migration.
+- Created during a later simulation, at kickoff. Phase 4 does not create schedule rows or play games.
 
 A hash of `inputs` verifies a copy. It does not replace `inputs`. Without this row or a later checkpoint, a single snap's outcome cannot be rebuilt from its draw coordinates.
 
@@ -1017,12 +1045,12 @@ Existing `League`, `Conference`, `Division`, `Team`, and `MovementPath` rows rem
 
 ### 4. Timeline core
 
-- Models: `Timeline`, `TimelineSeason`, `OwnerDirective`, `TimelineExpansionChoice`, `ExpansionPin`. `SimulationAuditRecord` waits for phase 7, because it points at `ScheduleGame`.
-- Depends on: phase 1 and phase 3.
-- Validation: season index maps to 1970–2029; release is published; `decision_audit` is not required to create a timeline; the timeline has no seed column, so a decision hash cannot reroll a season.
-- Rows: none until a user starts a campaign. Then 1 timeline, 1 season, and the opening directives.
+- Models: `Timeline`, `TimelineParticipant`, `TimelineFranchiseControl`, `TimelineSeason`, `OwnerDirective`, `TimelineExpansionChoice`, `ExpansionPin`, `GameKickoffState`, `SimulationAuditRecord`.
+- Depends on: phase 3 and the configured user model. `ScheduleGame` is not a dependency. The kickoff row stores `game_key` until that fixture exists.
+- Validation: seasons stay inside the release; a new timeline uses a published release; the creation path defaults the start to the release's first season and does not hardcode 1970; one open human control per participant and per franchise; directives are one explicit row per participant per season; pins are 1–5 and only on an application; `decision_audit` is not required and is not a seed.
+- Rows: none in the migration. A later single-player start has 1 timeline, 1 participant, 1 control stint, 1 opening season, and 1 directive. The other seasons are not created here.
 - League data: untouched.
-- Rollback: drop the timeline app's core tables. Shared rows remain. Any later timeline tables must already be gone.
+- Rollback: drop the `timelines` tables. Shared rows remain. Any later timeline tables must already be gone.
 
 ### 5. Timeline player and staff overlays
 
@@ -1044,7 +1072,7 @@ Existing `League`, `Conference`, `Division`, `Team`, and `MovementPath` rows rem
 
 ### 7. Statistics and awards
 
-- Models: `ScheduleGame`, `GameKickoffState`, `GameResult`, `SimulationAuditRecord`, `Standing`, `PlayoffBerth`, `TimelinePlayerSeason`, `TimelineAward`, `DevelopmentEvent`.
+- Models: `ScheduleGame`, `GameResult`, `Standing`, `PlayoffBerth`, `TimelinePlayerSeason`, `TimelineAward`, `DevelopmentEvent`. `GameKickoffState` and `SimulationAuditRecord` already exist from phase 4. This phase can attach a schedule fixture to the stored `game_key`. It does not replace the kickoff payload or store the random draw.
 - Depends on: phase 4 franchises-in-a-timeline, phase 5 overlays, and phase 3 profiles for schedule length and playoff size.
 - Validation: regular-season game count matches `N(year) * schedule_length / 2`; `games` and `starts` fit the profile; award kinds match the shared list; development deltas fit −20 to 20; a played game has one kickoff state; audit hashes are not treated as a substitute for that state; snap detail is absent unless `persist_snap_draws` is on.
 - Rows: none in the migration. A full timeline later holds 14,280 regular-season games plus playoffs, the same number of kickoff states, 1,792 standings, and at most 103,352 player-seasons if every taxi slot is occupied.
@@ -1086,7 +1114,7 @@ These do not block the tables above. The columns already store either outcome.
 |----------|-------------------------|-----------------------------------|
 | Snap-level audit detail | `SimulationAuditRecord` stores the ordered event and optional hashes. `GameKickoffState` stores one snapshot per game. `Timeline.persist_snap_draws` defaults to false. | Whether debugging should also persist every snap's detail. Turning it on changes volume, not the seed, and it is not required to replay from kickoff. |
 | Multi-human expansion award | `selection_method` can store `automatic` or `fair_draw`. Single-player apply is `automatic`. | Whether the fair HMAC draw is the method when several humans apply. |
-| A campaign that starts in 1976 or 1996 | The normal game begins in 1970. Phase 1 does not store later-start rules. | Whether that mode exists, and what happens to the skipped seasons. Store the rules in later-phase timeline-start configuration. Do not infer them from `owner_selectable`. |
+| A campaign that starts in 1976 or 1996 | The normal creation path uses the release's first season. The columns do not hardcode 1970. | Whether that mode exists, and what happens to the skipped seasons. Store the rules in later-phase timeline-start configuration. Do not infer them from `owner_selectable`. |
 | Permanent franchise names | `display_name` is the placeholder slug text. `catalog_team` is null. | The real names, cities, and slugs, and when a catalog `Team` row may be linked. Linking still must not put roster data on `Team`. |
 | Cap, minimum salary, rookie-slot percents, and sim coefficients | `cap_limit`, `minimum_salary`, and `rookie_slot_scale` are nullable. Weights and development coefficients are not person columns. | The numbers. A 1995 profile still cannot publish with an empty cap. That is a data check, not a schema change. |
 

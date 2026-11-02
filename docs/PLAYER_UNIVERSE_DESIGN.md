@@ -120,7 +120,7 @@ The football clock is this integer year plus a phase. `TIME_ZONE` does not defin
 
 A new timeline is pinned to a published release and starts **before** the 1970 season, with the shared 1969 world still intact.
 
-1. **Choose a franchise.** One of the 24 founding clubs. Stored as `Timeline.owned_franchise`. A normal timeline starts in 1970. In 1976 and 1996 the owner may stay or apply for an expansion club, as described in [Owner access to expansion](#owner-access-to-expansion).
+1. **Choose a franchise.** One of the 24 founding clubs. Stored as an open `TimelineFranchiseControl` for the timeline's one human participant. The other franchises are bots and have no participant row. A normal timeline starts in the release's first season, 1970 for the confirmed release. In 1976 and 1996 the owner may stay or apply for an expansion club, as described in [Owner access to expansion](#owner-access-to-expansion). A later multiplayer timeline can add participants. Phase 4 does not add invitations or a commissioner.
 2. **Keep or replace the GM, then the head coach.** The shared snapshot already employs one of each on every founding franchise. The other 76 in each role are the only legal opening hires. The default is to keep both. Replacing writes timeline staff stints only.
 3. **Set team direction, retention priorities, and trade preference.** These are the broad instructions in [Owner experience](#owner-experience). They replace a screen full of separate toggles.
 4. **Rookie draft.** Materialize the shared 1970 class. Draft order comes from the shared 1969 standings, worst record first. The owner may make the owned club's picks or hand the draft to the GM. AI GMs draft for the other clubs from their shared tendencies. Picks are timeline rows. The class list is not modified.
@@ -317,7 +317,7 @@ Before 1995 the cap is off, so units are a negotiation scale only. From 1995 the
 | `minimum_salary` | Ledger units. Null until approved. |
 | `franchise_tag` | `off`, or `top_five_position_average`. |
 | `playoff_format` | `eight_team_3_and_1`, `eight_team_2_and_2`, or `twelve_team_4_and_2`. |
-| `schedule_length` | 14, 16, or 17. |
+| `schedule_length` | Regular-season games each franchise plays, such as 14, 16, or 17. This is not the highest calendar week. A 17-game season can span 18 weeks when one of them is a bye. |
 | `overtime_rule` | `tie`, `sudden_death`, or `both_teams_possess`. |
 | `sack_leaderboard` | `unofficial` or `official`. |
 
@@ -829,7 +829,7 @@ A normal timeline still begins in 1970 on a founding franchise. In the 1976 offs
 
 1. **Stay or apply.** The owner keeps the current franchise, or applies for one expansion franchise. Applying is the only pursuit action. There is no separate purchase price in this design.
 2. **If the owner stays,** they name up to three position groups to protect. The GM files the list, keeps the only quarterback, kicker, and punter when the club has just one, and exposes at least 3 players in 1976 or 4 in 1996. Involved mode can pin five names. The GM fills the rest.
-3. **If the owner is awarded an expansion franchise,** `owned_franchise` changes. The former franchise becomes bot-controlled in that timeline, with its current GM, coach, and roster. The new franchise starts with no players and no staff. This ownership change does not alter the shared membership row and does not set `owner_selectable` false. The human who takes the expansion franchise may keep controlling it in later seasons, because those shared rows stay selectable.
+3. **If the owner is awarded an expansion franchise,** a later service closes the open `TimelineFranchiseControl` with `expansion_switch` and opens a stint on the new franchise. The former franchise becomes bot-controlled in that timeline, with its current GM, coach, and roster. The new franchise starts with no players and no staff. This ownership change does not alter the shared membership row and does not set `owner_selectable` false. The human who takes the expansion franchise may keep controlling it in later seasons, because those shared rows stay selectable. Phase 4 stores the choice and the control history. It does not perform the award.
 4. **Building the new franchise.** The owner sets up to three position groups to chase, and compete or accumulate. The GM and head coach, once hired, run the expansion draft, the rookie draft, and the reserved undrafted fill. Free agency is optional. The head coach then sets the depth chart.
 
 The new club's players, GM, and head coach are people who already exist on the release. The expansion draft only chooses among veterans already in that timeline. The rookie class that year is the shared class sized with `N(1976) = 28` or `N(1996) = 32`.
@@ -1389,26 +1389,23 @@ Version 1 need not show coordinator hiring. The rows are still generated with th
 
 ### Owner directives
 
-Set in the `instructions` phase for the owned franchise. Required before the 1970 season can simulate. AI franchises receive an initial directive derived from the shared staff tags so the starting tendency is identical in every timeline. Later changes append a row; they do not edit the previous one.
-
-This is a later timeline model. Phase 3 does not create it. The owner never sees a slider for each of the 33 player components.
+One `OwnerDirective` row for one human participant and one season. Required before that season can simulate. The defaults below let the owner accept the screen. Bot franchises have no participant row. A later service may derive their tendencies from the shared staff tags. That service is not this table, and it is not a weekly stack of JSON sliders. The row locks when the season simulation begins. The owner never sees a slider for each of the 33 player components.
 
 | Field | Layer | Type | Range / units | Origin | Use |
 |-------|-------|------|---------------|--------|-----|
-| `franchise` | Timeline | FK | the owned franchise for owner-set rows; any franchise for AI rows | Owner or Timeline sim | Sim |
-| `role` | Timeline | enum | `gm` `head_coach` | same | Sim |
-| `effective_year`, `effective_week` | Timeline | smallint | first row is the timeline's opening week 0 | same | Both |
-| `team_direction` | Timeline | enum | `compete` `balanced` `rebuild` | Owner, GM only | Sim |
-| `priority_group_1`, `priority_group_2`, `priority_group_3` | Timeline | enum, null | up to three of `quarterback` `skill` `offensive_line` `defensive_line` `linebacker` `defensive_back` `special_teams`, filled in order | Owner, GM only | Sim |
-| `trade_appetite` | Timeline | enum | `low` `medium` `high` | Owner, GM only | Sim |
-| `veteran_preference` | Timeline | enum | `youth` `balanced` `veterans`. Default comes from team direction unless the owner changes it. | Owner, GM only | Sim |
-| `draft_participation` | Timeline | enum | `owner` `gm`. Default `gm`. The owner may take the draft for a round and hand it back. | Owner, GM only | Sim |
-| `offensive_emphasis` | Timeline | enum | `run` `balanced` `pass` | Owner, coach only | Sim |
-| `defensive_emphasis` | Timeline | enum | `stop_run` `balanced` `pressure_quarterback` | Owner, coach only | Sim |
-| `fourth_down` | Timeline | enum | `conservative` `balanced` `aggressive` | Owner, coach only | Sim |
-| `playing_time` | Timeline | enum, null | `veterans` `balanced` `develop_youth`. Null when the owner leaves it unset. | Owner, coach only | Sim |
+| `participant`, `season` | Timeline | FK | the human and that campaign year | Owner | Both |
+| `team_direction` | Timeline | enum | `compete` `balanced` `rebuild`. Default `balanced`. | Owner | Sim |
+| `priority_group_1`, `priority_group_2`, `priority_group_3` | Timeline | enum, null | up to three distinct groups, in order: `quarterback` `skill` `offensive_line` `defensive_line` `linebacker` `defensive_back` `special_teams`. The second requires the first. The third requires the second. | Owner | Sim |
+| `trade_appetite` | Timeline | enum | `low` `medium` `high`. Default `medium`. | Owner | Sim |
+| `veteran_preference` | Timeline | enum | `automatic` `youth` `balanced` `veterans`. Default `automatic`, which the GM derives from team direction. | Owner | Sim |
+| `draft_participation` | Timeline | enum | `owner_selects` `delegate_to_gm`. Default `delegate_to_gm`. | Owner | Sim |
+| `offensive_emphasis` | Timeline | enum | `run` `balanced` `pass`. Default `balanced`. | Owner | Sim |
+| `defensive_emphasis` | Timeline | enum | `stop_run` `balanced` `pressure_quarterback`. Default `balanced`. | Owner | Sim |
+| `fourth_down` | Timeline | enum | `conservative` `balanced` `aggressive`. Default `balanced`. | Owner | Sim |
+| `playing_time` | Timeline | enum | `automatic` `veterans` `balanced` `develop_youth`. Default `automatic`, which the head coach derives from team direction. | Owner | Sim |
+| `locked` | Timeline | bool | set when that season's simulation begins | Timeline sim | Both |
 
-GM rows leave coach fields null, and the reverse. The GM still handles contract detail, cuts, signings, the shape of a trade, expansion selections, undrafted signings, and roster balance. The head coach still handles the depth chart, the weekly lineup, special teams, fatigue, injuries, coordinators, and play calls. The UI shows the current directive. The sim reads the row in effect for that week.
+The GM still handles contract detail, cuts, signings, the shape of a trade, expansion selections, undrafted signings, and roster balance. The head coach still handles the depth chart, the weekly lineup, special teams, fatigue, injuries, coordinators, and play calls. The UI shows the current directive. The sim reads the locked row for that season.
 
 ---
 
@@ -1416,34 +1413,37 @@ GM rows leave coach fields null, and the reverse. The GM still handles contract 
 
 | Field | Layer | Type | Range / units | Origin | Use |
 |-------|-------|------|---------------|--------|-----|
-| `owner` | Timeline | FK | `settings.AUTH_USER_MODEL` | Owner | Display |
-| `release` | Timeline | FK | published release, `PROTECT` | Owner | Both |
-| `owned_franchise` | Timeline | FK | the franchise this timeline controls. A normal 1970 start is one of the 24 founding clubs. Which year a new timeline may start is not `owner_selectable`. | Owner | Both |
+| `created_by` | Timeline | FK, null | `settings.AUTH_USER_MODEL`, `SET_NULL`. Not the only human the campaign can ever have. | Owner | Display |
+| `release` | Timeline | FK | published release, `PROTECT`. A timeline cannot change it. | Owner | Both |
 | `name` | Timeline | string | ≤ 255 | Owner | Display |
-| `season_index` | Timeline | smallint | 1–60 | Timeline sim | Both |
-| `season_year` | Timeline | smallint | 1970–2029, equals `1969 + season_index` | Derived | Both |
+| `start_season_year` | Timeline | smallint | The creation path uses the release's first season. For the confirmed release that is 1970. The column is not fixed to 1970. | Owner | Both |
+| `current_season_year`, `season_index` | Timeline | smallint | `current = start + index - 1`, inside the release | Timeline sim | Both |
 | `phase` | Timeline | enum | see opening sequence | Timeline sim | Both |
-| `decision_fingerprint` | Timeline | string, optional | Audit hash of owner decisions. It is not an input to random draws. | Derived | Display |
-| `start_season_year` | Timeline | smallint | The normal game begins in 1970. A start in 1976 or 1996 is a later product decision and is not inferred from `owner_selectable`. | Owner, default 1970 | Both |
+| `status` | Timeline | enum | `active` `completed` `archived` | Timeline sim | Both |
+| `decision_audit` | Timeline | string, optional | The audit hash named `decision_fingerprint` in earlier notes. It is not an input to random draws. | Derived | Display |
 
-The normal game begins in 1970. Whether a later mode may begin in 1976 or 1996 remains unresolved. If that mode is implemented, store its rules in timeline-start configuration or another later-phase structure. Do not infer them from `owner_selectable`. This document does not define the skipped seasons, and Phase 1 does not add that configuration.
+`TimelineParticipant` joins a user to the timeline with `active` or `departed`, the season they joined, and timestamps. The same user is not added twice. A single-player campaign has one active participant. Deleting that account sets the user reference null and does not delete the timeline. The participant no longer represents a playable human. The franchise is treated as bot-controlled until a later account-recovery or commissioner service reassigns it. Control history stays. Phase 4 does not reassign it.
+
+`TimelineFranchiseControl` records the franchise, the first controlled season, an optional final season, and why control ended. `expansion_switch` is the reason when a later service moves the owner to an awarded expansion club. One participant has one open control. One franchise has one open human. Everyone else is a bot, with no participant and no control row. Past stints stay after a switch.
+
+The normal game begins in the release's first season. Whether a later mode may begin in 1976 or 1996 remains unresolved. If that mode is implemented, store its rules in timeline-start configuration. Do not infer them from `owner_selectable`. The schema does not have to change to hold a different start year. This document does not define the skipped seasons. Phase 4 does not add billing, invitations, or a waiting room.
 
 #### Expansion choice
 
-`TimelineExpansionChoice`, one row per timeline per expansion year, written before that year's expansion draft.
+`TimelineExpansionChoice`, one row per participant per expansion event, written before that year's expansion draft. Several humans may apply for the same club. Phase 4 does not resolve the collision.
 
 | Field | Layer | Type | Range / units | Origin | Use |
 |-------|-------|------|---------------|--------|-----|
-| `season_year` | Timeline | smallint | 1976 or 1996 | The schedule | Both |
+| `participant` | Timeline | FK | the human making the choice | Owner | Both |
+| `event` | Timeline | FK | the shared expansion event | The release | Both |
+| `controlled_franchise` | Timeline | FK | the franchise that participant currently controls | Owner | Both |
 | `decision` | Timeline | enum | `stay` `apply` | Owner | Both |
-| `target_franchise` | Timeline | FK, null | one expansion club that year, required when the decision is `apply` | Owner | Both |
-| `protection_priorities` | Timeline | 0–3 enums | position groups, only when the decision is `stay` | Owner. The GM files the full protect list. | Sim |
-| `pinned_players` | Timeline | 0–5 player FKs | only in involved mode | Owner | Sim |
-| `draft_position_priorities` | Timeline | 0–3 enums | the GM `positional_priority` vocabulary, only when the decision is `apply` | Owner | Sim |
-| `outcome` | Timeline | enum | `pending` `awarded` `declined` `stayed` | Timeline sim | Both |
-| `selection_method` | Timeline | enum | `not_needed` `automatic` `fair_draw` | Timeline sim | Display |
+| `target_franchise` | Timeline | FK, null | one of that event's expansion clubs, required only for `apply` | Owner | Both |
+| `resolution` | Timeline | enum | `pending` `awarded` `not_awarded` `withdrawn` | Later service | Both |
+| `selection_method` | Timeline | enum | `not_needed` `automatic` `fair_draw` | Later service | Display |
+| `pinned_players` | Timeline | 0–5 `ExpansionPin` rows | shared players, priority 1–5, only for `apply`, only in involved mode | Owner | Sim |
 
-The owner does not set the rest of the roster, the contract figures, or the depth chart. The GM and head coach do. In a single-player timeline, `apply` is `automatic`. When several human owners apply for the same club, the method is unresolved. The candidate is `fair_draw`, implemented as the HMAC described in the expansion section. Each human can be awarded at most one expansion club.
+Position priorities stay on the owner directive. The GM still files the full protection list later. `ExpansionPin` does not select a player and does not protect one. In a single-player timeline, `apply` may later resolve as `automatic`. When several human owners apply for the same club, the stored method may be `fair_draw`, the HMAC described in the expansion section. Phase 4 does not run that draw. Awarding a club does not itself close the old control stint. Each human can be awarded at most one expansion club. The owner does not set the rest of the roster, the contract figures, or the depth chart.
 
 ---
 
@@ -1485,6 +1485,8 @@ The practical record for the first playable version is deliberately smaller than
 - The final score is stored, and so are persistent events such as injuries.
 - A detailed snap log, including enough state to inspect one snap without replaying, is optional and off by default.
 - A pre-state or post-state hash may be stored beside an event so a replay can be checked. It is a verification value, not a substitute for the kickoff snapshot or the log.
+
+Phase 4 stores that foundation and does not simulate it. `GameKickoffState` keeps the payload, its hash, the calendar week, and the home and away franchises. `game_key` is stable across comparable timelines. It is not derived from the timeline id, the timeline primary key, the kickoff primary key, or any other timeline-specific identifier. A later schedule service should build it from the universe release, the season, the calendar week or round, the home and away franchise keys, and the game type when that is needed. The timeline still owns the row. The key is how comparable timelines retrieve the same underlying random sequence. `schedule_length` is not used as the maximum week: it counts games played per franchise, and a later schedule model decides which weeks exist, which are byes, and how postseason weeks are numbered. `SimulationAuditRecord` keeps the ordered event for that kickoff. The random draw is still recomputed. It is not a column. Phase 4 does not implement the HMAC or the schedule service.
 
 Two timelines with the same rosters, ratings, and choices get the same draws for the same game, so the comparison is fair. Replay value comes from a different roster, rating, or call. It does not come from shaking the season.
 
