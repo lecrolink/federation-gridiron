@@ -129,7 +129,7 @@ A new timeline is pinned to a published release and starts **before** the 1970 s
 
 Phases on the timeline: `choose_franchise`, `staff`, `direction`, `draft`, `instructions`, `roster_cut`, `regular`, `playoffs`, `offseason`, `complete`.
 
-The shared snapshot is identical until step 1 writes the first timeline decision. Steps 1–4 are owner decisions, and several of them have a one-choice default. The 1970 games are the first simulated events. Match seeds are derived from the universe seed and the decision fingerprint, as specified under [Deterministic scouting and results](#deterministic-scouting-and-results). They are not drawn independently for each timeline. Identical opening choices on the same release produce the same 1970 season.
+The shared snapshot is identical until step 1 writes the first timeline decision. Steps 1–4 are owner decisions, and several of them have a one-choice default. The 1970 games are the first simulated events. Random draws come from the universe-release seed and the game's own coordinates, as specified under [Deterministic scouting and results](#deterministic-scouting-and-results). They do not include the timeline id or a hash of the owner's decisions. Identical states and choices produce identical results. A different choice changes outcomes only by changing rosters, ratings, probabilities, or the sequence of events.
 
 ---
 
@@ -212,6 +212,7 @@ An optional involved mode, off by default, lets the owner pin up to five named p
 | `founding_franchise_count` | 24. This is the 1970 size, not the size of later seasons. |
 | `expansion_schedule_version` | Integer on the release. Filling in expansion years, clubs, or rules bumps the version. A published release does not change its schedule in place. |
 | `catalog_fingerprint` | SHA-256 of the franchise list (slug, first season, last season) plus each season's conference and division membership plus each expansion event. A timeline stays bound to that fingerprint. |
+| `validation_fingerprint` | SHA-256 of the publication checks: quota sums, the expansion active-roster inequality, staff-signature uniqueness, and the population totals this release claims. Publish is refused when any check fails. Taxi capacity is not part of the expansion minimum. |
 | `first_season_year` | 1970. |
 | `season_count` | 60. |
 | `last_season_year` | 2029. |
@@ -684,15 +685,20 @@ Optional shared rows. None are required for the founding 24.
 
 ### Expansion event
 
-Two expansion events are part of this release. The 1976 event adds `expansion-1976-01` through `expansion-1976-04`. The 1996 event adds `expansion-1996-01` through `expansion-1996-04`. A season may add more than one franchise. The numeric draft and hiring rules below are still empty. A published release cannot leave them empty.
+Two expansion events are part of this release. The 1976 event adds `expansion-1976-01` through `expansion-1976-04`. The 1996 event adds `expansion-1996-01` through `expansion-1996-04`. A season may add more than one franchise. The numeric rules in the table are the values this release stores. Publish is refused if any of them is empty, and it is refused again if the player pools cannot fill every new club's active roster. Taxi slots do not count toward that minimum.
 
 | Field | Layer | Type | Range / units | Origin | Use |
 |-------|-------|------|---------------|--------|-----|
 | `season_year` | Shared | smallint | 1971–2029, the first season the new clubs play | Schedule author | Both |
 | `franchises` | Shared | list of franchise FKs | the clubs with `first_active_season` equal to this year | Schedule author | Both |
 | `placement` | Shared | membership rows | conference and division for each new club in `season_year` | Schedule author | Both |
-| `players_protected` | Shared | smallint, null until set | how many players each existing franchise may protect | Schedule author | Sim |
-| `picks_per_new_franchise` | Shared | smallint, null until set | selections in the expansion draft | Schedule author | Sim |
+| `active_target` | Shared | smallint | 40 in 1976, 53 in 1996. The roster that must be filled. | Schedule author | Sim |
+| `taxi_capacity` | Shared | smallint | 8. Optional. Not part of the publication minimum. | Schedule author | Sim |
+| `max_losses_per_existing` | Shared | smallint | 3 in 1976, 4 in 1996. A completed draft removes exactly this many from each existing club and cannot remove one more. | Schedule author | Sim |
+| `veteran_picks_per_new` | Shared | smallint | 18 in 1976, 28 in 1996 | Schedule author | Sim |
+| `rookie_picks_per_new` | Shared | smallint | 17 in 1976, 7 in 1996, at the end of each round | Schedule author | Sim |
+| `undrafted_pool` | Shared | smallint | 56 in 1976, 64 in 1996 | Schedule author | Sim |
+| `free_agent_reserve_per_new` | Shared | smallint | 0 in 1976, 2 in 1996. Veteran free agents the release guarantees each new club can sign. | Schedule author | Sim |
 | `expansion_draft_order_rule` | Shared | text | how selection order among the new clubs is chosen | Schedule author | Sim |
 | `roster_building_rule` | Shared | text | how a new club fills the rest of the roster after the expansion draft | Schedule author | Sim |
 | `free_agent_rule` | Shared | text | which shared free-agent pool the new club may sign, and any limits | Schedule author | Sim |
@@ -710,7 +716,7 @@ The new franchise, its GM candidates, its head-coach candidates, and that year's
 |------|----------------|
 | Which clubs enter, and in which season | Shared expansion event |
 | Conference and division | Shared membership rows |
-| How many veterans an existing club may protect | Shared `players_protected` |
+| How many veterans an existing club may lose | Shared `max_losses_per_existing` |
 | Which veterans are protected | Timeline. Depends on that timeline's roster. |
 | Which unprotected players the new club selects | Timeline expansion picks |
 | Which eligible shared GM and head coach are hired | Timeline staff stints |
@@ -723,7 +729,7 @@ The new franchise, its GM candidates, its head-coach candidates, and that year's
 | Field | Layer | Type | Range / units | Origin | Use |
 |-------|-------|------|---------------|--------|-----|
 | `expansion_event` | Timeline | FK | | Shared schedule | Both |
-| `pick_number` | Timeline | smallint | 1 through `picks_per_new_franchise × E(year)` | Timeline sim or owner, if the owner controls a new club | Both |
+| `pick_number` | Timeline | smallint | 1 through `veteran_picks_per_new × E(year)` | Timeline sim or owner, if the owner controls a new club | Both |
 | `selecting_franchise` | Timeline | FK | one of the event's new clubs | same | Both |
 | `player` | Timeline | FK | a universe player already in this timeline | same | Both |
 | `from_franchise` | Timeline | FK | the club that lost the player | same | Both |
@@ -734,41 +740,44 @@ Supplemental rookies or free agents, if a rule allows them, are drawn from that 
 
 ### Recommended expansion draft
 
-These numbers assume the working roster limits: 40 active and 8 taxi in 1976 (48 players), and 53 active and 8 taxi in 1996 (61 players). They are the recommended system. They are not final if those limits are rejected, because the selection counts are the numbers that make the arithmetic reach the limit. No step creates a person who is not already in the universe.
+Taxi slots are optional capacity. An expansion franchise must have its active roster filled before the season begins. It does not have to fill all eight taxi slots. Empty taxi spots are acceptable. An expansion club should open with less depth than an established club.
 
-Both years use the same shape.
-
-- Existing clubs cut to the active-plus-taxi limit before protection.
-- Each club protects a fixed count. The list must include the club's only quarterback, only kicker, and only punter when the club has exactly one of that position. A second specialist can be exposed. The protect count itself does not grow.
-- Everyone else under contract is exposed. The exposed count is the limit minus the protect count.
-- A club loses at most the stated maximum. The draft is built so every club loses exactly that maximum.
-- Selection snakes. Odd rounds run `expansion-year-01` through `04`. Even rounds run the other way. Slug order is the order. There is no lottery.
-- Injured players may be selected. The injury moves with them.
-- A player on an expiring contract may be selected. The timeline contract moves with him. The new club may later renegotiate under that year's market rules.
-- After the veteran draft, each new club may sign up to the free-agent allowance from players already unsigned in that timeline.
-- In the rookie draft, each new club picks at the end of every round, in slug order. That is picks 25–28 in 1976 and picks 29–32 in 1996.
-- After the draft, new clubs have first claim on the undrafted pool, snake order, until each is at the limit or the pool is empty.
-- A new club may not trade a pick or release a player if the players still available in the expansion pool, the free-agent pool, its remaining picks, and the undrafted pool could no longer reach the limit.
-- The draftable class in each expansion year includes at least four kickers and four punters inside the existing class size, so a new club can draft one. An emergency role covers the first weeks if it does not.
+No step creates a person who is not already in the universe. Selection snakes in placeholder-slug order. Odd rounds run `expansion-year-01` through `04`. Even rounds reverse. Injured players and players on expiring contracts may be selected. The injury and the timeline contract move with the player. Each existing club's protect list includes its only quarterback, only kicker, and only punter when it has exactly one of that position. It must expose at least as many players as the maximum it is allowed to lose, and it may expose more. It cannot lose more than that maximum.
 
 | Rule | 1976 | 1996 |
 |------|------|------|
-| Clubs entering | 4 | 4 |
 | Existing clubs | 24 | 28 |
-| Roster target | 48 | 61 |
-| Draft rounds | 17 | 7 |
+| New clubs | 4 | 4 |
+| Active target | 40 | 53 |
+| Taxi capacity | up to 8, optional | up to 8, optional |
+| Maximum lost by one existing club | 3 | 4 |
+| Veteran selections, total | 72 | 112 |
+| Veteran selections per new club | 18 | 28 |
+| Rookie picks per new club | 17, at the end of each round | 7, at the end of each round |
 | Undrafted pool | 56 | 64 |
-| Protected | 32 | 50 |
-| Exposed | 16 | 11 |
-| Maximum lost by one existing club | 3 | 6 |
-| Selected by each new club | 18 | 42 |
-| Order | Snake, slug order | Snake, slug order |
-| Free-agent allowance | 8 | 10 |
-| Rookie picks | 17, at the end of each round | 7, at the end of each round |
+| Even share of that pool | 14 | 16 |
 
-1976 arithmetic: `18 × 4 = 72` veteran selections, and `24 × 3 = 72`, so every existing club loses exactly 3 of its 16 exposed players. Each new club then has 17 rookie picks. `18 + 17 = 35`. The club needs 13 more to reach 48 if it signs no free agents. `13 × 4 = 52`, and the undrafted pool has 56, so four undrafted prospects remain for the rest of the league. Signing some of the eight allowed free agents lowers the undrafted need. Every one of those players already exists.
+1976 active roster:
 
-1996 arithmetic: `42 × 4 = 168` veteran selections, and `28 × 6 = 168`, so every existing club loses exactly 6 of its 11 exposed players. `42 + 7 = 49`. The club needs 12 undrafted players if it signs no free agents. `12 × 4 = 48`, and the pool has 64, so 16 remain. The larger veteran haul is required because a 61-man roster and a 7-round draft cannot be filled from rookies alone.
+18 veterans + 17 drafted rookies + 5 free agents or undrafted rookies = 40.
+
+`18 × 4 = 72` and `24 × 3 = 72`. A completed draft removes 3 players from each existing club and cannot remove a fourth. The undrafted pool has 56 prospects. Split evenly, that is 14 per new club, which is more than the 5 required. Free agents can be used instead of undrafted prospects. Anyone left after the active roster is full may fill some or all of the eight taxi slots. Those extra signings are not required.
+
+1996 active roster:
+
+28 veterans + 7 drafted rookies + 16 undrafted rookies + 2 veteran free agents = 53.
+
+`28 × 4 = 112` and `28 × 4 = 112` existing clubs at the maximum of 4. A completed draft removes 4 players from each existing club and cannot remove a fifth. The undrafted pool has 64 prospects, an even 16 per new club. `28 + 7 + 16 = 51`, which is 2 short of 53, so each new club needs at least 2 veteran free-agent signings when the undrafted players are split evenly. Additional free agents may replace undrafted signings. Taxi slots are filled only afterward, and only if players remain.
+
+Publication check, taxi excluded:
+
+veteran selections per club + rookie picks per club + floor(undrafted pool / new clubs) + guaranteed free-agent reserve per club >= active limit
+
+1976: `18 + 17 + 14 + 0 = 49`, which is at least 40. The reserve can be 0 because the undrafted share already covers the 5.
+
+1996: `28 + 7 + 16 + 2 = 53`. The release records a free-agent reserve of 2 per new club. Publish is refused if that sum is below 53.
+
+The same check is repeated when a timeline reaches the expansion offseason, using the players actually unsigned in that timeline. If a timeline cannot supply the reserve from people who already exist, the season does not start. The failure does not create a person. A new club also may not trade away a rookie pick if the remaining sources could no longer reach the active limit.
 
 Staffing order in an expansion offseason:
 
@@ -787,7 +796,7 @@ Staffing order in an expansion offseason:
 A normal timeline still begins in 1970 on a founding franchise. In the 1976 offseason and again in the 1996 offseason, before the expansion draft, the owner makes a few choices. The GM and head coach carry out the detail.
 
 1. **Stay or apply.** The owner keeps the current franchise, or applies for one expansion franchise. Applying is the only pursuit action. There is no separate purchase price in this design.
-2. **If the owner stays,** they name up to three position groups to protect. The GM files the 32 or 50 man list, including the required sole quarterback, kicker, and punter. Involved mode can pin five names. The GM fills the rest.
+2. **If the owner stays,** they name up to three position groups to protect. The GM files the list, keeps the only quarterback, kicker, and punter when the club has just one, and exposes at least 3 players in 1976 or 4 in 1996. Involved mode can pin five names. The GM fills the rest.
 3. **If the owner is awarded an expansion franchise,** `owned_franchise` changes. The former franchise becomes bot-controlled, with its current GM, coach, and roster. The new franchise starts with no players and no staff.
 4. **Building the new franchise.** The owner sets up to three position groups to chase, and compete or accumulate. The GM and head coach, once hired, run the expansion draft, free agency, the rookie draft, the undrafted fill, and the depth chart.
 
@@ -1185,7 +1194,7 @@ The stored authority for "what is he now" is `current`. The event is the audit t
 
 ```text
 gap = potential − current
-delta = f(gap, age vs peak_age, snaps, durability, injury weeks, coaching, timeline rng)
+delta = f(gap, age vs peak_age, snaps, durability, injury weeks, coaching, stable event draw)
 current = clamp(current + delta, 0, potential)
 ```
 
@@ -1377,7 +1386,7 @@ GM rows leave coach fields null, and the reverse. The UI shows the current direc
 | `season_index` | Timeline | smallint | 1–60 | Timeline sim | Both |
 | `season_year` | Timeline | smallint | 1970–2029, equals `1969 + season_index` | Derived | Both |
 | `phase` | Timeline | enum | see opening sequence | Timeline sim | Both |
-| `decision_fingerprint` | Timeline | string | hash of the decisions and resolved results so far. Not an independent random seed. | Derived | Sim |
+| `decision_fingerprint` | Timeline | string, optional | Audit hash of owner decisions. It is not an input to random draws. | Derived | Display |
 | `start_season_year` | Timeline | smallint | `1970`, `1976`, or `1996`. The only supported value until a product decision says otherwise is `1970`. | Owner, default 1970 | Both |
 
 `start_season_year` is stored so a later mode can begin in an expansion year without a new table. This document does not define that mode's skipped seasons. A normal timeline uses 1970.
@@ -1405,11 +1414,36 @@ The owner does not set the rest of the roster, the contract figures, or the dept
 
 True identity, original ratings, potential, college history, and pre-1970 statistics are shared. A scouting report is timeline data, because the GM who is looking changes the report. The report is still reproducible.
 
-The noise for a component is an HMAC-SHA256 of the universe seed together with the evaluating GM's `universe_key`, the player's `universe_key`, the component, the kind (`ability` or `potential`), the season, the week, and a generation counter. The generation counter advances when the GM changes, when the player reaches 100 snaps on the owned roster, or when four owned-roster weeks have passed. The same release, the same franchise, the same GM, the same coach, and the same owner decisions produce the same initial report. A different GM produces a different HMAC and, through `talent_evaluation`, a tighter or wider band. How many points of `talent_evaluation` tighten the band is a coefficient and needs approval. The direction is fixed: a better evaluator sees a narrower band.
+Scout noise and game draws use one stable sequence. The owner's decisions are not part of that sequence. Changing a directive, a draft pick, or a coach does not reroll the season. The timeline id is not part of it either.
 
-The simulator never reads `revealed_value` or `uncertainty`. It reads `current`, which was copied from shared `initial` and then moved only by the development rules.
+A draw is HMAC-SHA256 of:
 
-Match results use the same idea. The timeline does not store an independent random seed. For a week, the match seed is an HMAC of the universe seed, the season, the week, and a fingerprint of every owner decision and every already-resolved result on that timeline. The fingerprint does not include the timeline id. Two timelines that make the same opening choices therefore play the same 1970 season. Changing one choice changes the fingerprint from that point forward. Replay value comes from a different decision, not from a hidden coin flip. That is the recommendation for fair comparison across timelines.
+- the universe-release seed
+- the season
+- the week
+- the participating franchise keys, in a fixed order
+- the game identifier from the schedule
+- the event or snap index inside that game
+- the event type, when the draw is tied to a type of event
+
+The same coordinates always produce the same number. Roster quality, injuries, coaching, strategy, and owner decisions change the probabilities and the choices that consume those numbers. They do not replace the sequence.
+
+Scout reports use the same rule. The noise for a component is the draw for that player, component, kind (`ability` or `potential`), season, and week. `talent_evaluation` changes how wide a band is placed around that noise. A better GM shows a narrower band. Replacing the GM does not draw a new noise value. The simulator never reads `revealed_value` or `uncertainty`. It reads `current`.
+
+If a changed decision makes a game take a different number of snaps, or a different order of event types, later indexes no longer refer to the same moment. That is ordinary divergence of the game state. It is not a new seed. Early snaps that still occur at the same index keep the same random numbers. Their results can still differ because the probability of each outcome changed.
+
+Replay stays possible.
+
+- The schedule gives every game a stable id from season, week, home franchise, and away franchise.
+- Event index 0, 1, 2, and so on consume the next draw for that game id.
+- A saved game log stores the event type, the index, the participants, and the outcome.
+- Recomputing the game from the same release seed, the same coordinates, and the same roster and rating state must reproduce the log.
+- A debugger can rebuild one snap from those coordinates without resimulating the rest of the season.
+- Saved results are verifiable because the outcome is a function of stored state plus the public seed coordinates.
+- Two timelines with the same rosters, ratings, and choices get the same draws for the same game, so the comparison is fair.
+- Replay value comes from a different roster, rating, or call. It does not come from shaking the season.
+
+`current` is still copied from shared `initial` when the player enters the timeline, and it still moves only by the development rules. Those rules may consume a draw at a stated event index. They do not keep a private timeline seed.
 
 ## Historical consistency
 
@@ -1431,7 +1465,7 @@ These values may diverge after timeline decisions begin:
 
 | Kind of fact | What moves it |
 |--------------|----------------|
-| `current` ratings | Age against `peak_age`, snaps, coaching, career-altering injuries, and the timeline RNG. Clamped to `potential`. |
+| `current` ratings | Age against `peak_age`, snaps, coaching, and career-altering injuries. A development draw uses the stable event coordinates. Clamped to `potential`. |
 | Scout reports | Film, workouts, and roster evaluation in that timeline. The sim does not read them. |
 | Assignment | Drafts, cuts, trades, free agency, the expansion draft, retirement |
 | Health | Injury rows and `career_altering_injuries` |
@@ -1440,9 +1474,9 @@ These values may diverge after timeline decisions begin:
 | Staff jobs | Hiring, firing, promotion, retirement. Pre-1970 posts stay shared. |
 | Reputation | Results, awards, and firings inside the timeline. The shared `initial` reputation does not change. |
 | Directives and expansion choice | Owner decisions |
-| Season results | Timeline RNG after kickoff, even when two owners make the same opening choices |
+| Season results | The stable draw sequence, applied to this timeline's rosters, ratings, injuries, and play calls. The same state produces the same result. |
 
-A particular player always enters the 1970 draft, if he is in that class, with the same name, college, body, college statistics, original talent, and the same true ratings. The initial scout report matches whenever the evaluating GM matches. A GM or coach always begins with the same biography, abilities, employment history, and reputation. Drafting, hiring, playing time, injuries, development, results, and firings may then send those careers apart. Those later results are deterministic given the decision fingerprint. They are not a fresh random draw.
+A particular player always enters the 1970 draft, if he is in that class, with the same name, college, body, college statistics, original talent, and the same true ratings. The underlying scout noise for that player is the same in every timeline. The band around it depends on who is scouting. A GM or coach always begins with the same biography, abilities, employment history, and reputation. Drafting, hiring, playing time, injuries, development, results, and firings may then send those careers apart. Later results stay reproducible from the release seed and the game coordinates. They are not a fresh random draw, and they are not rerolled when an instruction changes.
 
 ---
 
@@ -1585,7 +1619,7 @@ Every position stores the same 33 components. Low baselines keep non-position sk
 
 | Field | Meaning | Type | Range | Layer | Visibility | Effect | Generated | Changes | Owner sees |
 |-------|---------|------|-------|-------|------------|--------|-----------|---------|------------|
-| `current` (31) | Ability right now in this timeline | smallint | 0–100, ≤ potential | Timeline | Hidden | Both. The sim reads this exact vector. | Copied from `initial` at entry | Age, snaps, coaching, injury. Not a direct function of one game's box score. | Scout estimate until evaluation, then Exact |
+| `current` (33) | Ability right now in this timeline | smallint | 0–100, ≤ potential | Timeline | Hidden | Both. The sim reads this exact vector. | Copied from `initial` at entry | Age, snaps, coaching, injury. Not a direct function of one game's box score. | Scout estimate until evaluation, then Exact |
 | `status` | Roster category | enum | `prospect` `active` `taxi` `reserve` `free_agent` `retired` | Timeline | Visible | Both | Opening copy, then sim | Cuts, signings, injuries, retirement | Exact |
 | `seasons_played` | Pro seasons inside this timeline | smallint | 0–60 | Timeline | Visible | Display | Cached count of timeline seasons | +1 per season played | Exact |
 | `career_altering_injuries` | Count of injuries that changed talent | smallint | 0–10 | Timeline | Partial | Both | Sim | +1 when an injury is career-altering | Exact count on the owned roster. Hidden on other clubs, where only the public injury report is shown. |
@@ -1936,7 +1970,7 @@ Roster-slot seasons, using the era roster defaults and `N(year)`:
 | Contracts | one per two slot-seasons | 51,676 |
 | Staff stints | 4-year mean tenure. GM and head coach only are 2 roles. Seating coordinators as well is 4 roles. | 896 for GM and head coach; 1,792 if coordinators are seated |
 | Awards | a fixed annual honor list, not N(year) | about 3,500 |
-| Expansion-draft picks | recommended 18 and 42 per new club | 72 in 1976 and 168 in 1996, 240 together, if the roster limits hold |
+| Expansion-draft picks | 18 per new club in 1976, 28 per new club in 1996 | 72 in 1976 and 112 in 1996, 184 together |
 
 Changing the 1978 active roster from 45 changes the 1978–1986 slot seasons only. Changing 1996–2029 from 32 teams is a new schedule. Splitting the old 15 position labels into 19 positions does not change these row counts, because the active and taxi limits are unchanged. Adding `return_vision` and `special_teams` adds two rating columns per player, not two people. The 20,884 playable identities and the 1,792 franchise-seasons stay as stated while the roster and round figures hold.
 
@@ -1966,7 +2000,7 @@ A future implementation can turn these into tests. This document does not add th
 14. Every timeline on a release has the same conference slug, division slug, and `slot_order` for each franchise-season, matching the 24-, 28-, and 32-team tables in this document.
 15. A player's `universe_key`, name, birth, college, body, position, `initial` ratings, `potential`, traits, and pre-1970 history are identical on every timeline. `current` ratings and 1970–2029 results are not.
 16. Every active quota sums to that profile's active limit, and every taxi quota sums to that profile's taxi limit. The position enum has 19 values.
-17. The same decision fingerprint on the same release produces the same scout report for a given GM and player, and the same week of results. The simulator does not read the scout report.
+17. Random draws are a pure function of the release seed, season, week, franchise keys, game id, event index, and event type. They do not include the timeline id or the owner's decisions. The same game state consumes those draws to the same results. The simulator does not read the scout report.
 
 ---
 
@@ -2006,31 +2040,41 @@ Scoring, schedules, payments, and public pages stay outside this design. Season 
 
 ## Unresolved decisions
 
-The position list, the 33 components, the market boundaries, the deterministic seed rule, the coordinator career path, and the recommended expansion arithmetic are written as the design. Items below still need an explicit approval before a model proposal should be treated as final, or they change a number the generator must emit.
+These structural choices are accepted and are not waiting on another approval before the model proposal:
 
-The playable horizon is 60 seasons, 1970 through 2029 inclusive. No contraction, relocation, or further expansion is scheduled.
+- 19 primary positions, with special-teams assignments as weekly roster roles.
+- 33 player components. Overall is display only.
+- Rosters of 40, then 45, then 47, then 53 active players, each with taxi capacity of 8. Taxi slots are optional. An expansion club must fill the active roster and does not have to fill taxi.
+- Controlled, transitional, and modern player-market eras. Unrestricted free agency and a salary cap begin in 1995.
+- Deterministic scouting, and the stable draw coordinates in [Deterministic scouting and results](#deterministic-scouting-and-results). The timeline id and the owner decision fingerprint are not seed inputs.
+- The seven-step owner offseason.
+- Offensive and defensive coordinators generated with the shared universe, on the coach person.
+- Shared people and pre-timeline histories identical in every timeline.
+- Expansion from 24 to 28 teams in 1976 and from 28 to 32 teams in 1996. No further expansion, departure, or relocation through 2029 unless a later release adds one.
+- The expansion arithmetic in [Recommended expansion draft](#recommended-expansion-draft): 72 veteran selections in 1976 and 112 in 1996.
 
-| Decision | Working value | Why it is still open |
-|----------|----------------|----------------------|
-| Active and taxi limits | 40/8, then 45/8, 47/8, and 53/8. Quotas in this document sum to those limits. | Rejecting a limit rewrites that quota and the 1976 or 1996 expansion counts. |
-| Cap total and minimum salary | Ledger units. Cap turns on in 1995. No amount is chosen. | A 1995 profile cannot be published with an empty cap. |
-| Rookie slot percents | 4-year deals from 1995, ordered by pick. | The percent table is empty. |
-| Accrued-season threshold | 4 seasons. | It defines restricted and unrestricted classes. |
-| Future-pick window and trade-deadline week | 1, then 2, then 3 years. Deadline after week 8. | The existence of trades is decided. The numbers are not. |
-| Injured reserve | 2, then 3, then 4, with the return rules in the market table. | The counts are a recommendation. |
-| Playoff field and overtime years | 8 teams, then 12 from 1996. Ties through 1973. Sudden death from 1974. Both-teams possession from 2012. | The formats are a recommendation. |
-| Franchise-tag formula | Average of the top five charges at the position, one tag per club, from 1995. | The formula needs approval. It does not set the cap. |
-| Special-teams score weights and other sim coefficients | The formulas are written. The numbers are recommendations. | They do not add columns. |
-| How far `talent_evaluation` tightens a scout band | Better evaluators get narrower bands. | The slope is unset. |
-| Free-agent pool and undrafted pool | 5 per founding franchise in 1970, and 2 undrafted prospects per active franchise. | These set the 120 free agents and the undrafted class sizes the expansion math uses. |
+Numeric simulation coefficients, salary-cap amounts, the minimum salary, rookie-slot percents, and the other values below stay configurable. `EraRuleProfile` and the expansion-event row can store a later number without a new person table. An empty cap on a 1995-or-later profile still blocks publication of that profile. It does not block the model proposal.
+
+The playable horizon is 60 seasons, 1970 through 2029 inclusive.
+
+| Decision | Working value | What is still open |
+|----------|----------------|--------------------|
+| Cap total and minimum salary | Ledger units. Cap turns on in 1995. No amount is chosen. | The column exists. A 1995 profile cannot be published with an empty cap. |
+| Rookie slot percents | 4-year deals from 1995, ordered by pick. | The percent table is empty until configured. |
+| Accrued-season threshold | 4 seasons. | Stored on the profile. |
+| Future-pick window and trade-deadline week | 1, then 2, then 3 years. Deadline after week 8. | Trades exist in every era. The window is a profile field. |
+| Injured reserve | 2, then 3, then 4, with the return rules in the market table. | Profile fields. |
+| Playoff field and overtime years | 8 teams, then 12 from 1996. Ties through 1973. Sudden death from 1974. Both-teams possession from 2012. | Profile fields. |
+| Franchise-tag formula | Average of the top five charges at the position, one tag per club, from 1995. | Profile field. It does not set the cap. |
+| Special-teams score weights, development coefficients, and other sim coefficients | The formulas are written. The numbers are recommendations. | They do not add person columns. |
+| How far `talent_evaluation` tightens a scout band | Better evaluators get narrower bands. The noise draw does not change. | The slope is unset. |
+| Free-agent pool and undrafted pool | 5 per founding franchise in 1970, and 2 undrafted prospects per active franchise. | These sizes are what the expansion inequality uses. Changing them requires the inequality to be recomputed before publish. |
 | Rating draw distributions | Era tables say which traits are more common. | Required before generation. Not a new column. |
-| Development coefficients | The formula is sketched. | Changes timeline `current` only. |
 | Archive mean career | 5 years, implying 1,032 archive players. | The 11,520 historical lines stay if the 48-man pre-1970 roster stays. |
 | College count | About 48–80 schools, four seasons stored. | Generation choice. |
-| Names, cities, and permanent slugs | Placeholders only. | Not required to generate a placeholder release. |
-| Multi-human expansion award | HMAC fair draw is the candidate. Single-player apply is automatic. | The method needs approval. |
-| A mode that starts in 1976 or 1996 | Column exists. Default remains 1970. | Product choice. |
-| Identical 1970 seasons | Recommended: yes, from the decision fingerprint, with no per-timeline coin flip. | Confirm this recommendation before models lock the seed. |
+| Names, cities, and permanent slugs | Placeholders only. | Not required to describe the model. The catalog link stays empty until a later release names them. |
+| Multi-human expansion award | HMAC fair draw is the candidate. Single-player apply is automatic. | The method is a product choice. The choice row can store it. |
+| A mode that starts in 1976 or 1996 | `start_season_year` exists. Default remains 1970. | Product choice. The column does not define the skipped seasons. |
 
 ### Not a reason to add a second staff table
 
@@ -2043,10 +2087,11 @@ Coordinator identities share the coach table. `specialty = both` only controls e
 - Describes `leagues` as it exists on `main`, including the 32-team generator. This design does not change that generator.
 - Confirms 19 primary positions and treats returner, snapper, coverage, and emergency kicker or punter as roster roles.
 - Confirms 33 rating components, including `return_vision` and `special_teams`.
-- Confirms the shared schedule: 24 franchises for 1970–1975, 28 for 1976–1995, and 32 for 1996–2029. Names and cities stay placeholders.
+- Confirms the shared schedule: 24 franchises for 1970–1975, 28 for 1976–1995, and 32 for 1996–2029. Names and cities stay placeholders. No further expansion, departure, or relocation is scheduled through 2029.
 - Confirms the playable timeline as 60 seasons, 1970 through 2029 inclusive. Franchise-seasons are exactly 1,792.
-- If the era roster and round figures hold: 20,884 playable player identities, 21,916 including the archive assumption, 16,028 draftable prospects, 103,352 roster-slot seasons, 1,042 GM and head-coach identities, and 1,610 staff identities with coordinators. The 19-position split does not change those counts.
-- Recommends the 1976 and 1996 expansion drafts at 72 and 168 veteran picks. Those counts move if the roster limits move.
-- Recommends deterministic scouting and a decision-fingerprint match seed so identical opening choices produce the same 1970 season.
-- The retired totals of 28,384 and 17,424 stay labeled obsolete.
+- If the era roster and round figures hold: 20,884 playable player identities, 21,916 including the archive assumption, 16,028 draftable prospects, 103,352 roster-slot seasons at full taxi capacity, 1,042 GM and head-coach identities, and 1,610 staff identities with coordinators. The 19-position split does not change those counts. Expansion clubs may leave taxi empty, so a finished timeline can have fewer slot rows.
+- Sets the expansion drafts at 72 veteran selections in 1976 and 112 in 1996, 184 together. Each new club must reach 40 active players in 1976 and 53 in 1996. Taxi is optional. Publish is blocked unless the pools can fill every new active roster.
+- Sets deterministic scouting and match draws from the universe-release seed, season, week, franchise keys, game id, event index, and event type. The timeline id and the owner decision fingerprint are not inputs. Identical states and choices produce identical results.
+- The concrete table layout is in [docs/PLAYER_UNIVERSE_MODEL_PROPOSAL.md](PLAYER_UNIVERSE_MODEL_PROPOSAL.md). That file proposes models only. It does not add them.
+- The retired totals of 28,384 and 17,424 stay labeled obsolete. An earlier expansion sketch of 168 veteran picks in 1996 is also obsolete.
 - Adds no application code, database models, migrations, fixtures, settings, generated people, or database rows.
