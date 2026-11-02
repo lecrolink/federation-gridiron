@@ -1,8 +1,8 @@
 # Federation Gridiron — Player Universe Model Proposal
 
-This document translates [PLAYER_UNIVERSE_DESIGN.md](PLAYER_UNIVERSE_DESIGN.md) into a concrete Django model architecture. It does not add models, migrations, services, settings, seed files, generated people, tests, or database rows.
+This document translates [PLAYER_UNIVERSE_DESIGN.md](PLAYER_UNIVERSE_DESIGN.md) into a concrete Django model architecture. Phase 1 is the `universe` app and its five models. Later phases in this file are still proposals: they do not add models, migrations, services, seed files, generated people, tests, or database rows.
 
-The project on `main` is Django 5.2 with `DEFAULT_AUTO_FIELD = BigAutoField` and MySQL. Two proposed apps would hold the new tables. Neither app is created here.
+The project on `main` is Django 5.2 with `DEFAULT_AUTO_FIELD = BigAutoField` and MySQL. `universe` holds the shared release. `timelines` is still only proposed.
 
 | App | Owns | Who writes it |
 |-----|------|----------------|
@@ -19,6 +19,8 @@ The project on `main` is Django 5.2 with `DEFAULT_AUTO_FIELD = BigAutoField` and
 4. The 33 player components are explicit columns on a one-row rating profile, described below. They are not an entity-attribute-value store.
 5. Deleting one timeline deletes that timeline's state only. It does not delete shared people, franchises, releases, catalog teams, or another user's timeline.
 6. Numeric coefficients, the salary cap, the minimum salary, and rookie-slot percents are fields that may stay null until configured. Their absence does not require a different table.
+
+"Immutable after publish" in this document is a service rule. Phase 1 enforces it in `clean()`, `save()`, and instance `delete()`. Queryset `update`, `bulk_update`, `bulk_create` on a published release, and direct SQL bypass those methods. A generator may use bulk operations only while the release is `draft`. Published rows change only through an approved service. Application code must not call queryset `update` or `bulk_update` on published release data. Future admin tools are read-only for a published release. `catalog_fingerprint` and `validation_fingerprint` are how a later check confirms the stored rows. Database constraints enforce the single-table rules they can express. This architecture adds no database triggers. The confirmed 1970–2029 horizon, the 24/28/32 expansion schedule, and the conference and division shapes are publication data for that release. They are not check constraints on every future row.
 
 ### Deletion policy
 
@@ -71,11 +73,11 @@ One publication of the fictional universe.
 - Ownership: shared.
 - Primary key: `BigAutoField`. Public key: `slug`, `CharField(max_length=64)`, unique. Example: `fg-1970-1`.
 - Foreign keys: `root_league` to `leagues.League`, `PROTECT`.
-- Fields: `generator_version` `CharField(64)`; `seed` `BigIntegerField`, the integer from the design, never a Django setting; `founding_franchise_count` `PositiveSmallIntegerField` (24); `expansion_schedule_version` `PositiveIntegerField`; `catalog_fingerprint` `CharField(64)`; `validation_fingerprint` `CharField(64)`; `first_season_year` `PositiveSmallIntegerField` (1970); `season_count` `PositiveSmallIntegerField` (60); `last_season_year` `PositiveSmallIntegerField` (2029); `status` `CharField` choices `draft` or `published`; `created_at` and `published_at` `DateTimeField`.
+- Fields: `generator_version` `CharField(64)`; `seed` `BigIntegerField`, the integer from the design, never a Django setting; `founding_franchise_count` `PositiveSmallIntegerField`; `expansion_schedule_version` `PositiveIntegerField`; `catalog_fingerprint` `CharField(64)`; `validation_fingerprint` `CharField(64)`; `first_season_year` `PositiveSmallIntegerField`; `season_count` `PositiveSmallIntegerField`; `last_season_year` `PositiveSmallIntegerField`; `status` `CharField` choices `draft` or `published`; `created_at` and `published_at` `DateTimeField`. The confirmed release stores 24, 1970, 60, and 2029 in these columns. Those numbers are not database checks.
 - Unique: `slug`.
-- Checks: `first_season_year + season_count - 1 = last_season_year`; `status = published` implies both fingerprints and `published_at` are set; `founding_franchise_count = 24` for this product release.
+- Checks: `founding_franchise_count` is at least 1; `season_count` is at least 1; `last_season_year` is at least `first_season_year`; `first_season_year + season_count - 1 = last_season_year`; `status = published` implies both fingerprints and `published_at` are set.
 - Indexes: `status`.
-- Immutable after `published`: seed, generator version, years, fingerprints, founding count, expansion schedule version. Mutable while `draft`: the generator may rebuild. A schedule change after publish is a new release.
+- Application guard after `published`: seed, generator version, years, fingerprints, founding count, expansion schedule version, slug, and root league. Mutable while `draft`: the generator may rebuild, including with bulk writes. A schedule change after publish is a new release. The guard is not a database trigger.
 - Rows: one per release. This product expects one published release until a later release is authorized.
 - Created at release publication.
 
@@ -131,11 +133,12 @@ The franchise identity inside a release. This is not `leagues.Team`. Timeline ro
 - Ownership: shared.
 - Primary key: `BigAutoField`. Public key: `placeholder_slug`, `SlugField`, unique with the release. Values: `founding-01` through `founding-24`, `expansion-1976-01` through `expansion-1976-04`, `expansion-1996-01` through `expansion-1996-04`.
 - Foreign keys: `release` `CASCADE`; `catalog_team` to `leagues.Team`, `PROTECT`, null; `history_predecessor` to self, `PROTECT`, null. No predecessor is scheduled.
-- Fields: `display_name` `CharField(255)` (the placeholder until a name is chosen); `first_active_season` `PositiveSmallIntegerField`; `final_active_season` `PositiveSmallIntegerField`, null through 2029 for every club in this release.
+- Fields: `display_name` `CharField(255)` (the placeholder until a name is chosen); `origin` choices `founding` or `expansion`; `first_active_season` `PositiveSmallIntegerField`; `final_active_season` `PositiveSmallIntegerField`, null while the club remains active. `origin` is stored. Display code does not infer it from the debut year.
 - Unique: `(release, placeholder_slug)`; `(release, catalog_team)` when `catalog_team` is not null. MySQL allows many null catalog links, which is what placeholder franchises need.
-- Checks: `first_active_season` is 1970, 1976, or 1996; `final_active_season` is null or greater than or equal to `first_active_season`.
+- Database checks: `origin` is `founding` or `expansion`; `final_active_season` is null or greater than or equal to `first_active_season`.
+- Model validation, because it reads the parent release: `first_active_season` is inside the release's playable span; `final_active_season`, when set, is inside that span; a founding franchise begins in the release's first season; an expansion franchise begins after that season. The confirmed release's expansion years, 1976 and 1996, are checked when that release is published. They are not a check constraint on this table.
 - Indexes: `(release, first_active_season)`.
-- Immutable after publish: slug, first season, catalog link once set, predecessor. `display_name` changes only by a `FranchiseHistoryEvent` in a new release. This release schedules none.
+- Application guard after publish: slug, origin, first season, display name, catalog link once set, predecessor. A null `catalog_team` may still be set once. `display_name` changes for a later release by a `FranchiseHistoryEvent`. This release schedules none. The guard is not a database trigger.
 - Rows: 32.
 - Created at release publication.
 
@@ -145,12 +148,12 @@ Conference and division for one franchise in one season. The same rows in every 
 
 - Ownership: shared.
 - Primary key: `BigAutoField`. Public key: `(franchise, season_year)`.
-- Foreign keys: `franchise` `CASCADE`. Conference and division are stored as slugs (`conference-1`, `conference-2`, `d1` through `d4`), not as `leagues.Conference` rows, because the 1970 and 1976 shapes are not the live 2-by-8 generator tree.
-- Fields: `season_year` `PositiveSmallIntegerField`; `conference_slug` `CharField(32)`; `division_slug` `CharField(32)`; `slot_order` `PositiveSmallIntegerField`.
+- Foreign keys: `franchise` `CASCADE`. Conference and division are nonempty slugs, not `leagues.Conference` or `leagues.Division` rows. The confirmed release uses `conference-1`, `conference-2`, and `d1` through `d4`. A design label such as `c1-d3` is `conference_slug` `conference-1` and `division_slug` `d3`. The schema does not limit every release to those two conferences, those four divisions, or a slot ceiling of 7.
+- Fields: `season_year` `PositiveSmallIntegerField`; `conference_slug` `CharField(32)`; `division_slug` `CharField(32)`; `slot_order` `PositiveSmallIntegerField`; `owner_selectable` `BooleanField`, default true. `owner_selectable` means a human owner may control that franchise during that season. It does not mean a new timeline may begin with that franchise in that season. The confirmed release sets it true for every active franchise in every active season. False is reserved for a future bot-only franchise-season, and none are scheduled. A timeline that awards an expansion franchise to its owner changes timeline ownership only. It does not write this flag false.
 - Unique: `(franchise, season_year)`.
-- Checks: year between the franchise's first season and 2029; `slot_order` between 1 and 7.
+- Database checks: `slot_order` is at least 1; `conference_slug` and `division_slug` are nonempty. Model validation also requires both values to be slugs, one slot per release, season, conference, and division, and a year inside the franchise's active span and the release's playable span. Conference count, division count, slot limit, and realignment are publication checks against the versioned schedule.
 - Indexes: `(season_year, conference_slug, division_slug, slot_order)`.
-- Immutable after publish.
+- Application guard after publish. Not a database trigger.
 - Rows: 1,792.
 - Created at release publication.
 
@@ -163,9 +166,9 @@ Rename, relocation, or reorganization. The table exists so a later release can a
 - Foreign keys: `franchise` `CASCADE`.
 - Fields: `season_year`; `kind` choices `rename`, `relocation`, `reorganization`; `previous_name`, `new_name`, `city` `CharField(255)`; `notes` `TextField`.
 - Unique: `(franchise, season_year, kind)`.
-- Checks: year inside the franchise's active span.
+- Checks: model validation requires the year to fall inside the parent release's playable span and inside the franchise's active span. The table does not hardcode 1970–2029.
 - Indexes: `(franchise, season_year)`.
-- Immutable after publish.
+- Application guard after publish. Not a database trigger.
 - Rows: 0 in this release.
 - Created at release publication, only when an event is scheduled.
 
@@ -210,9 +213,9 @@ Shared 1960–1969 record book used for display and for the 1970 draft order. No
 - Foreign keys: `franchise` `CASCADE`.
 - Fields: `season_year`; `wins`, `losses`, `ties` `PositiveSmallIntegerField`; `draft_order` `PositiveSmallIntegerField`, null except where the 1970 order needs it.
 - Unique: `(franchise, season_year)`.
-- Checks: year in 1960–1969; wins + losses + ties equals that historical schedule length.
+- Checks: wins, losses, and ties are nonnegative. A database check requires `draft_order` to be null or at least 1. Model validation places the year in the ten seasons immediately before the release's first playable season, allows `draft_order` only in the last of those seasons, and limits the rows to founding franchises. For the confirmed 1970 release that window is 1960–1969, and draft order is allowed only in 1969. Phase 1 does not check that wins + losses + ties equal a schedule length, because the approved design does not fix the 1960–1969 game count. That equality can be added when a length is approved, without a new table.
 - Indexes: `(season_year, draft_order)`.
-- Immutable after publish.
+- Application guard after publish. Not a database trigger.
 - Rows: 240 if 24 clubs played each of those ten years. The generator fills this from the same seed. It does not replay the seasons.
 - Created at release publication.
 
@@ -465,7 +468,7 @@ One owner's campaign. Not a `leagues.League`.
 - Foreign keys: `owner` to the auth user, `CASCADE`; `release` `PROTECT`; `owned_franchise` to `UniverseFranchise`, `PROTECT`.
 - Fields: `name` `CharField(255)`; `season_index` `PositiveSmallIntegerField`; `phase` choices `choose_franchise`, `staff`, `direction`, `draft`, `instructions`, `roster_cut`, `regular`, `playoffs`, `offseason`, `complete`; `start_season_year` `PositiveSmallIntegerField`, default 1970, legal values 1970, 1976, 1996; `decision_audit` `CharField(64)`, null. This audit hash records decisions for inspection. It is not a random seed. `persist_snap_draws` `BooleanField`, default false; `created_at`.
 - Unique: none across owners. Two timelines may share a name.
-- Checks: `season_index` is 1–60; the derived season year `1969 + season_index` is 1970–2029; `owned_franchise` belongs to `release`; a 1970 start owns a founding franchise.
+- Checks: `season_index` is 1–60; the derived season year `1969 + season_index` is 1970–2029; `owned_franchise` belongs to `release`; a 1970 start owns a founding franchise. Start-year eligibility is not read from `FranchiseSeasonMembership.owner_selectable`. The normal game begins in 1970. Rules for a later start belong in timeline-start configuration in a later phase. Phase 1 does not add that configuration. An expansion award may change `owned_franchise` without setting the shared `owner_selectable` flag false.
 - Indexes: `(owner, release)`; `(release, phase)`.
 - Immutable: `owner`, `release`, `start_season_year`, `created_at`. Mutable: `name`, `owned_franchise` (only when an expansion award moves the owner), `season_index`, `phase`, `decision_audit`, `persist_snap_draws`.
 - Rows: one per campaign. Unbounded across users. Zero in this document.
@@ -985,7 +988,8 @@ Existing `League`, `Conference`, `Division`, `Team`, and `MovementPath` rows rem
 
 - Models: `UniverseRelease`, `UniverseFranchise`, `FranchiseSeasonMembership`, `FranchiseHistoryEvent`, `HistoricalStanding`.
 - Depends on: `leagues.League` existing. `catalog_team` stays null.
-- Validation: 32 franchises; first seasons are 24 in 1970, 4 in 1976, and 4 in 1996; membership rows equal 1,792; slugs and slot orders match the design tables; no history events.
+- Validation in this phase: generic structure only. A founding franchise begins in its release's first season, an expansion franchise begins later, membership and history years stay inside the franchise and the release, and historical years are the ten seasons before the release starts. The confirmed schedule is not a database check.
+- Confirmed release, checked at publication in phase 8 and not by this migration: 24 founding franchises; playable seasons 1970–2029; expansion to 28 franchises in 1976; expansion to 32 franchises in 1996; the accepted conference and division alignment; 1,792 franchise-season memberships; `owner_selectable` true on every one of those active memberships; no bot-only franchise-season; no history events.
 - Rows: 1 release, 32 franchises, 1,792 memberships, 0 history events, about 240 historical standings.
 - League data: untouched.
 - Rollback: drop these tables. The catalog is unchanged.
@@ -1048,7 +1052,7 @@ Existing `League`, `Conference`, `Division`, `Team`, and `MovementPath` rows rem
 
 - Models: none. This phase fills `catalog_fingerprint` and `validation_fingerprint` and refuses `status = published` when a check fails.
 - Depends on: phases 1–3. It does not need timeline tables to publish a release. Timeline season entry reuses the expansion inequality.
-- Validation: franchise fingerprint, quota sums, staff signatures, expansion arithmetic with taxi excluded, prospect counts, and the rule that no origin pick is baked onto a 1970–2029 prospect. HMAC construction for person keys uses the release seed and a named key. It does not use `random.Random`.
+- Validation: the confirmed first release must contain 24 founding franchises, playable seasons 1970–2029, expansion to 28 franchises in 1976, expansion to 32 franchises in 1996, the accepted conference and division alignment, and 1,792 franchise-season memberships with `owner_selectable` true on every active row. No bot-only franchise-season is scheduled. Expansion franchises in that release enter in 1976 or 1996. The same gate checks the franchise fingerprint, quota sums, staff signatures, expansion arithmetic with taxi excluded, prospect counts, and the rule that no origin pick is baked onto a 1970–2029 prospect. HMAC construction for person keys uses the release seed and a named key. It does not use `random.Random`. Phase 1 does not implement this validator. The schema stays usable for a corrected or extended release without a migration that only changes the horizon.
 - Rows: updates the one release row's fingerprint columns when a generator eventually runs. This document does not run it.
 - League data: untouched.
 - Rollback: set the release back to `draft` and clear the fingerprints. No table is dropped.
@@ -1079,31 +1083,31 @@ These do not block the tables above. The columns already store either outcome.
 |----------|-------------------------|-----------------------------------|
 | Snap-level audit detail | `SimulationAuditRecord` stores the ordered event and optional hashes. `GameKickoffState` stores one snapshot per game. `Timeline.persist_snap_draws` defaults to false. | Whether debugging should also persist every snap's detail. Turning it on changes volume, not the seed, and it is not required to replay from kickoff. |
 | Multi-human expansion award | `selection_method` can store `automatic` or `fair_draw`. Single-player apply is `automatic`. | Whether the fair HMAC draw is the method when several humans apply. |
-| A campaign that starts in 1976 or 1996 | `start_season_year` allows those values and defaults to 1970. | What happens to the skipped seasons. The default mode does not use them. |
+| A campaign that starts in 1976 or 1996 | The normal game begins in 1970. Phase 1 does not store later-start rules. | Whether that mode exists, and what happens to the skipped seasons. Store the rules in later-phase timeline-start configuration. Do not infer them from `owner_selectable`. |
 | Permanent franchise names | `display_name` is the placeholder slug text. `catalog_team` is null. | The real names, cities, and slugs, and when a catalog `Team` row may be linked. Linking still must not put roster data on `Team`. |
 | Cap, minimum salary, rookie-slot percents, and sim coefficients | `cap_limit`, `minimum_salary`, and `rookie_slot_scale` are nullable. Weights and development coefficients are not person columns. | The numbers. A 1995 profile still cannot publish with an empty cap. That is a data check, not a schema change. |
 
 ## Phase 1 readiness
 
-The design and this model architecture are ready for Phase 1 implementation. Phase 1 later adds only these five models:
+Phase 1 adds only these five models:
 
 - `UniverseRelease`
-- `UniverseFranchise`
-- `FranchiseSeasonMembership`
+- `UniverseFranchise`, including stored `origin` (`founding` or `expansion`)
+- `FranchiseSeasonMembership`, including stored `owner_selectable`
 - `FranchiseHistoryEvent`
 - `HistoricalStanding`
 
-This document does not implement them.
+The migration creates the tables and leaves them empty. A later generator fills the confirmed release with `founding-01` through `founding-24`, `expansion-1976-01` through `expansion-1976-04`, and `expansion-1996-01` through `expansion-1996-04`. `catalog_team` stays null until a catalog link is chosen. `display_name` can hold the placeholder slug. `FranchiseHistoryEvent` has no scheduled rows. `HistoricalStanding` for that release is one row per founding franchise per year from 1960 through 1969, 240 rows. `seed` is a `BigIntegerField`. Conference and division membership are slug strings plus `slot_order` and `owner_selectable`. Every active membership in that release has `owner_selectable` true. The 1970 and 1976 shapes are not the live 32-team generator tree, and they are not check constraints on the membership table.
 
-Phase 1 can create those tables and leave them empty, or a later generator can fill them with the placeholder slugs already specified: `founding-01` through `founding-24`, `expansion-1976-01` through `expansion-1976-04`, and `expansion-1996-01` through `expansion-1996-04`. `catalog_team` stays null. `display_name` can hold the placeholder slug. `FranchiseHistoryEvent` has no scheduled rows. `HistoricalStanding` is one row per founding franchise per year from 1960 through 1969, 240 rows under the 24-club record book already in the design. `seed` is a `BigIntegerField`. Conference and division membership are slug strings plus `slot_order`, because the 1970 and 1976 shapes are not the live 32-team generator tree.
+The database does not require 24 founding clubs, a 1970–2029 horizon, debut years of 1970, 1976, or 1996, two named conferences, divisions `d1`–`d4`, or the era slot limits. Those rules remain the confirmed release. Phase 8 is the publication gate that refuses any other shape for that release. Phase 1 does not implement that gate.
 
 No open decision changes the columns of those five models. Permanent names and cities are strings written into columns that already exist, and they can wait. The salary cap, minimum salary, rookie-slot percents, simulation coefficients, development formulas, expansion-draft counts, and replay storage do not appear on these five models. Expansion rules are phase 3. Replay tables are phase 7.
 
 ## Document status
 
-- Proposes the model list in this file. It does not add Python models, migrations, fixtures, settings, or rows.
+- Phase 1 models, the `universe` app, and its initial migration are implemented. Later models in this file remain proposals. The migration inserts no rows.
 - Keeps `leagues.Team` as catalog data.
 - Stores the 33 components as explicit columns on `PlayerRatingProfile` and `PlayerCurrentRating`.
 - Uses the expansion arithmetic from the design: 16 + 17 + 7 = 40 in 1976, and 26 + 7 + 20 = 53 in 1996. Taxi capacity is optional. Timeline free agents are not part of the publication check.
 - Uses stable draw coordinates. `GameKickoffState` plus `SimulationAuditRecord` are the MVP replay records. A draw can be recomputed from the coordinates. A snap outcome cannot, unless that kickoff state or a checkpoint is available.
-- Marks Phase 1 ready, and does not implement it.
+- Phase 1 stores `origin` and `owner_selectable`. Publication of the confirmed 1970–2029 release, including its 24, 28, and 32 franchise schedule and 1,792 memberships, waits for phase 8.
