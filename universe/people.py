@@ -4,13 +4,14 @@ Published-release guards in ``clean()``, ``save()``, and instance
 ``delete()`` are application checks. They are not database triggers.
 """
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import models
 
 from universe.models import (
     ARCHIVE_SEASON_COUNT,
     UniverseFranchise,
     UniverseRelease,
+    _previous,
     _reject_published_child,
 )
 
@@ -974,6 +975,162 @@ class UniverseProSeason(SeasonStatColumns, ReleaseChild):
             )
 
 
+def _career_profiles(identity):
+    if not identity.pk:
+        return []
+    found = []
+    for accessor in ('gm_profile', 'coach_profile'):
+        try:
+            found.append(getattr(identity, accessor))
+        except ObjectDoesNotExist:
+            continue
+    return found
+
+
+def _other_career_profile(profile):
+    identity = profile.identity
+    if identity is None or not identity.pk:
+        return None
+    accessor = 'coach_profile' if isinstance(profile, UniverseGM) else 'gm_profile'
+    try:
+        other = getattr(identity, accessor)
+    except ObjectDoesNotExist:
+        return None
+    if other.pk == profile.pk:
+        return None
+    return other
+
+
+def _match_staff_identity(profile, errors):
+    """Require an explicit identity. Never select one by name or birth year."""
+    identity = profile.identity
+    if identity is None:
+        errors['identity'] = (
+            'A career profile requires an explicit staff identity. '
+            'Profiles are not matched by name.'
+        )
+        return
+    if (
+        profile.release_id
+        and identity.release_id
+        and profile.release_id != identity.release_id
+    ):
+        errors['identity'] = 'The staff identity must belong to this profile\'s release.'
+    if identity.name != profile.name:
+        errors['name'] = 'The profile name must match its staff identity.'
+    if identity.birth_year != profile.birth_year:
+        errors['birth_year'] = (
+            'The profile birth year must match its staff identity.'
+        )
+    if (
+        identity.birth_year is not None
+        and profile.debut_year is not None
+        and (
+            profile.debut_year < identity.birth_year + 20
+            or profile.debut_year > identity.birth_year + 80
+        )
+    ):
+        errors['debut_year'] = (
+            'Debut age is measured from the staff identity birth year.'
+        )
+    if profile.pk and identity.pk:
+        previous = _previous(profile)
+        if (
+            previous is not None
+            and previous.identity_id
+            and previous.identity_id != identity.pk
+        ):
+            errors['identity'] = (
+                'A career profile keeps the identity it was given. '
+                'Another career is a new profile row with that identity set '
+                'explicitly. Profiles are not matched or moved by name.'
+            )
+    other = _other_career_profile(profile)
+    if other is None:
+        if profile.universe_key != identity.universe_key:
+            errors['universe_key'] = (
+                'An identity with one profile uses that profile\'s universe key.'
+            )
+        return
+    self_is_canonical = profile.universe_key == identity.universe_key
+    other_is_canonical = other.universe_key == identity.universe_key
+    if self_is_canonical and other_is_canonical:
+        errors['universe_key'] = (
+            'A second career profile needs its own universe key and an '
+            'explicit identity. It is not chosen by matching names.'
+        )
+    elif not self_is_canonical and not other_is_canonical:
+        errors['universe_key'] = (
+            'The staff identity key must match one of its career profiles.'
+        )
+
+
+class UniverseStaffIdentity(ReleaseChild):
+    """One person who can hold a GM profile, a coach profile, or both.
+
+    The backfill copies each existing profile key onto its own identity.
+    A later second profile is a new row whose ``identity`` field is set
+    by the caller. Nothing in this model looks profiles up by name.
+    """
+
+    release = models.ForeignKey(
+        UniverseRelease,
+        on_delete=models.CASCADE,
+        related_name='staff_identities',
+    )
+    universe_key = models.CharField(max_length=64, unique=True)
+    name = models.CharField(max_length=255)
+    birth_year = models.PositiveSmallIntegerField()
+
+    class Meta:
+        app_label = 'universe'
+        ordering = ['universe_key']
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(universe_key='') & ~models.Q(name=''),
+                name='universe_staff_identity_nonempty',
+            ),
+        ]
+
+    def __str__(self):
+        return self.universe_key
+
+    def bound_release(self):
+        if not self.release_id:
+            return None
+        return self.release
+
+    def extra_clean(self, errors):
+        profiles = _career_profiles(self)
+        for career in profiles:
+            if career.release_id != self.release_id:
+                errors['release'] = (
+                    'Linked career profiles must belong to this release.'
+                )
+            if career.name != self.name:
+                errors['name'] = (
+                    'The identity name must match its career profiles.'
+                )
+            if career.birth_year != self.birth_year:
+                errors['birth_year'] = (
+                    'The identity birth year must match its career profiles.'
+                )
+        if len(profiles) == 1 and profiles[0].universe_key != self.universe_key:
+            errors['universe_key'] = (
+                'An identity with one profile uses that profile\'s universe key.'
+            )
+        elif len(profiles) == 2:
+            keys = {career.universe_key for career in profiles}
+            if self.universe_key not in keys:
+                errors['universe_key'] = (
+                    'The staff identity key must match one of its career profiles.'
+                )
+            if len(keys) == 1:
+                errors['universe_key'] = (
+                    'The two career profiles cannot share the identity key.'
+                )
+
+
 class UniverseGM(ReleaseChild):
     class FormerRole(models.TextChoices):
         PLAYER = 'player', 'Player'
@@ -986,6 +1143,11 @@ class UniverseGM(ReleaseChild):
         UniverseRelease,
         on_delete=models.CASCADE,
         related_name='gms',
+    )
+    identity = models.OneToOneField(
+        UniverseStaffIdentity,
+        on_delete=models.CASCADE,
+        related_name='gm_profile',
     )
     universe_key = models.CharField(max_length=64, unique=True)
     name = models.CharField(max_length=255)
@@ -1059,6 +1221,7 @@ class UniverseGM(ReleaseChild):
         return self.release
 
     def extra_clean(self, errors):
+        _match_staff_identity(self, errors)
         if not self.release_id:
             return
         release = self.release
@@ -1124,6 +1287,11 @@ class UniverseCoach(ReleaseChild):
         UniverseRelease,
         on_delete=models.CASCADE,
         related_name='coaches',
+    )
+    identity = models.OneToOneField(
+        UniverseStaffIdentity,
+        on_delete=models.CASCADE,
+        related_name='coach_profile',
     )
     universe_key = models.CharField(max_length=64, unique=True)
     name = models.CharField(max_length=255)
@@ -1204,6 +1372,7 @@ class UniverseCoach(ReleaseChild):
         return self.release
 
     def extra_clean(self, errors):
+        _match_staff_identity(self, errors)
         if not self.release_id:
             return
         release = self.release
