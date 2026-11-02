@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'leagues',
     'universe',
+    'timelines',
 ]
 
 MIDDLEWARE = [
