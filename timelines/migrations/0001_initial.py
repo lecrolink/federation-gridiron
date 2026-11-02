@@ -340,6 +340,10 @@ class Migration(migrations.Migration):
             model_name='timelineseason',
             constraint=models.CheckConstraint(condition=models.Q(models.Q(('completed_at__isnull', False), ('phase', 'complete')), models.Q(models.Q(('phase', 'complete'), _negated=True), ('completed_at__isnull', True)), _connector='OR'), name='tl_season_completed_at'),
         ),
+        migrations.AddConstraint(
+            model_name='timelineseason',
+            constraint=models.CheckConstraint(condition=models.Q(models.Q(('phase', 'complete'), _negated=True), ('postseason_complete', True), _connector='OR'), name='tl_season_complete_chain'),
+        ),
         migrations.AddIndex(
             model_name='ownerdirective',
             index=models.Index(fields=['timeline', 'season'], name='tl_directive_season_idx'),

@@ -317,7 +317,7 @@ Before 1995 the cap is off, so units are a negotiation scale only. From 1995 the
 | `minimum_salary` | Ledger units. Null until approved. |
 | `franchise_tag` | `off`, or `top_five_position_average`. |
 | `playoff_format` | `eight_team_3_and_1`, `eight_team_2_and_2`, or `twelve_team_4_and_2`. |
-| `schedule_length` | 14, 16, or 17. |
+| `schedule_length` | Regular-season games each franchise plays, such as 14, 16, or 17. This is not the highest calendar week. A 17-game season can span 18 weeks when one of them is a bye. |
 | `overtime_rule` | `tie`, `sudden_death`, or `both_teams_possess`. |
 | `sack_leaderboard` | `unofficial` or `official`. |
 
@@ -1422,7 +1422,7 @@ The GM still handles contract detail, cuts, signings, the shape of a trade, expa
 | `status` | Timeline | enum | `active` `completed` `archived` | Timeline sim | Both |
 | `decision_audit` | Timeline | string, optional | The audit hash named `decision_fingerprint` in earlier notes. It is not an input to random draws. | Derived | Display |
 
-`TimelineParticipant` joins a user to the timeline with `active` or `departed`, the season they joined, and timestamps. The same user is not added twice. A single-player campaign has one active participant.
+`TimelineParticipant` joins a user to the timeline with `active` or `departed`, the season they joined, and timestamps. The same user is not added twice. A single-player campaign has one active participant. Deleting that account sets the user reference null and does not delete the timeline. The participant no longer represents a playable human. The franchise is treated as bot-controlled until a later account-recovery or commissioner service reassigns it. Control history stays. Phase 4 does not reassign it.
 
 `TimelineFranchiseControl` records the franchise, the first controlled season, an optional final season, and why control ended. `expansion_switch` is the reason when a later service moves the owner to an awarded expansion club. One participant has one open control. One franchise has one open human. Everyone else is a bot, with no participant and no control row. Past stints stay after a switch.
 
@@ -1486,7 +1486,7 @@ The practical record for the first playable version is deliberately smaller than
 - A detailed snap log, including enough state to inspect one snap without replaying, is optional and off by default.
 - A pre-state or post-state hash may be stored beside an event so a replay can be checked. It is a verification value, not a substitute for the kickoff snapshot or the log.
 
-Phase 4 stores that foundation and does not simulate it. `GameKickoffState` keeps the payload, its hash, the week, the home and away franchises, and a stable `game_key` until a schedule table exists. `SimulationAuditRecord` keeps the ordered event for that kickoff. The random draw is still recomputed. It is not a column.
+Phase 4 stores that foundation and does not simulate it. `GameKickoffState` keeps the payload, its hash, the calendar week, and the home and away franchises. `game_key` is stable across comparable timelines. It is not derived from the timeline id, the timeline primary key, the kickoff primary key, or any other timeline-specific identifier. A later schedule service should build it from the universe release, the season, the calendar week or round, the home and away franchise keys, and the game type when that is needed. The timeline still owns the row. The key is how comparable timelines retrieve the same underlying random sequence. `schedule_length` is not used as the maximum week: it counts games played per franchise, and a later schedule model decides which weeks exist, which are byes, and how postseason weeks are numbered. `SimulationAuditRecord` keeps the ordered event for that kickoff. The random draw is still recomputed. It is not a column. Phase 4 does not implement the HMAC or the schedule service.
 
 Two timelines with the same rosters, ratings, and choices get the same draws for the same game, so the comparison is fair. Replay value comes from a different roster, rating, or call. It does not come from shaking the season.
 

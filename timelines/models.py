@@ -8,8 +8,11 @@ people, rules, and expansion events use PROTECT, so a timeline delete cannot
 remove them. The account policy in the model proposal deleted a campaign
 when its single owner was deleted. A timeline can later have more than one
 human, so the creator and each participant use a nullable user reference
-with SET_NULL. Removing an account leaves the campaign in place and does
-not delete another participant's timeline.
+with SET_NULL. Removing an account leaves the campaign and its control
+history in place. It does not delete another participant's timeline. An
+active participant whose user is then null is no longer a playable human,
+and that franchise is treated as bot-controlled until a later recovery
+service reassigns it. Phase 4 does not implement that service.
 
 Random draws are not stored. A later service recomputes them from the
 universe seed and the stable coordinates. The timeline id, the participant,
@@ -316,6 +319,11 @@ class TimelineParticipant(TimelineChild):
 
     Bot-controlled franchises do not get a participant. A future multiplayer
     timeline adds more rows. This model does not invite, wait, or synchronize.
+
+    Deleting the account sets ``user`` null and leaves the row. That person
+    is no longer a playable human. Historical control rows stay. The franchise
+    is treated as bot-controlled until a later account-recovery or
+    commissioner service reassigns it. This phase does not reassign it.
     """
 
     class Status(models.TextChoices):
@@ -409,6 +417,10 @@ class TimelineFranchiseControl(TimelineChild):
     bot-controlled. Overlapping stints are rejected in application validation.
     MySQL unique indexes do not collapse those ranges, so the open row is also
     stored in generated keys.
+
+    If the participant's account has been deleted, an open stint remains as
+    history, but it is not a playable human control. The franchise is
+    bot-controlled until a later service reassigns it.
     """
 
     timeline = models.ForeignKey(
@@ -659,6 +671,13 @@ class TimelineSeason(TimelineChild):
                 ),
                 name='tl_season_completed_at',
             ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(phase='complete')
+                    | models.Q(postseason_complete=True)
+                ),
+                name='tl_season_complete_chain',
+            ),
         ]
         indexes = [
             models.Index(fields=['profile', 'season_year'], name='tl_season_profile_idx'),
@@ -696,6 +715,11 @@ class TimelineSeason(TimelineChild):
             for name in ('timeline_id', 'season_year', 'season_index', 'profile_id'):
                 if getattr(previous, name) != getattr(self, name):
                     errors[name] = 'The season and its era profile are fixed.'
+        if self.pk and self.directives_locked:
+            if OwnerDirective.objects.filter(season_id=self.pk, locked=False).exists():
+                errors['directives_locked'] = (
+                    'An unlocked owner directive cannot remain after the season locks directives.'
+                )
 
 
 class OwnerDirective(TimelineChild):
@@ -892,14 +916,21 @@ class OwnerDirective(TimelineChild):
             errors['participant'] = 'The participant belongs to this timeline.'
         if self.season.timeline_id != self.timeline_id:
             errors['season'] = 'The season belongs to this timeline.'
-        if self.season.directives_locked and not self.locked:
-            errors['locked'] = 'A locked season locks its owner directive.'
         previous = _previous(self)
         if previous is not None and previous.locked:
             if _changed(previous, self, _stored_names(self)):
                 errors['locked'] = (
                     'A directive stays as it was when the season simulation began.'
                 )
+        elif self.season.directives_locked:
+            if previous is None:
+                errors['locked'] = 'A locked season cannot gain an owner directive.'
+            else:
+                changed = set(_changed(previous, self, _stored_names(self)))
+                if changed - {'locked'}:
+                    errors['locked'] = 'A locked season cannot change the directive.'
+                if not self.locked:
+                    errors['locked'] = 'A locked season locks its owner directive.'
         elif previous is not None:
             for name in ('timeline_id', 'participant_id', 'season_id'):
                 if getattr(previous, name) != getattr(self, name):
@@ -1145,7 +1176,18 @@ class ExpansionPin(TimelineChild):
 class GameKickoffState(TimelineChild):
     """Immutable inputs for one game. ScheduleGame is a later model.
 
-    ``game_key`` is the stable identity until that schedule row exists.
+    ``game_key`` must be stable across comparable timelines. It is not derived
+    from the timeline id, either primary key, or any other timeline-specific
+    identifier. A later schedule service should build it from shared
+    coordinates: universe release, season, calendar week or round, home and
+    away franchise keys, and game type when needed. The timeline owns this
+    row. The key is what lets comparable timelines find the same random
+    sequence. This phase does not build that key or the HMAC.
+
+    ``week`` is a calendar week. ``EraRuleProfile.schedule_length`` is games
+    played per franchise, not the highest week number. A later schedule model
+    decides which weeks exist, byes, and postseason numbering.
+
     ``inputs`` is an audit snapshot, not the live rating table. The hash
     verifies the payload. It does not replace it, and it is not the random draw.
     """
@@ -1240,8 +1282,6 @@ class GameKickoffState(TimelineChild):
             errors['profile'] = 'The era profile covers this season.'
         elif self.profile_id != season.profile_id:
             errors['profile'] = 'The kickoff uses the season\'s era profile.'
-        elif self.week > profile.schedule_length:
-            errors['week'] = 'The week is inside that profile\'s schedule.'
         if len(self.input_hash or '') != 64:
             errors['input_hash'] = 'The input hash is a 64-character digest.'
         previous = _previous(self)
