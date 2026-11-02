@@ -402,7 +402,7 @@ Recommended quotas for the later limits, same taxi eight:
 | K | 1 | 1 | 1 |
 | P | 1 | 1 | 1 |
 
-The 45-man row sums to 45, the 47-man row to 47, and the 53-man row to 53. Direction: fullbacks decline, receivers and corners rise, and both guard spots gain a second active player. These three rows are the recommended fill. Rejecting an active limit means rewriting that row and rechecking the sum, and it also changes the expansion arithmetic below.
+The 45-man row sums to 45, the 47-man row to 47, and the 53-man row to 53. Direction: fullbacks decline, receivers and corners rise, LG gains a second active player in 1978, and RG gains one in 1987. These three rows are the recommended fill. Rejecting an active limit means rewriting that row and rechecking the sum, and it also changes the expansion arithmetic below.
 
 The 1970 rookies are not in the opening quota. They enter through the draft, and the post-draft cut returns each franchise to that year's active limit plus taxi.
 
