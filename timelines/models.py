@@ -3,6 +3,11 @@
 Timeline rows point at shared universe identities. They do not copy the
 release. Published-release data is not written here.
 
+Player identity, the initial 33-component profile, and potential stay on
+the universe player. A campaign stores an overlay, one rating row per
+season, roster membership, and development events. This module does not
+copy those shared facts, and it does not create campaigns or play seasons.
+
 Deleting a timeline cascades to its own rows. Shared releases, franchises,
 people, rules, and expansion events use PROTECT, so a timeline delete cannot
 remove them. The account policy in the model proposal deleted a campaign
@@ -20,11 +25,20 @@ and owner decisions are not inputs to that draw. This module does not
 simulate, and it does not insert campaigns.
 """
 
+import contextvars
+from contextlib import contextmanager
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
 
-from universe.people import GM_PRIORITIES, UniversePlayer
+from universe.people import (
+    GM_PRIORITIES,
+    PLAYER_COMPONENTS,
+    POSITIONS,
+    PlayerRatingProfile,
+    UniversePlayer,
+)
 from universe.rules import EraRuleProfile, ExpansionClub, ExpansionEvent
 
 
@@ -78,6 +92,39 @@ EXPANSION_RESOLUTIONS = ('pending', 'awarded', 'not_awarded', 'withdrawn')
 
 SELECTION_METHODS = ('not_needed', 'automatic', 'fair_draw')
 
+PLAYER_STATUSES = (
+    'prospect',
+    'active',
+    'taxi',
+    'reserve',
+    'free_agent',
+    'retired',
+)
+
+ROSTER_ROLES = ('starter', 'backup', 'taxi', 'reserve', 'free_agent')
+
+ROSTER_AVAILABILITY = ('available', 'unavailable')
+
+ROSTER_CLOSE_REASONS = (
+    'cut',
+    'transaction',
+    'expansion',
+    'retired',
+    'season_complete',
+)
+
+DEVELOPMENT_REASONS = ('age', 'snaps', 'injury', 'coaching')
+
+RESERVE_BLOCKED_PHASES = (
+    'choose_franchise',
+    'staff',
+    'direction',
+    'draft',
+    'instructions',
+)
+
+_deferred_players = contextvars.ContextVar('tl_deferred_players', default=None)
+
 
 def _choices(values):
     return [(value, value) for value in values]
@@ -111,6 +158,136 @@ def _range_end(value):
 
 def _overlaps(first_a, final_a, first_b, final_b):
     return first_a <= _range_end(final_b) and first_b <= _range_end(final_a)
+
+
+def _status_for_role(role):
+    if role in ('starter', 'backup'):
+        return 'active'
+    return role
+
+
+def _occupied_weeks(start_week, end_week, exclude_end):
+    if end_week is None:
+        return (start_week, None)
+    last = end_week - 1 if exclude_end else end_week
+    if last < start_week:
+        return None
+    return (start_week, last)
+
+
+def _weeks_conflict(start_a, end_a, start_b, end_b):
+    """Inclusive week spans in one season.
+
+    A later row may start on the earlier row's end week. That boundary week
+    belongs to the later row, so the earlier row does not occupy it.
+    """
+    span_a = _occupied_weeks(
+        start_a,
+        end_a,
+        end_a is not None and start_b == end_a,
+    )
+    span_b = _occupied_weeks(
+        start_b,
+        end_b,
+        end_b is not None and start_a == end_b,
+    )
+    if span_a is None or span_b is None:
+        return False
+    first_a, last_a = span_a
+    first_b, last_b = span_b
+    if last_a is None and last_b is None:
+        return True
+    if last_a is None:
+        return last_b >= first_a
+    if last_b is None:
+        return last_a >= first_b
+    return first_a <= last_b and first_b <= last_a
+
+
+def _check_lifecycle(player, rows, errors, field='status'):
+    open_rows = [row for row in rows if row.end_week is None]
+    if player.status == player.Status.PROSPECT:
+        if rows:
+            errors[field] = 'A prospect has no roster membership.'
+        return
+    if player.status == player.Status.RETIRED:
+        if open_rows:
+            errors[field] = 'A retired player has no open roster membership.'
+            return
+        if not rows:
+            errors[field] = 'Retirement closes a roster membership.'
+            return
+        matched = False
+        for row in rows:
+            if row.reason_ended != 'retired' or not row.season_id:
+                continue
+            if row.season.season_year == player.retired_year:
+                matched = True
+                break
+        if not matched:
+            errors[field] = (
+                'The retirement season has a membership closed as retired.'
+            )
+        return
+    if len(open_rows) != 1:
+        errors[field] = 'A player in the league has one open roster membership.'
+        return
+    expected = _status_for_role(open_rows[0].role)
+    if player.status != expected:
+        errors[field] = 'Lifecycle status matches the open roster membership.'
+
+
+def _deferring():
+    return _deferred_players.get() is not None
+
+
+def _note_deferred(player_id):
+    pending = _deferred_players.get()
+    if pending is not None and player_id is not None:
+        pending.add(player_id)
+
+
+def _validate_deferred(player_ids):
+    if not player_ids:
+        return
+    problems = {}
+    players = TimelinePlayer.objects.filter(pk__in=player_ids).prefetch_related(
+        'roster_memberships__season',
+    )
+    for player in players:
+        row_errors = {}
+        _check_lifecycle(
+            player,
+            list(player.roster_memberships.all()),
+            row_errors,
+        )
+        if row_errors:
+            problems[str(player.pk)] = row_errors
+    if problems:
+        raise ValidationError(problems)
+
+
+@contextmanager
+def deferred_lifecycle():
+    """Save a player and roster change, then check the pair.
+
+    ``full_clean`` on either row rejects a state that does not match the
+    lifecycle table. A cut, signing, position change, role change, or
+    retirement writes the membership and the status in one transaction, so
+    the intermediate row would not match. Inside this block those cross-row
+    checks wait until both saves have run. The block rolls back when the
+    final state does not match. Other field checks still run on each save.
+    """
+    if _deferring():
+        yield
+        return
+    with transaction.atomic():
+        token = _deferred_players.set(set())
+        try:
+            yield
+            _validate_deferred(_deferred_players.get())
+        finally:
+            _deferred_players.reset(token)
 
 
 class Timeline(models.Model):
@@ -1352,3 +1529,525 @@ class SimulationAuditRecord(TimelineChild):
         previous = _previous(self)
         if previous is not None and _changed(previous, self, _stored_names(self)):
             errors['event_index'] = 'An audit record is written once.'
+
+
+def _current_rating_constraints():
+    constraints = []
+    for component in PLAYER_COMPONENTS:
+        constraints.append(
+            models.CheckConstraint(
+                condition=models.Q(**{f'current_{component}__lte': 100}),
+                name=f'tl_prate_{component}',
+            )
+        )
+    return constraints
+
+
+class TimelinePlayer(TimelineChild):
+    """One campaign's link to one shared player.
+
+    The shared row keeps identity and the initial rating profile. This row
+    keeps the present lifecycle. ``seasons_played`` is derived from club
+    memberships and is not stored. A prospect has no membership. A free
+    agent has a null-franchise membership. Retirement closes a membership.
+
+    Paired status and membership writes use ``deferred_lifecycle`` so the
+    cross-row check sees the finished transaction.
+    """
+
+    class Status(models.TextChoices):
+        PROSPECT = 'prospect', 'prospect'
+        ACTIVE = 'active', 'active'
+        TAXI = 'taxi', 'taxi'
+        RESERVE = 'reserve', 'reserve'
+        FREE_AGENT = 'free_agent', 'free_agent'
+        RETIRED = 'retired', 'retired'
+
+    timeline = models.ForeignKey(
+        Timeline,
+        on_delete=models.CASCADE,
+        related_name='players',
+    )
+    player = models.ForeignKey(
+        UniversePlayer,
+        on_delete=models.PROTECT,
+        related_name='timeline_players',
+    )
+    status = models.CharField(max_length=16, choices=Status.choices)
+    retired_year = models.PositiveSmallIntegerField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['timeline', 'player']
+        indexes = [
+            models.Index(fields=['timeline', 'status'], name='tl_player_status_idx'),
+            models.Index(fields=['player'], name='tl_player_person_idx'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['timeline', 'player'],
+                name='unique_tl_player',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(status__in=PLAYER_STATUSES),
+                name='tl_player_status',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(status='retired', retired_year__isnull=False)
+                    | (
+                        ~models.Q(status='retired')
+                        & models.Q(retired_year__isnull=True)
+                    )
+                ),
+                name='tl_player_retired',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.timeline_id} {self.player_id}'
+
+    def bound_timeline(self):
+        if not self.timeline_id:
+            return None
+        return self.timeline
+
+    def seasons_played(self):
+        if not self.pk:
+            return 0
+        return (
+            self.roster_memberships.exclude(franchise__isnull=True)
+            .values('season_id')
+            .distinct()
+            .count()
+        )
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        _note_deferred(self.pk)
+
+    def extra_clean(self, errors):
+        if not self.timeline_id or not self.player_id:
+            return
+        timeline = self.timeline
+        player = self.player
+        if player.release_id != timeline.release_id:
+            errors['player'] = 'The player belongs to this timeline\'s release.'
+        elif player.cohort == UniversePlayer.Cohort.ARCHIVE:
+            errors['player'] = 'Archive players are not placed on a timeline.'
+        retired = self.status == self.Status.RETIRED
+        if retired != (self.retired_year is not None):
+            errors['retired_year'] = (
+                'Retirement records the season, and only retirement does.'
+            )
+        if self.retired_year is not None:
+            release = timeline.release
+            if self.retired_year < timeline.start_season_year or (
+                self.retired_year > release.last_season_year
+            ):
+                errors['retired_year'] = (
+                    'The retirement season is inside this timeline and its release.'
+                )
+            elif not TimelineSeason.objects.filter(
+                timeline_id=self.timeline_id,
+                season_year=self.retired_year,
+            ).exists():
+                errors['retired_year'] = 'The retirement season exists on this timeline.'
+        previous = _previous(self)
+        if previous is not None:
+            if previous.timeline_id != self.timeline_id:
+                errors['timeline'] = 'The timeline is fixed.'
+            if previous.player_id != self.player_id:
+                errors['player'] = 'The shared player is fixed.'
+            if previous.retired_year is not None and (
+                previous.retired_year != self.retired_year
+            ):
+                errors['retired_year'] = 'The retirement season is written once.'
+        if self.pk and self.retired_year is not None:
+            later_rating = self.season_ratings.filter(
+                season__season_year__gt=self.retired_year,
+            ).exists()
+            later_membership = self.roster_memberships.filter(
+                season__season_year__gt=self.retired_year,
+            ).exists()
+            later_event = self.development_events.filter(
+                season__season_year__gt=self.retired_year,
+            ).exists()
+            if later_rating or later_membership or later_event:
+                errors['retired_year'] = (
+                    'A retired player has no rating, membership, or development '
+                    'after the retirement season.'
+                )
+        if not _deferring():
+            rows = []
+            if self.pk:
+                rows = list(self.roster_memberships.select_related('season'))
+            _check_lifecycle(self, rows, errors)
+
+
+class PlayerSeasonRating(TimelineChild):
+    """The 33 current components for one player in one season.
+
+    The row is the live value while the season is open and the frozen
+    season-end value once that season's phase is complete. The next season
+    copies it. There is no second opening-day row. Potential stays on the
+    shared profile.
+    """
+
+    overlay = models.ForeignKey(
+        TimelinePlayer,
+        on_delete=models.CASCADE,
+        related_name='season_ratings',
+    )
+    season = models.ForeignKey(
+        TimelineSeason,
+        on_delete=models.CASCADE,
+        related_name='player_ratings',
+    )
+
+    class Meta:
+        ordering = ['overlay', 'season']
+        indexes = [
+            models.Index(fields=['season'], name='tl_prate_season_idx'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['overlay', 'season'],
+                name='unique_tl_season_rating',
+            ),
+            *_current_rating_constraints(),
+        ]
+
+    def __str__(self):
+        return f'{self.overlay_id} {self.season_id}'
+
+    def bound_timeline(self):
+        if not self.overlay_id:
+            return None
+        return self.overlay.timeline
+
+    def extra_clean(self, errors):
+        if not self.overlay_id or not self.season_id:
+            return
+        overlay = self.overlay
+        season = self.season
+        if overlay.timeline_id != season.timeline_id:
+            errors['season'] = 'The season belongs to the player\'s timeline.'
+        if overlay.retired_year is not None and season.season_year > overlay.retired_year:
+            errors['season'] = 'A retired player has no rating after the retirement season.'
+        if not self.pk and season.phase == Timeline.Phase.COMPLETE:
+            errors['season'] = 'A completed season does not gain a rating row.'
+        try:
+            profile = overlay.player.rating_profile
+        except PlayerRatingProfile.DoesNotExist:
+            errors['overlay'] = 'The shared player has a rating profile.'
+            profile = None
+        if profile is not None:
+            for component in PLAYER_COMPONENTS:
+                name = f'current_{component}'
+                if getattr(self, name) > getattr(profile, f'potential_{component}'):
+                    errors[name] = 'A season rating does not exceed shared potential.'
+        previous = _previous(self)
+        if previous is not None:
+            if previous.overlay_id != self.overlay_id or previous.season_id != self.season_id:
+                errors['overlay'] = 'The player and season are fixed.'
+            if season.phase == Timeline.Phase.COMPLETE:
+                for component in PLAYER_COMPONENTS:
+                    name = f'current_{component}'
+                    if getattr(previous, name) != getattr(self, name):
+                        errors[name] = 'A completed season keeps its rating.'
+
+
+for _component in PLAYER_COMPONENTS:
+    PlayerSeasonRating.add_to_class(
+        f'current_{_component}',
+        models.PositiveSmallIntegerField(),
+    )
+
+
+class RosterMembership(TimelineChild):
+    """Club, season, position, and role for a span of weeks.
+
+    ``position`` and ``role`` do not change. A position change, including
+    one that keeps the same club, is a new row. A free agent has a null
+    franchise. Week 0 is the preseason. ``reserve`` is legal from the
+    roster-cut phase onward.
+    """
+
+    class Role(models.TextChoices):
+        STARTER = 'starter', 'starter'
+        BACKUP = 'backup', 'backup'
+        TAXI = 'taxi', 'taxi'
+        RESERVE = 'reserve', 'reserve'
+        FREE_AGENT = 'free_agent', 'free_agent'
+
+    class Availability(models.TextChoices):
+        AVAILABLE = 'available', 'available'
+        UNAVAILABLE = 'unavailable', 'unavailable'
+
+    overlay = models.ForeignKey(
+        TimelinePlayer,
+        on_delete=models.CASCADE,
+        related_name='roster_memberships',
+    )
+    season = models.ForeignKey(
+        TimelineSeason,
+        on_delete=models.CASCADE,
+        related_name='roster_memberships',
+    )
+    franchise = models.ForeignKey(
+        'universe.UniverseFranchise',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='timeline_roster_memberships',
+    )
+    position = models.CharField(max_length=4, choices=_choices(POSITIONS))
+    role = models.CharField(max_length=16, choices=Role.choices)
+    availability = models.CharField(max_length=16, choices=Availability.choices)
+    start_week = models.PositiveSmallIntegerField()
+    end_week = models.PositiveSmallIntegerField(null=True, blank=True)
+    reason_ended = models.CharField(
+        max_length=16,
+        choices=_choices(ROSTER_CLOSE_REASONS),
+        null=True,
+        blank=True,
+    )
+    open_overlay_key = models.GeneratedField(
+        expression=models.Case(
+            models.When(
+                end_week__isnull=True,
+                then=models.F('overlay_id'),
+            ),
+            default=models.Value(None),
+            output_field=models.BigIntegerField(null=True),
+        ),
+        output_field=models.BigIntegerField(null=True),
+        db_persist=True,
+    )
+
+    class Meta:
+        ordering = ['overlay', 'season', 'start_week']
+        indexes = [
+            models.Index(fields=['franchise', 'season'], name='tl_rmem_club_idx'),
+            models.Index(fields=['overlay', 'season'], name='tl_rmem_player_idx'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['open_overlay_key'],
+                name='unique_tl_open_roster',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(position__in=POSITIONS),
+                name='tl_membership_position',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(role__in=ROSTER_ROLES),
+                name='tl_membership_role',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(availability__in=ROSTER_AVAILABILITY),
+                name='tl_membership_availability',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(start_week__gte=0),
+                name='tl_membership_start_week',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(end_week__isnull=True, reason_ended__isnull=True)
+                    | models.Q(
+                        end_week__isnull=False,
+                        end_week__gte=models.F('start_week'),
+                        reason_ended__in=ROSTER_CLOSE_REASONS,
+                    )
+                ),
+                name='tl_membership_close',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(role='free_agent', franchise__isnull=True)
+                    | (
+                        ~models.Q(role='free_agent')
+                        & models.Q(franchise__isnull=False)
+                    )
+                ),
+                name='tl_membership_free_agent_franchise',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.overlay_id} {self.season_id} {self.role}'
+
+    def bound_timeline(self):
+        if not self.overlay_id:
+            return None
+        return self.overlay.timeline
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        _note_deferred(self.overlay_id)
+
+    def extra_clean(self, errors):
+        if not self.overlay_id or not self.season_id:
+            return
+        overlay = self.overlay
+        season = self.season
+        timeline = overlay.timeline
+        if overlay.timeline_id != season.timeline_id:
+            errors['season'] = 'The season belongs to the player\'s timeline.'
+        if overlay.retired_year is not None and season.season_year > overlay.retired_year:
+            errors['season'] = (
+                'A retired player has no membership after the retirement season.'
+            )
+        if not self.pk and season.phase == Timeline.Phase.COMPLETE:
+            errors['season'] = 'A completed season does not gain a roster membership.'
+        if self.role == self.Role.RESERVE and season.phase in RESERVE_BLOCKED_PHASES:
+            errors['role'] = 'Reserve is legal from the roster-cut phase onward.'
+        player = overlay.player
+        allowed = {player.position}
+        if player.secondary_position_1:
+            allowed.add(player.secondary_position_1)
+        if player.secondary_position_2:
+            allowed.add(player.secondary_position_2)
+        if self.position not in allowed:
+            errors['position'] = (
+                'The roster position is the player\'s primary position or a listed secondary.'
+            )
+        if self.franchise_id:
+            if self.franchise.release_id != timeline.release_id:
+                errors['franchise'] = 'The franchise belongs to this timeline\'s release.'
+            else:
+                from universe.models import FranchiseSeasonMembership
+                active = FranchiseSeasonMembership.objects.filter(
+                    franchise_id=self.franchise_id,
+                    season_year=season.season_year,
+                ).exists()
+                if not active:
+                    errors['franchise'] = 'The franchise is active in this season.'
+        if (self.end_week is None) != (self.reason_ended is None):
+            errors['reason_ended'] = (
+                'A roster membership closes with a week and a reason together.'
+            )
+        elif self.end_week is not None and self.end_week < self.start_week:
+            errors['end_week'] = 'The membership ends on or after the week it starts.'
+        others = RosterMembership.objects.filter(
+            overlay_id=self.overlay_id,
+            season_id=self.season_id,
+        )
+        if self.pk:
+            others = others.exclude(pk=self.pk)
+        for other in others:
+            if _weeks_conflict(
+                self.start_week,
+                self.end_week,
+                other.start_week,
+                other.end_week,
+            ):
+                errors['start_week'] = (
+                    'Roster weeks for one player in a season do not overlap.'
+                )
+                break
+        previous = _previous(self)
+        if previous is not None:
+            fixed = (
+                'overlay_id',
+                'season_id',
+                'franchise_id',
+                'position',
+                'role',
+                'start_week',
+            )
+            for name in fixed:
+                if getattr(previous, name) != getattr(self, name):
+                    errors[name] = 'This roster fact is fixed.'
+            if previous.end_week is not None and (
+                previous.end_week != self.end_week
+                or previous.reason_ended != self.reason_ended
+            ):
+                errors['end_week'] = 'A closed roster membership stays closed.'
+            if season.phase == Timeline.Phase.COMPLETE and (
+                previous.availability != self.availability
+            ):
+                errors['availability'] = 'A completed season keeps availability.'
+        if not _deferring():
+            rows = list(overlay.roster_memberships.select_related('season'))
+            if self.pk:
+                rows = [row for row in rows if row.pk != self.pk]
+            rows.append(self)
+            _check_lifecycle(overlay, rows, errors, field='role')
+
+
+class DevelopmentEvent(TimelineChild):
+    """One immutable component change inside a season.
+
+    The season rating row is the value a reader uses. These rows explain
+    the path. The model does not apply the delta.
+    """
+
+    overlay = models.ForeignKey(
+        TimelinePlayer,
+        on_delete=models.CASCADE,
+        related_name='development_events',
+    )
+    season = models.ForeignKey(
+        TimelineSeason,
+        on_delete=models.CASCADE,
+        related_name='development_events',
+    )
+    component = models.CharField(max_length=32, choices=_choices(PLAYER_COMPONENTS))
+    delta = models.SmallIntegerField()
+    reason = models.CharField(max_length=16, choices=_choices(DEVELOPMENT_REASONS))
+    event_index = models.PositiveIntegerField()
+
+    class Meta:
+        ordering = ['overlay', 'season', 'component', 'event_index']
+        indexes = [
+            models.Index(fields=['overlay', 'season'], name='tl_dev_season_idx'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['overlay', 'season', 'component', 'event_index'],
+                name='unique_tl_development',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(component__in=PLAYER_COMPONENTS),
+                name='tl_dev_component',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(delta__gte=-20, delta__lte=20),
+                name='tl_dev_delta',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(reason__in=DEVELOPMENT_REASONS),
+                name='tl_dev_reason',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(event_index__gte=1),
+                name='tl_dev_index',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.overlay_id} {self.component} {self.event_index}'
+
+    def bound_timeline(self):
+        if not self.overlay_id:
+            return None
+        return self.overlay.timeline
+
+    def extra_clean(self, errors):
+        if not self.overlay_id or not self.season_id:
+            return
+        overlay = self.overlay
+        season = self.season
+        if overlay.timeline_id != season.timeline_id:
+            errors['season'] = 'The season belongs to the player\'s timeline.'
+        if overlay.retired_year is not None and season.season_year > overlay.retired_year:
+            errors['season'] = (
+                'A retired player has no development after the retirement season.'
+            )
+        if not self.pk and season.phase == Timeline.Phase.COMPLETE:
+            errors['season'] = 'A completed season does not gain a development event.'
+        previous = _previous(self)
+        if previous is not None and _changed(previous, self, _stored_names(self)):
+            errors['event_index'] = 'A development event is written once.'
