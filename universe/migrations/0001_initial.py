@@ -79,7 +79,7 @@ class Migration(migrations.Migration):
                 ('conference_slug', models.CharField(max_length=32)),
                 ('division_slug', models.CharField(max_length=32)),
                 ('slot_order', models.PositiveSmallIntegerField()),
-                ('owner_selectable', models.BooleanField(default=True)),
+                ('owner_selectable', models.BooleanField(default=True, help_text='Whether a human owner may control this franchise during this season. This is not eligibility to start a new timeline. False marks a future bot-only season; none are scheduled.')),
                 ('franchise', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='memberships', to='universe.universefranchise')),
             ],
             options={

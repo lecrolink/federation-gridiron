@@ -646,7 +646,7 @@ Publication of the confirmed release still requires 24 founding franchises, play
 
 `origin` is stored on the franchise. It is not inferred when the franchise is displayed. A founding franchise begins in the release's first playable season. An expansion franchise begins in a later season. The confirmed release therefore marks the 1970 clubs `founding` and the 1976 and 1996 clubs `expansion`.
 
-`owner_selectable` is stored on each membership row, because a human owner may be allowed to control a franchise in one season and not in another. The column defaults to true when a row is saved without the flag. The confirmed release sets it true for each founding club in 1970, true for an expansion club only in that club's first season, and false on every other membership.
+`owner_selectable` means a human owner is permitted to control this franchise during this season. It does not mean a new timeline may begin with this franchise during this season. The column defaults to true. On the confirmed release every active franchise has `owner_selectable` true in every active season, so a human who owns a founding franchise keeps controlling it after 1970, and a human who takes an expansion franchise keeps controlling it after the expansion year. False is reserved for a future explicit rule that makes one franchise bot-only during one season. No such season is scheduled.
 
 Model `clean()`, `save()`, and instance `delete()` refuse edits to a published release. Those are application guards. Queryset updates, bulk writes, and direct SQL can bypass them. A generator may use bulk operations only while the release is still `draft`. Published rows are changed only through an approved service. Application code must not call queryset `update` or `bulk_update` on published release data. Future admin tools are read-only for a published release. The release fingerprints are how a later check confirms the stored rows still match what was published. Database constraints enforce the single-table rules they can express, such as unique keys, positive counts, and season arithmetic. This design adds no database triggers.
 
@@ -676,9 +676,9 @@ One shared row per franchise per season in which it exists. This is the alignmen
 | `conference_slug` | Shared | slug | nonempty conference slug for that season; `conference-1` or `conference-2` in the confirmed release | Schedule author | Both |
 | `division_slug` | Shared | slug | nonempty division slug for that season; `d1`–`d4` as the confirmed alignment requires | Schedule author | Both |
 | `slot_order` | Shared | smallint | positive; 1–4 or 1–7 in the confirmed alignment tables | Schedule author, from the alignment tables | Both |
-| `owner_selectable` | Shared | bool | whether a human owner may control this club in this season; column default true | Schedule author | Both |
+| `owner_selectable` | Shared | bool | a human may control this franchise during this season; true for every active season in the confirmed release; not a timeline-start flag; column default true | Schedule author | Both |
 
-Founding clubs are owner-selectable in 1970. Each expansion club is owner-selectable only in its first season, which is when an existing owner may apply for it. Every other membership row sets the flag false. Realignment is a new membership row for the later season, using the alignment tables above. A timeline does not recompute conference, division, or `slot_order` from standings.
+Every active franchise on the confirmed release has `owner_selectable` true in every season it is active. False would mark that franchise as bot-only for that season, and no such row is scheduled. Realignment is a new membership row for the later season, using the alignment tables above. A timeline does not recompute conference, division, `slot_order`, or `owner_selectable` from standings. Eligibility to start a new timeline in 1970, 1976, or 1996 is not read from this flag. A later-start mode, if one is approved, keeps its rules in timeline-start configuration in a later phase. Phase 1 does not add that configuration.
 
 ### History events
 
@@ -827,7 +827,7 @@ A normal timeline still begins in 1970 on a founding franchise. In the 1976 offs
 
 1. **Stay or apply.** The owner keeps the current franchise, or applies for one expansion franchise. Applying is the only pursuit action. There is no separate purchase price in this design.
 2. **If the owner stays,** they name up to three position groups to protect. The GM files the list, keeps the only quarterback, kicker, and punter when the club has just one, and exposes at least 3 players in 1976 or 4 in 1996. Involved mode can pin five names. The GM fills the rest.
-3. **If the owner is awarded an expansion franchise,** `owned_franchise` changes. The former franchise becomes bot-controlled, with its current GM, coach, and roster. The new franchise starts with no players and no staff.
+3. **If the owner is awarded an expansion franchise,** `owned_franchise` changes. The former franchise becomes bot-controlled in that timeline, with its current GM, coach, and roster. The new franchise starts with no players and no staff. This ownership change does not alter the shared membership row and does not set `owner_selectable` false. The human who takes the expansion franchise may keep controlling it in later seasons, because those shared rows stay selectable.
 4. **Building the new franchise.** The owner sets up to three position groups to chase, and compete or accumulate. The GM and head coach, once hired, run the expansion draft, the rookie draft, and the reserved undrafted fill. Free agency is optional. The head coach then sets the depth chart.
 
 The new club's players, GM, and head coach are people who already exist on the release. The expansion draft only chooses among veterans already in that timeline. The rookie class that year is the shared class sized with `N(1976) = 28` or `N(1996) = 32`.
@@ -840,7 +840,7 @@ The new club's players, GM, and head coach are people who already exist on the r
 | Several human owners want the same expansion club | A fair selection among the applicants. The recommended draw is HMAC-SHA256 of the universe seed, the year, the franchise slug, and the sorted applicant ids. It is reproducible. It is not first-click, and it is not an unrepeatable random call. Each human can be awarded at most one expansion club. Leftover clubs are bot-run. The choice of this method still needs approval. |
 | Owner does not apply | They remain with the current franchise. Bots run every expansion club. |
 
-Whether a separate game mode may start a timeline already in 1976 or 1996, skipping 1970, remains unresolved. The default mode does not.
+Whether a separate game mode may start a timeline already in 1976 or 1996, skipping 1970, remains unresolved. The normal game begins in 1970. That later-start question is not answered by `owner_selectable`. If such a mode is implemented, its rules belong in timeline-start configuration or another later-phase structure. Phase 1 does not add that configuration.
 
 ---
 
@@ -1411,15 +1411,15 @@ GM rows leave coach fields null, and the reverse. The UI shows the current direc
 |-------|-------|------|---------------|--------|-----|
 | `owner` | Timeline | FK | `settings.AUTH_USER_MODEL` | Owner | Display |
 | `release` | Timeline | FK | published release, `PROTECT` | Owner | Both |
-| `owned_franchise` | Timeline | FK | a franchise the release marks owner-selectable for this timeline's start; in 1970 that is one of the 24 founding clubs | Owner | Both |
+| `owned_franchise` | Timeline | FK | the franchise this timeline controls. A normal 1970 start is one of the 24 founding clubs. Which year a new timeline may start is not `owner_selectable`. | Owner | Both |
 | `name` | Timeline | string | ≤ 255 | Owner | Display |
 | `season_index` | Timeline | smallint | 1–60 | Timeline sim | Both |
 | `season_year` | Timeline | smallint | 1970–2029, equals `1969 + season_index` | Derived | Both |
 | `phase` | Timeline | enum | see opening sequence | Timeline sim | Both |
 | `decision_fingerprint` | Timeline | string, optional | Audit hash of owner decisions. It is not an input to random draws. | Derived | Display |
-| `start_season_year` | Timeline | smallint | `1970`, `1976`, or `1996`. The only supported value until a product decision says otherwise is `1970`. | Owner, default 1970 | Both |
+| `start_season_year` | Timeline | smallint | The normal game begins in 1970. A start in 1976 or 1996 is a later product decision and is not inferred from `owner_selectable`. | Owner, default 1970 | Both |
 
-`start_season_year` is stored so a later mode can begin in an expansion year without a new table. This document does not define that mode's skipped seasons. A normal timeline uses 1970.
+The normal game begins in 1970. Whether a later mode may begin in 1976 or 1996 remains unresolved. If that mode is implemented, store its rules in timeline-start configuration or another later-phase structure. Do not infer them from `owner_selectable`. This document does not define the skipped seasons, and Phase 1 does not add that configuration.
 
 #### Expansion choice
 
@@ -1914,7 +1914,7 @@ Coach posts before the debut use the GM post shape with `role` in `head_coach`, 
 | `ended_by` on shared posts, and `promoted` on timeline stints | Firings and promotions need a recorded ending. |
 | `TimelineScoutReport` and `TimelineScoutComponent` | Original ratings, current ratings, and the owner's estimate are three different facts. |
 | `slot_order` and the explicit 24-, 28-, and 32-team assignments | Realignment has to be identical in every timeline without inventing cities. |
-| `Timeline.start_season_year` | A later mode that starts in 1976 or 1996 must not need a new table. The only supported value until that product decision is 1970. |
+| `Timeline.start_season_year` | The normal game begins in 1970. A later-start mode, if approved, keeps its rules in later-phase timeline-start configuration. It is not `owner_selectable`. |
 | `TimelineExpansionChoice` | The owner's stay-or-apply decision, protect list, and priorities. |
 
 ### What this audit removed, combined, or renamed
@@ -2114,7 +2114,7 @@ The playable horizon is 60 seasons, 1970 through 2029 inclusive.
 | College count | About 48–80 schools, four seasons stored. | Generation choice. |
 | Names, cities, and permanent slugs | Placeholders only. | Not required to describe the model. The catalog link stays empty until a later release names them. |
 | Multi-human expansion award | HMAC fair draw is the candidate. Single-player apply is automatic. | The method is a product choice. The choice row can store it. |
-| A mode that starts in 1976 or 1996 | `start_season_year` exists. Default remains 1970. | Product choice. The column does not define the skipped seasons. |
+| A mode that starts in 1976 or 1996 | Not part of Phase 1. The normal game begins in 1970. | Product choice. Eligibility belongs in later-phase timeline-start configuration, not `owner_selectable`. |
 
 ### Not a reason to add a second staff table
 
