@@ -2,7 +2,7 @@
 
 This document specifies the shared fictional people of Federation Gridiron and the per-timeline state that diverges from them.
 
-This revision replaces the earlier draft of this file. That draft assumed 32 franchises, a first draft in 1971, classes generated through 2049, and 28,384 universe player rows. Those figures are obsolete. The playable timeline is **60 seasons, 1970 through 2029 inclusive**. The league has 24 franchises in 1970, 28 from 1976 through 1995, and 32 from 1996 through 2029. That schedule is shared. Totals that still depend on roster size or draft-round defaults are marked as such in [Population and row counts](#population-and-row-counts). The retired 32-team, through-2049 arithmetic stays under [Obsolete 32-team estimate](#obsolete-32-team-estimate).
+This revision replaces the earlier draft of this file. That draft assumed 32 franchises, a first draft in 1971, classes generated through 2049, and 28,384 universe player rows. Those figures are obsolete. The playable timeline is **60 seasons, 1970 through 2029 inclusive**. The league has 26 franchises in 1970–1975, 28 in 1976–1994, 30 in 1995–1998, 31 in 1999–2001, and 32 in 2002–2029. That schedule is shared. Totals that still depend on roster size or draft-round defaults are marked as such in [Population and row counts](#population-and-row-counts). The retired 32-team, through-2049 arithmetic stays under [Obsolete 32-team estimate](#obsolete-32-team-estimate).
 
 It is a design proposal. It does not add Django models, migrations, services, settings, admin screens, or rows in a database.
 
@@ -24,7 +24,7 @@ The repository today is a Django 5.2 project (`requirements.txt`) with one domai
 
 `leagues/services/league_generator.py` still upserts **2 conferences, 8 divisions, and 32 teams** (`CONFERENCE_COUNT`, `DIVISION_COUNT`, `TEAM_COUNT`). That generator is the code on `main`. It is not the product shape this design uses.
 
-The confirmed schedule is 24 franchises for 1970–1975, 28 for 1976–1995, and 32 for 1996–2029. Names, cities, and permanent slugs are not chosen. The release uses placeholders until they are. This document does not change the generator and does not hard-code 24 as the size of every season.
+The confirmed schedule is 26 franchises for 1970–1975, 28 for 1976–1994, 30 for 1995–1998, 31 for 1999–2001, and 32 for 2002–2029. Names, cities, and permanent slugs are not chosen. The release uses placeholders until they are. This document does not change code. `fg-founding-1` remains the shipped 24-club founding generator. A later generator version writes the 26-club founding catalog, the 1970 memberships, and the 26 opening seats. This document does not hard-code 26 as the size of every season.
 
 A franchise identity is shared by every timeline on a release. The current `Team` row can store only one conference and one division, so it cannot by itself represent expansion, realignment, or a last active season. Those facts belong on the shared franchise records below. Timeline code does not create franchises and does not write `Team.league`, `Team.conference`, or `Team.division`.
 
@@ -58,7 +58,7 @@ Two future apps carry this, and neither is created here:
 
 | Requirement | Where it lives |
 |-------------|----------------|
-| The game starts in 1970 with 24 franchises; 4 clubs enter in 1976 (28) and 4 enter in 1996 (32) | Shared expansion schedule. `N(1970–1975) = 24`, `N(1976–1995) = 28`, `N(1996–2029) = 32`. |
+| The game starts in 1970 with 26 franchises; 2 clubs enter in 1976 (28), 2 enter in 1995 (30), 1 enters in 1999 (31), and 1 enters in 2002 (32) | Shared expansion schedule. `N(1970–1975) = 26`, `N(1976–1994) = 28`, `N(1995–1998) = 30`, `N(1999–2001) = 31`, `N(2002–2029) = 32`. |
 | The owner picks a franchise, keeps or replaces its GM and head coach, runs the 1970 rookie draft, sets a few broad instructions, then the season simulates | Timeline opening sequence. Shared data is read; the decisions are timeline rows. |
 | A playthrough lasts 60 seasons, labeled 1970 through 2029 | [Year labels](#year-labels-and-the-60-season-horizon). |
 | 100 initial GMs and 100 initial head coaches, each distinct | Shared staff cohort, with strengths, weaknesses, traits, and pre-1970 histories. |
@@ -76,13 +76,13 @@ Two future apps carry this, and neither is created here:
 |------|---------|
 | **Universe release** | One immutable publication of the shared people, the 1970 league snapshot, the draft classes, and the expansion schedule. |
 | **Timeline** | One owner's 60-season playthrough. The isolation boundary. Not a `leagues.League` row. |
-| **Opening cohort** | Professionals already in the league before the 1970 rookie draft: the 24 founding rosters plus that year's free-agent pool. They are not members of the 1970 draft class. |
+| **Opening cohort** | Professionals already in the league before the 1970 rookie draft: the 26 founding rosters plus that year's free-agent pool. They are not members of the 1970 draft class. |
 | **1970 rookie class** | The shared draft class used before the first season. |
 | **Archive cohort** | Fictional players who appear in 1960–1969 league history and are gone before the 1970 draft. Shared, so the record book is the same in every timeline. They do not play in 1970. |
 | **Initial staff** | 100 GMs and 100 head coaches available at the 1970 decision point. |
 | **Incoming staff class** | Shared GM and head-coach candidates who become hireable in a later offseason. Same identities in every timeline. |
-| **`N(year)`** | Active franchises that season. 24 for 1970–1975, 28 for 1976–1995, 32 for 1996–2029. |
-| **Founding franchise** | One of the 24 clubs whose first active season is 1970. |
+| **`N(year)`** | Active franchises that season. 26 for 1970–1975, 28 for 1976–1994, 30 for 1995–1998, 31 for 1999–2001, and 32 for 2002–2029. |
+| **Founding franchise** | One of the 26 clubs whose first active season is 1970. |
 | **Expansion franchise** | A shared club whose first active season is later than 1970. The release names it before any timeline reaches that season. |
 
 An owner may have more than one timeline. Timelines do not share mutable rows.
@@ -108,7 +108,7 @@ The draft class year equals the season year that follows the draft. The first ac
 
 **The playable timeline is 60 seasons: 1970 through 2029 inclusive. The final playable season is 2029.**
 
-2030 would be `season_index` 61 (`2030 − 1970 + 1 = 61`). It is not a playable season. Class size for each of the 60 years is `rounds(year) × N(year)` plus that year's undrafted pool. `N(year)` comes from the shared schedule, so the 60 classes stay identical across timelines even when some years have more than 24 teams.
+2030 would be `season_index` 61 (`2030 − 1970 + 1 = 61`). It is not a playable season. Class size for each of the 60 years is `rounds(year) × N(year)` plus that year's undrafted pool. `N(year)` comes from the shared schedule, so the 60 classes stay identical across timelines even when some years have more than 26 teams.
 
 Pre-1970 history for the confirmed release uses years **1960–1969**, the ten seasons immediately before 1970. Those years are outside the 60. Timeline stat tables for that release use `season_year` 1970–2029. A historical standing is validated as one of the ten seasons before its release's first playable season, so the 1970 release still stores 1960–1969, and draft order is allowed only in 1969. The table does not hardcode those calendar years.
 
@@ -120,7 +120,7 @@ The football clock is this integer year plus a phase. `TIME_ZONE` does not defin
 
 A new timeline is pinned to a published release and starts **before** the 1970 season, with the shared 1969 world still intact.
 
-1. **Choose a franchise.** One of the 24 founding clubs. Stored as an open `TimelineFranchiseControl` for the timeline's one human participant. The other franchises are bots and have no participant row. A normal timeline starts in the release's first season, 1970 for the confirmed release. In 1976 and 1996 the owner may stay or apply for an expansion club, as described in [Owner access to expansion](#owner-access-to-expansion). A later multiplayer timeline can add participants. Phase 4 does not add invitations or a commissioner.
+1. **Choose a franchise.** One of the 26 founding clubs. Stored as an open `TimelineFranchiseControl` for the timeline's one human participant. The other franchises are bots and have no participant row. A normal timeline starts in the release's first season, 1970 for the confirmed release. In 1976, 1995, 1999, and 2002 the owner may stay or apply for an expansion club, as described in [Owner access to expansion](#owner-access-to-expansion). A later multiplayer timeline can add participants. Phase 4 does not add invitations or a commissioner.
 2. **Keep or replace the GM, then the head coach.** The shared snapshot already employs one of each on every founding franchise. The other 76 in each role are the only legal opening hires. The default is to keep both. Replacing writes timeline staff stints only.
 3. **Set team direction, retention priorities, and trade preference.** These are the broad instructions in [Owner experience](#owner-experience). They replace a screen full of separate toggles.
 4. **Rookie draft.** Materialize the shared 1970 class. Draft order comes from the shared 1969 standings, worst record first. The owner may make the owned club's picks or hand the draft to the GM. AI GMs draft for the other clubs from their shared tendencies. Picks are timeline rows. The class list is not modified.
@@ -175,7 +175,7 @@ A normal offseason is seven decisions. Each one has a default. The GM and head c
 1. **GM.** Keep, or replace from the eligible pool. Default: keep.
 2. **Head coach.** Keep, or replace. Default: keep. Coordinator hiring stays with them.
 3. **Team direction.** One of compete, balanced, or rebuild. That single choice sets veteran preference, free-agency posture, and playing-time preference together.
-4. **Retention or protection.** Up to three position groups to prioritize. In 1976 and 1996 this is also where a staying owner states what to protect, and an expansion owner states what to chase. The GM names the players.
+4. **Retention or protection.** Up to three position groups to prioritize. In 1976, 1995, 1999, and 2002 this is also where a staying owner states what to protect, and an expansion owner states what to chase. The GM names the players.
 5. **Trade preference.** Low, medium, or high. Future picks move only as far as that year's `future_pick_years` allows. The owner does not pick the partner or the contract.
 6. **Rookie draft.** The owner makes the club's picks, or hands the draft to the GM. The default is to hand it over. The owner can take the draft back for one round.
 7. **Final instructions.** Offensive emphasis, defensive emphasis, and fourth-down tendency. Then the season simulates.
@@ -211,10 +211,10 @@ An optional involved mode, off by default, lets the owner pin up to five named p
 | `generator_version` | Algorithm id. Example: `fg-player-gen-2`. |
 | `seed` | Integer stored on the release row. Not a Django setting. |
 | `root_league` | FK to the tier-1 `League`. `on_delete=PROTECT`. |
-| `founding_franchise_count` | 24. This is the 1970 size, not the size of later seasons. |
+| `founding_franchise_count` | 26 for the confirmed release. This is the 1970 size, not the size of later seasons. `fg-founding-1` still stores 24 on the draft release it writes. |
 | `expansion_schedule_version` | Integer on the release. Filling in expansion years, clubs, or rules bumps the version. A published release does not change its schedule in place. |
 | `catalog_fingerprint` | SHA-256 of the franchise list (slug, first season, last season) plus each season's conference and division membership plus each expansion event. A timeline stays bound to that fingerprint. |
-| `validation_fingerprint` | SHA-256 of the publication checks: quota sums, the expansion active-roster arithmetic, staff-signature uniqueness, and the population totals this release claims. The expansion check uses the shared veteran, rookie, and undrafted pools only. It does not count timeline free agents. Publish is refused when any check fails. Taxi capacity is not part of the expansion minimum. An expansion year may use an undrafted multiplier other than 2. |
+| `validation_fingerprint` | SHA-256 of the publication checks: quota sums, the expansion active-roster arithmetic, staff-signature uniqueness, and the population totals this release claims. The expansion check uses the shared veteran, rookie, and undrafted pools only. It does not count timeline free agents. Publish is refused when any check fails. Taxi capacity is not part of the expansion minimum. An expansion year may use an undrafted multiplier other than 2. This release uses 2 in every year. |
 | `first_season_year` | 1970. |
 | `season_count` | 60. |
 | `last_season_year` | 2029. |
@@ -277,7 +277,7 @@ Player movement uses three markets. Roster size and schedule length still change
 | Salary cap | Off. | Off. | On. The amount is not set in this document. | The on/off switch is the working design. The amount needs approval. |
 | Minimum salary | A ledger-unit floor. The number is not set. | Same | Once a cap exists, the recommended shape is a small percent of that cap. The percent is not set. | Needs approval. |
 | Franchise tag | Not used. | Not used. | One per club. Recommended salary: the average of the five highest charges at that position from the prior season. | The formula needs approval. It does not set the cap. |
-| Playoff field | 1970–1975: 8 teams, 3 division winners and 1 wild card per conference. 1976–1986: 8 teams, 2 division winners and 2 wild cards per conference. | 8 teams, 2 division winners and 2 wild cards per conference. | 1995: still 8 teams, because the league has 28 clubs. 1996–2029: 12 teams, 4 division winners and 2 wild cards per conference. Top two seeds get a bye. | Needs approval. |
+| Playoff field | 1970–1975: 8 teams, 3 division winners and 1 wild card per conference. 1976–1994: 8 teams, 2 division winners and 2 wild cards per conference. | 1976–1994 continues: 8 teams, 2 division winners and 2 wild cards per conference. | 1995–1998: 8 teams, 3 division winners and 1 wild card per conference. From 1999: 12 teams, 6 per conference, every division winner, wild cards fill that conference to 6, top two seeds bye. Conference-1 is 4 winners and 2 wild cards from 1999 on. Conference-2 is 3 winners and 3 wild cards in 1999–2001, then 4 winners and 2 wild cards from 2002. | Confirmed with the alignment. Order among division winners, and among wild cards, is still open. |
 | Schedule length | 14 games through 1977, then 16. | 16 | 16 through 2020, then 17. | Working design |
 | Overtime | 1970–1973: regular season may end tied. 1974–1986: one 15-minute sudden-death period, then a tie. Playoffs continue until there is a winner. | Sudden death, same as 1974. | 1995–2011: sudden death. 2012–2029: each team may possess the ball once unless the first team scores a touchdown. One period in the regular season. Playoffs continue. | The 1974 and 2012 changes need approval. |
 | Statistics | Sacks are recorded in every year. Leaderboards treat them as unofficial through 1986. | Sacks are an official statistic. | Same | Working design |
@@ -316,7 +316,7 @@ Before 1995 the cap is off, so units are a negotiation scale only. From 1995 the
 | `cap_limit` | Null while the cap is off, and null until approved while the cap is on. |
 | `minimum_salary` | Ledger units. Null until approved. |
 | `franchise_tag` | `off`, or `top_five_position_average`. |
-| `playoff_format` | `eight_team_3_and_1`, `eight_team_2_and_2`, or `twelve_team_4_and_2`. |
+| `playoff_format` | `eight_team_3_and_1`, `eight_team_2_and_2`, `twelve_team_fill_to_six`, or `twelve_team_4_and_2`. `twelve_team_fill_to_six` is 12 teams and 6 per conference: every division winner qualifies, and wild cards fill that conference to 6. In 1999–2001 that is 4 and 2 in conference-1 and 3 and 3 in conference-2. `twelve_team_4_and_2` is the same 12-team bracket once both conferences have four divisions. |
 | `schedule_length` | Regular-season games each franchise plays, such as 14, 16, or 17. This is not the highest calendar week. A 17-game season can span 18 weeks when one of them is a bye. |
 | `overtime_rule` | `tie`, `sudden_death`, or `both_teams_possess`. |
 | `sack_leaderboard` | `unofficial` or `official`. |
@@ -332,12 +332,15 @@ These rows are the working calendar. Market rules change on the boundaries in th
 | `y1976` | 1976–1977 | controlled | 40 | 8 | 17 | 14 | 8, two winners and two wild cards | Sudden death | Off |
 | `y1978` | 1978–1986 | controlled | 45 | 8 | 12 | 16 | 8, two winners and two wild cards | Sudden death | Off |
 | `y1987` | 1987–1994 | transitional | 47 | 8 | 8 | 16 | 8, two winners and two wild cards | Sudden death | Off |
-| `y1995` | 1995 | modern | 53 | 8 | 7 | 16 | 8, two winners and two wild cards | Sudden death | On, amount unset |
-| `y1996` | 1996–2011 | modern | 53 | 8 | 7 | 16 | 12, four winners and two wild cards | Sudden death | On, amount unset |
-| `y2012` | 2012–2020 | modern | 53 | 8 | 7 | 16 | 12 | Both teams may possess | On, amount unset |
-| `y2021` | 2021–2029 | modern | 53 | 8 | 7 | 17 | 12 | Both teams may possess | On, amount unset |
+| `y1995` | 1995–1998 | modern | 53 | 8 | 7 | 16 | 8, three winners and one wild card | Sudden death | On, amount unset |
+| `y1999` | 1999–2001 | modern | 53 | 8 | 7 | 16 | 12, fill to six; conference-2 is 3 winners and 3 wild cards | Sudden death | On, amount unset |
+| `y2002` | 2002–2011 | modern | 53 | 8 | 7 | 16 | 12, four winners and two wild cards | Sudden death | On, amount unset |
+| `y2012` | 2012–2020 | modern | 53 | 8 | 7 | 16 | 12, four winners and two wild cards | Both teams may possess | On, amount unset |
+| `y2021` | 2021–2029 | modern | 53 | 8 | 7 | 17 | 12, four winners and two wild cards | Both teams may possess | On, amount unset |
 
 Style keys on those rows: `run-first` for 1970–1977, `passing-rules` for 1978–1986, `timing-specialists` for 1987–1994, `cap-and-size` for 1995–2003, `spread-influence` for 2004–2013, and `modern-passing` for 2014–2029. A season with more franchises uses the same per-team quota and the same round count, multiplied by `N(year)`.
+
+From 1999 through 2029 the postseason is 12 teams, 6 from each conference. Every division winner qualifies, and wild cards fill that conference to 6. Division winners take the seeds ahead of wild cards. The top two seeds in each conference bye, so the first round is seed 3 against seed 6 and seed 4 against seed 5. In 1999–2001 conference-1 has four divisions, so it sends 4 winners and 2 wild cards. Conference-2 has three divisions, so it sends 3 winners and 3 wild cards. In 2002 conference-2 gains its fourth division. Its qualifier changes from 3 winners and 3 wild cards to 4 winners and 2 wild cards. Conference-1 is already on that mix. The field size, the byes, and the first-round pairings stay. Order among the division winners, and order among the wild cards, is not chosen here. 1995–1998 have three divisions in each conference, so they use the 8-team field of 3 winners and 1 wild card. 1976–1994 keep 2 winners and 2 wild cards. 1970–1975 keep 3 winners and 1 wild card.
 
 ### Positions
 
@@ -464,19 +467,19 @@ Shared rows store `initial` and `potential` for each component. Timeline rows st
 Opening cohort, before the draft:
 
 ```text
-N(1970) = 24
-rostered = N(1970) × (40 + 8) = 1,152
-free agents = 5 × N(1970) = 120
-opening cohort = 1,272
+N(1970) = 26
+rostered = N(1970) × (40 + 8) = 1,248
+free agents = 5 × N(1970) = 130
+opening cohort = 1,378
 ```
 
-That 1970 arithmetic is fixed, because the league starts with 24 clubs. It is not reused as `N(year)` for 1971–2029.
+That 1970 arithmetic is fixed, because the league starts with 26 clubs. It is not reused as `N(year)` for 1971–2029.
 
 Every opening player has at least one prior pro season. Age is drawn first (starters mostly 24–30, backups 22–32, taxi 21–24, free agents slightly older). `birth_year = 1970 − age` at the 1970 offseason. Rookies born around 1948 are in the draft class, not on these rosters.
 
 `OpeningAssignment`: one per opening player. `team` is null for free agents. `position` is stored on the assignment and must match the player. `depth` is the depth-chart index for that position on that team, starting at 1, across starter, backup, and taxi. Unique `(release, team, position, depth)`. MySQL unique indexes treat NULL `team` as distinct per row, so the free-agent pool does not need a partial index.
 
-`OpeningContract`: one shared template per rostered veteran (1,152). Free agents have none. Copied into the timeline at start.
+`OpeningContract`: one shared template per rostered veteran (1,248). Free agents have none. Copied into the timeline at start.
 
 ### 1970–2029 draft classes
 
@@ -488,20 +491,21 @@ undrafted(year) = undrafted_multiplier(year) × N(year)
 class size(year) = draftable(year) + undrafted(year)
 ```
 
-`undrafted_multiplier` is 2 in every year except 1996, when it is 3. That one-year change adds 32 shared prospects. It exists so the 1996 expansion clubs can fill their active rosters from the shared undrafted pool. `N(year)` is the shared schedule, so every timeline on the release receives the same class. Round counts and the multiplier are design defaults. The row counts below are exact only while those defaults hold.
+`undrafted_multiplier` is 2 in every year, including 1976, 1995, 1999, and 2002. The earlier one-year multiplier of 3 is removed. It existed so four 1996 clubs could reserve 80 undrafted prospects when `2 × 32` was 64. None of the reserved counts below exceeds `2 × N(year)`. `N(year)` is the shared schedule, so every timeline on the release receives the same class. Round counts and the multiplier are design defaults. The row counts below are exact only while those defaults hold. Class size is the size of one year. Prospects are that size times the years in the row.
 
 | Years | N | Rounds | Draftable | Undrafted | Class size | Years | Prospects |
 |-------|---|--------|-----------|-----------|------------|-------|-----------|
-| 1970–1975 | 24 | 17 | 2,448 | 288 | 456 | 6 | 2,736 |
+| 1970–1975 | 26 | 17 | 2,652 | 312 | 494 | 6 | 2,964 |
 | 1976–1977 | 28 | 17 | 952 | 112 | 532 | 2 | 1,064 |
 | 1978–1986 | 28 | 12 | 3,024 | 504 | 392 | 9 | 3,528 |
 | 1987–1994 | 28 | 8 | 1,792 | 448 | 280 | 8 | 2,240 |
-| 1995 | 28 | 7 | 196 | 56 | 252 | 1 | 252 |
-| 1996 | 32 | 7 | 224 | 96 | 320 | 1 | 320 |
-| 1997–2003 | 32 | 7 | 1,568 | 448 | 288 | 7 | 2,016 |
+| 1995 | 30 | 7 | 210 | 60 | 270 | 1 | 270 |
+| 1996–1998 | 30 | 7 | 630 | 180 | 270 | 3 | 810 |
+| 1999–2001 | 31 | 7 | 651 | 186 | 279 | 3 | 837 |
+| 2002–2003 | 32 | 7 | 448 | 128 | 288 | 2 | 576 |
 | 2004–2013 | 32 | 7 | 2,240 | 640 | 288 | 10 | 2,880 |
 | 2014–2029 | 32 | 7 | 3,584 | 1,024 | 288 | 16 | 4,608 |
-| **1970–2029** | | | **16,028** | **3,616** | | **60** | **19,644** |
+| **1970–2029** | | | **16,183** | **3,594** | | **60** | **19,777** |
 
 A prospect stores a shared `board_rank` and a pool of `draftable` or `undrafted`. The prospect does not store a destination team. Round, pick, and franchise are timeline facts. True ratings stay on the universe player. Any scout fog is a timeline report, never a column on the shared prospect.
 
@@ -509,19 +513,19 @@ A prospect stores a shared `board_rank` and a pool of `draftable` or `undrafted`
 
 ### Archive cohort (record book only)
 
-Shared pro history covers 1960–1969 at the same 24 × 48 roster:
+Shared pro history covers 1960–1969 at the same 26 × 48 roster:
 
 ```text
-historical roster-seasons = 24 × 48 × 10 = 11,520
+historical roster-seasons = 26 × 48 × 10 = 12,480
 ```
 
-Planning assumption: a mean stay of 5 seasons inside that window, so distinct historical players = `11,520 / 5 = 2,304`. The 1,272 opening players are part of that set. The rest are the archive:
+Planning assumption: a mean stay of 5 seasons inside that window, so distinct historical players = `12,480 / 5 = 2,496`. The 1,378 opening players are part of that set. The rest are the archive:
 
 ```text
-archive ≈ 2,304 − 1,272 = 1,032
+archive ≈ 2,496 − 1,378 = 1,118
 ```
 
-Archive players have universe identities, pre-1970 stats, and awards. They are not on 1970 rosters, not in the free-agent pool, and not placed on timelines as active players. The generator's actual archive count is whatever headcount fills 11,520 lines once the opening cohort is seated in 1969. 1,032 is the planning figure tied to the 5-year mean.
+Archive players have universe identities, pre-1970 stats, and awards. They are not on 1970 rosters, not in the free-agent pool, and not placed on timelines as active players. The generator's actual archive count is whatever headcount fills 12,480 lines once the opening cohort is seated in 1969. 1,118 is the planning figure tied to the 5-year mean. The mean itself is still an assumption.
 
 ### Staff
 
@@ -529,26 +533,26 @@ Archive players have universe identities, pre-1970 stats, and awards. They are n
 
 | | Employed on a 1970 franchise | Unemployed, available to hire |
 |--|------------------------------|-------------------------------|
-| GM | 24 | 76 |
-| Head coach | 24 | 76 |
+| GM | 26 | 74 |
+| Head coach | 26 | 74 |
 
-Each of the 100 in a role has a distinct combination of strength tags, weakness tags, trait tags, and career-history signature. Ages in 1970 run about 32–65. Employed head coaches skew older. The unemployed 76 are head-coach candidates. Some of them held coordinator posts before 1970. They are not the coordinator pool. Coordinators are additional people, specified under [Coordinators](#coordinators).
+Each of the 100 in a role has a distinct combination of strength tags, weakness tags, trait tags, and career-history signature. Ages in 1970 run about 32–65. Employed head coaches skew older. The unemployed 74 are head-coach candidates. Some of them held coordinator posts before 1970. They are not the coordinator pool. Coordinators are additional people, specified under [Coordinators](#coordinators). `fg-founding-1` still seats 24 of each role. The 26 seats belong to the later generator version.
 
-**Incoming GM and head-coach classes, 1971–2029.** `E(1976) = 4`, `E(1996) = 4`, and `E(year) = 0` in every other year. The floor is:
+**Incoming GM and head-coach classes, 1971–2029.** `E(1976) = 2`, `E(1995) = 2`, `E(1999) = 1`, `E(2002) = 1`, and `E(year) = 0` in every other year. The floor is:
 
 ```text
 incoming_hc(year) >= 8 + E(year)
 incoming_gm(year) >= 6 + E(year)
 ```
 
-That is 8 head coaches and 6 GMs in 57 ordinary years, and 12 head coaches and 10 GMs in 1976 and 1996.
+That is 8 head coaches and 6 GMs in the 55 years with no new club. The four expansion years add the new clubs: 10 and 8 in 1976, 10 and 8 in 1995, 9 and 7 in 1999, and 9 and 7 in 2002.
 
 ```text
-future head coaches = 57 × 8 + 2 × 12 = 480
-future GMs = 57 × 6 + 2 × 10 = 362
-all head coaches = 100 + 480 = 580
-all GMs = 100 + 362 = 462
-GM and head-coach identities = 1,042
+future head coaches = 59 × 8 + (2 + 2 + 1 + 1) = 478
+future GMs = 59 × 6 + (2 + 2 + 1 + 1) = 360
+all head coaches = 100 + 478 = 578
+all GMs = 100 + 360 = 460
+GM and head-coach identities = 1,038
 ```
 
 The 8 and 6 are still a staffing assumption. The `E(year)` addend is the minimum so each new club has a shared candidate. Adding more candidates above the floor increases the shared staff count and does not change the franchise schedule.
@@ -559,94 +563,124 @@ Initial staff draw schemes that exist in 1970: `power_run`, `option`, `pro_style
 
 ### Shared 1969 standings
 
-`UniverseFranchiseSeason` for each founding franchise for each year 1960–1969 (24 × 10 = 240 rows). Expansion clubs have no 1960–1969 record. The 1969 wins, losses, and ties set the 1970 draft order. Later draft orders come from that timeline's own standings. Expansion clubs follow the rookie-draft slot rule on their expansion event; that rule changes order only, not the shared class.
+`UniverseFranchiseSeason` for each founding franchise for each year 1960–1969 (26 × 10 = 260 rows). Expansion clubs have no 1960–1969 record. The 1969 wins, losses, and ties set the 1970 draft order. Later draft orders come from that timeline's own standings. Expansion clubs follow the rookie-draft slot rule on their expansion event; that rule changes order only, not the shared class.
 
 ---
 
 ## Expansion
 
-The Federation Gridiron begins with 24 franchises in 1970. Four expansion franchises enter for the 1976 season, and four more enter for the 1996 season. From 1996 through 2029 the league has 32 active franchises unless a later decision explicitly adds a departure, a relocation, or another expansion. No departure is scheduled.
+The Federation Gridiron begins with 26 franchises in 1970. Two expansion franchises enter for 1976, two for 1995, one for 1999, and one for 2002. From 2002 through 2029 the league has 32 active franchises unless a later decision explicitly adds a departure, a relocation, or another expansion. No departure is scheduled.
 
 | Seasons | Active franchises | What changes |
 |---------|-------------------|--------------|
-| 1970–1975 | 24 | Founding league |
-| 1976–1995 | 28 | 4 clubs enter in 1976 |
-| 1996–2029 | 32 | 4 clubs enter in 1996 |
+| 1970–1975 | 26 | Founding league |
+| 1976–1994 | 28 | 2 clubs enter in 1976 |
+| 1995–1998 | 30 | 2 clubs enter in 1995 |
+| 1999–2001 | 31 | 1 club enters in 1999 |
+| 2002–2029 | 32 | 1 club enters in 2002 |
 
-Placeholders, not permanent identities:
+Placeholders, not permanent identities. There is no `expansion-1976-03`, `expansion-1976-04`, or `expansion-1996` slug.
 
 | Placeholder slug | First season | Display name until a real name is chosen |
 |------------------|--------------|------------------------------------------|
-| `founding-01` … `founding-24` | 1970 | Founding franchise 01–24 |
-| `expansion-1976-01` … `expansion-1976-04` | 1976 | 1976 expansion franchise 01–04 |
-| `expansion-1996-01` … `expansion-1996-04` | 1996 | 1996 expansion franchise 01–04 |
+| `founding-01` … `founding-26` | 1970 | Founding franchise 01–26 |
+| `expansion-1976-01`, `expansion-1976-02` | 1976 | 1976 expansion franchise 01–02 |
+| `expansion-1995-01`, `expansion-1995-02` | 1995 | 1995 expansion franchise 01–02 |
+| `expansion-1999-01` | 1999 | 1999 expansion franchise 01 |
+| `expansion-2002-01` | 2002 | 2002 expansion franchise 01 |
 
 City, nickname, and final slug stay empty until chosen. Every timeline on the release uses these same placeholders and the same entry years.
 
 `N(year)` is the number of franchises whose `first_active_season` is less than or equal to `year` and whose `final_active_season` is null or greater than or equal to `year`.
 
 ```text
-N(1970) = 24
+N(1970) = 26
 E(year) = number of franchises with first_active_season = year
 N(year) = N(year - 1) + E(year) − D(year)
 ```
 
-`D(year)` is the number of franchises whose `final_active_season` is `year - 1`. No contraction is scheduled, so `D(year) = 0`. `E(1976) = 4`, `E(1996) = 4`, and `E(year) = 0` otherwise. Franchise-seasons across the 60 years are `6 × 24 + 20 × 28 + 34 × 32 = 1,792`.
+`D(year)` is the number of franchises whose `final_active_season` is `year - 1`. No contraction is scheduled, so `D(year) = 0`. `E(1976) = 2`, `E(1995) = 2`, `E(1999) = 1`, `E(2002) = 1`, and `E(year) = 0` otherwise. Franchise-seasons across the 60 years are `6 × 26 + 19 × 28 + 4 × 30 + 3 × 31 + 28 × 32 = 1,797`.
 
 ### Conference and division alignment
 
-Conferences stay `conference-1` and `conference-2` for the whole timeline. Division slugs change when the league size changes, because 24, 28, and 32 do not share one equal division size. Membership is shared. Timelines do not realign on their own.
+Conferences stay `conference-1` and `conference-2` for the whole timeline. Twenty-six clubs are 13 in each conference. Thirteen is prime, so the 1970 divisions are 5, 4, and 4. The five-club division in each conference is `c1-d3` and `c2-d3`. Thirty-one clubs cannot split into two equal conferences: 1999–2001 are 16 in conference-1 and 15 in conference-2. Membership is shared. Timelines do not realign on their own.
 
 | Seasons | Shape | Slots |
 |---------|--------|-------|
-| 1970–1975 | 2 conferences × 3 divisions × 4 teams | `c1-d1`, `c1-d2`, `c1-d3`, `c2-d1`, `c2-d2`, `c2-d3` |
-| 1976–1995 | 2 conferences × 2 divisions × 7 teams | `c1-d1`, `c1-d2`, `c2-d1`, `c2-d2` |
-| 1996–2029 | 2 conferences × 4 divisions × 4 teams | `c1-d1` … `c1-d4` and `c2-d1` … `c2-d4` |
+| 1970–1975 | 2 conferences × (5 + 4 + 4) | `c1-d1`, `c1-d2`, `c1-d3`, `c2-d1`, `c2-d2`, `c2-d3` |
+| 1976–1994 | 2 conferences × 2 divisions × 7 teams | `c1-d1`, `c1-d2`, `c2-d1`, `c2-d2` |
+| 1995–1998 | 2 conferences × 3 divisions × 5 teams | `c1-d1` … `c1-d3` and `c2-d1` … `c2-d3` |
+| 1999–2001 | conference-1 is 4 × 4; conference-2 stays 3 × 5 | `c1-d1` … `c1-d4` and `c2-d1` … `c2-d3` |
+| 2002–2029 | 2 conferences × 4 divisions × 4 teams | `c1-d1` … `c1-d4` and `c2-d1` … `c2-d4` |
 
 No geographic names are assigned. `c1-d3` means the third division of conference 1, not a region. `slot_order` is an integer on the membership row. It is the order in the tables below. It is not a city, and after 1970 it is not alphabetical order of the slug.
 
-**1970 through 1975.** Twelve founding clubs in each conference, three divisions of four.
+**1970 through 1975.** Thirteen founding clubs in each conference. `founding-01` through `founding-24` keep the seats from the earlier four-club table. `founding-25` is order 5 of `c1-d3`. `founding-26` is order 5 of `c2-d3`.
 
-| Division | Order 1 | Order 2 | Order 3 | Order 4 |
-|----------|---------|---------|---------|---------|
-| `c1-d1` | founding-01 | founding-02 | founding-03 | founding-04 |
-| `c1-d2` | founding-05 | founding-06 | founding-07 | founding-08 |
-| `c1-d3` | founding-09 | founding-10 | founding-11 | founding-12 |
-| `c2-d1` | founding-13 | founding-14 | founding-15 | founding-16 |
-| `c2-d2` | founding-17 | founding-18 | founding-19 | founding-20 |
-| `c2-d3` | founding-21 | founding-22 | founding-23 | founding-24 |
+| Division | Order 1 | Order 2 | Order 3 | Order 4 | Order 5 |
+|----------|---------|---------|---------|---------|---------|
+| `c1-d1` | founding-01 | founding-02 | founding-03 | founding-04 | |
+| `c1-d2` | founding-05 | founding-06 | founding-07 | founding-08 | |
+| `c1-d3` | founding-09 | founding-10 | founding-11 | founding-12 | founding-25 |
+| `c2-d1` | founding-13 | founding-14 | founding-15 | founding-16 | |
+| `c2-d2` | founding-17 | founding-18 | founding-19 | founding-20 | |
+| `c2-d3` | founding-21 | founding-22 | founding-23 | founding-24 | founding-26 |
 
-**1976 realignment.** `c1-d3` and `c2-d3` are retired. Each conference keeps its 12 founding clubs and adds 2 expansion clubs. Orders 1 and 2 of the retired division join that conference's first division as orders 5 and 6. Orders 3 and 4 join the second division as orders 5 and 6. One expansion club joins each surviving division as order 7. Every founding club stays in its original conference. Each surviving division then has 6 founding clubs and 1 expansion club.
+**1976 realignment.** `c1-d3` and `c2-d3` are retired. Each conference keeps its 13 founding clubs and adds one expansion club. Orders 1 and 2 of the retired division join that conference's first division as orders 5 and 6. Orders 3 and 4 join the second division as orders 5 and 6. The retired division's order 5 joins the second division as order 7. The one expansion club joins the first division as order 7. Every founding club stays in its original conference.
 
 | Division | Orders 1–4, unchanged | Order 5 | Order 6 | Order 7 |
 |----------|----------------------|---------|---------|---------|
 | `c1-d1` | founding-01 … founding-04 | founding-09 | founding-10 | expansion-1976-01 |
-| `c1-d2` | founding-05 … founding-08 | founding-11 | founding-12 | expansion-1976-02 |
-| `c2-d1` | founding-13 … founding-16 | founding-21 | founding-22 | expansion-1976-03 |
-| `c2-d2` | founding-17 … founding-20 | founding-23 | founding-24 | expansion-1976-04 |
+| `c1-d2` | founding-05 … founding-08 | founding-11 | founding-12 | founding-25 |
+| `c2-d1` | founding-13 … founding-16 | founding-21 | founding-22 | expansion-1976-02 |
+| `c2-d2` | founding-17 … founding-20 | founding-23 | founding-24 | founding-26 |
 
-**1996 realignment.** Each conference has 14 continuing clubs and adds 2 expansion clubs. Orders 1–4 of each 1976 division stay in that division, which returns to 4 clubs. The mover list is the first surviving division's orders 5, 6, and 7, then the second surviving division's orders 5, 6, and 7, then that conference's two 1996 expansion clubs. The first four of that list form division 3. The last four form division 4. Continuing clubs stay in their conference. A club that moved in 1976 can move again in 1996. `founding-09` plays in `c1-d3` through 1975, `c1-d1` from 1976 through 1995, and `c1-d3` again from 1996 on.
+**1995 realignment.** Each conference has 14 continuing clubs and adds one expansion club, which is three divisions of five. Orders 1–5 of each 1976 division stay. The restored third division is orders 6 and 7 of the first division, then orders 6 and 7 of the second, then that conference's 1995 club.
+
+| Division | Order 1 | Order 2 | Order 3 | Order 4 | Order 5 |
+|----------|---------|---------|---------|---------|---------|
+| `c1-d1` | founding-01 | founding-02 | founding-03 | founding-04 | founding-09 |
+| `c1-d2` | founding-05 | founding-06 | founding-07 | founding-08 | founding-11 |
+| `c1-d3` | founding-10 | expansion-1976-01 | founding-12 | founding-25 | expansion-1995-01 |
+| `c2-d1` | founding-13 | founding-14 | founding-15 | founding-16 | founding-21 |
+| `c2-d2` | founding-17 | founding-18 | founding-19 | founding-20 | founding-23 |
+| `c2-d3` | founding-22 | expansion-1976-02 | founding-24 | founding-26 | expansion-1995-02 |
+
+**1999 realignment.** `expansion-1999-01` joins conference-1. That conference becomes 16 clubs. Conference-2 stays 15. Orders 1–4 of each conference-1 division stay, and that division returns to four clubs. The new fourth division is order 5 of `c1-d1`, order 5 of `c1-d2`, order 5 of `c1-d3`, then `expansion-1999-01`. Conference-2 is unchanged from the 1995 table.
 
 | Division | Order 1 | Order 2 | Order 3 | Order 4 |
 |----------|---------|---------|---------|---------|
 | `c1-d1` | founding-01 | founding-02 | founding-03 | founding-04 |
 | `c1-d2` | founding-05 | founding-06 | founding-07 | founding-08 |
-| `c1-d3` | founding-09 | founding-10 | expansion-1976-01 | founding-11 |
-| `c1-d4` | founding-12 | expansion-1976-02 | expansion-1996-01 | expansion-1996-02 |
+| `c1-d3` | founding-10 | expansion-1976-01 | founding-12 | founding-25 |
+| `c1-d4` | founding-09 | founding-11 | expansion-1995-01 | expansion-1999-01 |
+
+Conference-2 in 1999–2001:
+
+| Division | Order 1 | Order 2 | Order 3 | Order 4 | Order 5 |
+|----------|---------|---------|---------|---------|---------|
+| `c2-d1` | founding-13 | founding-14 | founding-15 | founding-16 | founding-21 |
+| `c2-d2` | founding-17 | founding-18 | founding-19 | founding-20 | founding-23 |
+| `c2-d3` | founding-22 | expansion-1976-02 | founding-24 | founding-26 | expansion-1995-02 |
+
+**2002 realignment.** `expansion-2002-01` joins conference-2, and that conference uses the same conversion. Conference-1 stays as it was in 1999. Both conferences then have 16 clubs in four divisions of four.
+
+| Division | Order 1 | Order 2 | Order 3 | Order 4 |
+|----------|---------|---------|---------|---------|
 | `c2-d1` | founding-13 | founding-14 | founding-15 | founding-16 |
 | `c2-d2` | founding-17 | founding-18 | founding-19 | founding-20 |
-| `c2-d3` | founding-21 | founding-22 | expansion-1976-03 | founding-23 |
-| `c2-d4` | founding-24 | expansion-1976-04 | expansion-1996-03 | expansion-1996-04 |
+| `c2-d3` | founding-22 | expansion-1976-02 | founding-24 | founding-26 |
+| `c2-d4` | founding-21 | founding-23 | expansion-1995-02 | expansion-2002-01 |
 
-The 1996 shape is 2 conferences and 8 divisions of 4, which is the shape `league_generator.py` already builds as a 32-team tree. That generator still cannot represent 1970 or 1976. This document does not change it.
+`founding-09` plays in `c1-d3` through 1975, `c1-d1` from 1976 through 1998, and `c1-d4` from 1999 on. Continuing clubs stay in their original conference. A club that moved in one expansion year can move again in a later one. The 2002 shape is 2 conferences and 8 divisions of 4, which is the shape `league_generator.py` already builds as a 32-team tree. That generator still cannot represent 1970, 1976, 1995, or 1999. This document does not change it.
 
 The schedule is shared universe data and is versioned with the release. Every timeline on that release activates the same franchises in the same seasons, in the same conferences and divisions. A timeline cannot vote a club into the league or change `N(year)`. After publish, editing the schedule means a new release. Timelines already pinned to the old release keep the old schedule.
 
-The years, franchise counts, and alignment shapes above are the confirmed first release. They are release data. The tables store `origin` and `owner_selectable` as their own columns, and they store conference and division as slugs. They do not hardcode 1970, 1976, 1996, 2029, 24 founding clubs, 60 seasons, or the era shapes as database checks. A later release with a different horizon does not need a migration to change those numbers.
+The years, franchise counts, and alignment shapes above are the confirmed first release. They are release data. The tables store `origin` and `owner_selectable` as their own columns, and they store conference and division as slugs. They do not hardcode 1970, 1976, 1995, 1999, 2002, 2029, 26 founding clubs, 60 seasons, or the era shapes as database checks. A later release with a different horizon does not need a migration to change those numbers.
 
-Publication of the confirmed release still requires 24 founding franchises, playable seasons 1970–2029, expansion to 28 franchises in 1976, expansion to 32 franchises in 1996, the alignment tables above, and 1,792 franchise-season memberships. That check belongs to release publication (phase 8 in the model proposal). It is not a permanent limit on every row the database can store, and this phase does not implement that validator.
+Publication of the confirmed release still requires 26 founding franchises, playable seasons 1970–2029, expansion to 28 franchises in 1976, 30 in 1995, 31 in 1999, and 32 in 2002, the alignment tables above, and 1,797 franchise-season memberships. That check belongs to release publication (phase 8 in the model proposal). It is not a permanent limit on every row the database can store, and this phase does not implement that validator. `fg-founding-1` does not write this release. It remains the 24-club generator. The later version that writes `founding-01` through `founding-26` is a different generator version, because seating indexes 24 and 25 changes those two head-coach birth years.
 
-`origin` is stored on the franchise. It is not inferred when the franchise is displayed. A founding franchise begins in the release's first playable season. An expansion franchise begins in a later season. The confirmed release therefore marks the 1970 clubs `founding` and the 1976 and 1996 clubs `expansion`.
+`origin` is stored on the franchise. It is not inferred when the franchise is displayed. A founding franchise begins in the release's first playable season. An expansion franchise begins in a later season. The confirmed release therefore marks the 1970 clubs `founding` and the 1976, 1995, 1999, and 2002 clubs `expansion`.
 
 `owner_selectable` means a human owner is permitted to control this franchise during this season. It does not mean a new timeline may begin with this franchise during this season. The column defaults to true. On the confirmed release every active franchise has `owner_selectable` true in every active season, so a human who owns a founding franchise keeps controlling it after 1970, and a human who takes an expansion franchise keeps controlling it after the expansion year. False is reserved for a future explicit rule that makes one franchise bot-only during one season. No such season is scheduled.
 
@@ -654,13 +688,13 @@ Model `clean()`, `save()`, and instance `delete()` refuse edits to a published r
 
 ### Shared franchise
 
-One row per club that will ever play in the release. All 32 placeholder franchises exist when the release is generated. Expansion clubs are not created when the first timeline reaches 1976 or 1996.
+One row per club that will ever play in the release. All 32 placeholder franchises exist when the release is generated. Expansion clubs are not created when the first timeline reaches 1976, 1995, 1999, or 2002.
 
 | Field | Layer | Type | Range / units | Origin | Use |
 |-------|-------|------|---------------|--------|-----|
 | `slug` | Shared | slug | unique in the release | Schedule author | Both |
 | `name` | Shared | string | ≤ 255, name at debut | Schedule author | Display |
-| `first_active_season` | Shared | smallint | confirmed release: 1970 for the founding 24; 1976 or 1996 for expansion | Schedule author | Both |
+| `first_active_season` | Shared | smallint | confirmed release: 1970 for the founding 26; 1976, 1995, 1999, or 2002 for expansion | Schedule author | Both |
 | `final_active_season` | Shared | smallint, null | null means still active through the release's last season; the confirmed release has no final season | Schedule author | Both |
 | `origin` | Shared | enum | `founding` or `expansion`, stored on the row | Schedule author | Both |
 | `history_predecessor` | Shared | FK, null | another franchise in the release, for a later relocation or reorganization link | Schedule author, unused until needed | Display |
@@ -677,14 +711,14 @@ One shared row per franchise per season in which it exists. This is the alignmen
 | `season_year` | Shared | smallint | inside the franchise's active span and the release's playable span; 1970–2029 for the confirmed release | Schedule author | Both |
 | `conference_slug` | Shared | slug | nonempty conference slug for that season; `conference-1` or `conference-2` in the confirmed release | Schedule author | Both |
 | `division_slug` | Shared | slug | nonempty division slug for that season; `d1`–`d4` as the confirmed alignment requires | Schedule author | Both |
-| `slot_order` | Shared | smallint | positive; 1–4 or 1–7 in the confirmed alignment tables | Schedule author, from the alignment tables | Both |
+| `slot_order` | Shared | smallint | positive; 1–4, 1–5, or 1–7 in the confirmed alignment tables | Schedule author, from the alignment tables | Both |
 | `owner_selectable` | Shared | bool | a human may control this franchise during this season; true for every active season in the confirmed release; not a timeline-start flag; column default true | Schedule author | Both |
 
-Every active franchise on the confirmed release has `owner_selectable` true in every season it is active. False would mark that franchise as bot-only for that season, and no such row is scheduled. Realignment is a new membership row for the later season, using the alignment tables above. A timeline does not recompute conference, division, `slot_order`, or `owner_selectable` from standings. Eligibility to start a new timeline in 1970, 1976, or 1996 is not read from this flag. A later-start mode, if one is approved, keeps its rules in timeline-start configuration in a later phase. Phase 1 does not add that configuration.
+Every active franchise on the confirmed release has `owner_selectable` true in every season it is active. False would mark that franchise as bot-only for that season, and no such row is scheduled. Realignment is a new membership row for the later season, using the alignment tables above. A timeline does not recompute conference, division, `slot_order`, or `owner_selectable` from standings. Eligibility to start a new timeline in 1970, 1976, 1995, 1999, or 2002 is not read from this flag. A later-start mode, if one is approved, keeps its rules in timeline-start configuration in a later phase. Phase 1 does not add that configuration.
 
 ### History events
 
-Optional shared rows. None are required for the founding 24.
+Optional shared rows. None are required for the founding 26.
 
 | Field | Layer | Type | Range / units | Origin | Use |
 |-------|-------|------|---------------|--------|-----|
@@ -698,25 +732,25 @@ Optional shared rows. None are required for the founding 24.
 
 ### Expansion event
 
-Two expansion events are part of this release. The 1976 event adds `expansion-1976-01` through `expansion-1976-04`. The 1996 event adds `expansion-1996-01` through `expansion-1996-04`. A season may add more than one franchise. The numeric rules in the table are the values this release stores. Publish is refused if any of them is empty, and it is refused again if the player pools cannot fill every new club's active roster. Taxi slots do not count toward that minimum.
+Four expansion events are part of this release. The 1976 event adds `expansion-1976-01` and `expansion-1976-02`. The 1995 event adds `expansion-1995-01` and `expansion-1995-02`. The 1999 event adds `expansion-1999-01`. The 2002 event adds `expansion-2002-01`. A season may add more than one franchise. The numeric rules in the table are the values this release stores. Publish is refused if any of them is empty, and it is refused again if the player pools cannot fill every new club's active roster. Taxi slots do not count toward that minimum. Veterans, drafted rookies, and reserved undrafted prospects are three separate sources. The undrafted pool does not supply the veteran selections.
 
 | Field | Layer | Type | Range / units | Origin | Use |
 |-------|-------|------|---------------|--------|-----|
 | `season_year` | Shared | smallint | 1971–2029, the first season the new clubs play | Schedule author | Both |
 | `franchises` | Shared | list of franchise FKs | the clubs with `first_active_season` equal to this year | Schedule author | Both |
 | `placement` | Shared | membership rows | conference and division for each new club in `season_year` | Schedule author | Both |
-| `active_target` | Shared | smallint | 40 in 1976, 53 in 1996. The roster that must be filled. | Schedule author | Sim |
+| `active_target` | Shared | smallint | 40 in 1976; 53 in 1995, 1999, and 2002. The roster that must be filled. | Schedule author | Sim |
 | `taxi_capacity` | Shared | smallint | 8. Optional. Not part of the publication minimum. | Schedule author | Sim |
-| `max_losses_per_existing` | Shared | smallint | 3 in 1976, 4 in 1996. No existing club can lose more than this. | Schedule author | Sim |
-| `min_losses_per_existing` | Shared | smallint | 2 in 1976, 3 in 1996. A completed draft leaves every existing club at the minimum or the maximum. | Schedule author | Sim |
-| `clubs_at_max_loss` | Shared | smallint | 16 in 1976, 20 in 1996 | Schedule author | Sim |
-| `clubs_at_min_loss` | Shared | smallint | 8 in 1976, 8 in 1996 | Schedule author | Sim |
-| `veteran_picks_per_new` | Shared | smallint | 16 in 1976, 26 in 1996 | Schedule author | Sim |
-| `veteran_picks_total` | Shared | smallint | 64 in 1976, 104 in 1996 | Schedule author | Sim |
-| `rookie_picks_per_new` | Shared | smallint | 17 in 1976, 7 in 1996, at the end of each round | Schedule author | Sim |
-| `undrafted_multiplier` | Shared | smallint | 2 in 1976, 3 in 1996. The ordinary rule is 2. An expansion year may differ. | Schedule author | Sim |
-| `undrafted_pool` | Shared | smallint | 56 in 1976 (`2 × 28`), 96 in 1996 (`3 × 32`) | Schedule author | Sim |
-| `undrafted_reserved_per_new` | Shared | smallint | 7 in 1976, 20 in 1996. Taken from the shared undrafted class. Not from timeline free agents. | Schedule author | Sim |
+| `max_losses_per_existing` | Shared | smallint | 2 in 1976 and 1995; 1 in 1999 and 2002. No existing club can lose more than this. | Schedule author | Sim |
+| `min_losses_per_existing` | Shared | smallint | 1 in 1976 and 1995; 0 in 1999 and 2002. A completed draft leaves every existing club at the minimum or the maximum. | Schedule author | Sim |
+| `clubs_at_max_loss` | Shared | smallint | 6 in 1976, 24 in 1995, 26 in 1999, 26 in 2002 | Schedule author | Sim |
+| `clubs_at_min_loss` | Shared | smallint | 20 in 1976, 4 in 1995, 4 in 1999, 5 in 2002 | Schedule author | Sim |
+| `veteran_picks_per_new` | Shared | smallint | 16 in 1976; 26 in 1995, 1999, and 2002 | Schedule author | Sim |
+| `veteran_picks_total` | Shared | smallint | 32 in 1976, 52 in 1995, 26 in 1999, 26 in 2002 | Schedule author | Sim |
+| `rookie_picks_per_new` | Shared | smallint | 17 in 1976; 7 in 1995, 1999, and 2002, at the end of each round | Schedule author | Sim |
+| `undrafted_multiplier` | Shared | smallint | 2 in every expansion year. The ordinary rule is 2. The old 1996 multiplier of 3 is not used. | Schedule author | Sim |
+| `undrafted_pool` | Shared | smallint | 56 in 1976 (`2 × 28`), 60 in 1995 (`2 × 30`), 62 in 1999 (`2 × 31`), 64 in 2002 (`2 × 32`) | Schedule author | Sim |
+| `undrafted_reserved_per_new` | Shared | smallint | 7 in 1976; 20 in 1995, 1999, and 2002. Taken from the shared undrafted class. Not from the veteran board and not from timeline free agents. | Schedule author | Sim |
 | `expansion_draft_order_rule` | Shared | text | how selection order among the new clubs is chosen | Schedule author | Sim |
 | `roster_building_rule` | Shared | text | how a new club fills the rest of the roster after the expansion draft | Schedule author | Sim |
 | `free_agent_rule` | Shared | text | which shared free-agent pool the new club may sign, and any limits | Schedule author | Sim |
@@ -760,56 +794,70 @@ The players who complete an expansion active roster are already in the shared re
 
 Taxi slots are optional capacity. An expansion franchise must have its active roster filled before the season begins. It does not have to fill all eight taxi slots. Empty taxi spots are acceptable. An expansion club should open with less depth than an established club.
 
-No step creates a person who is not already in the universe. Selection snakes in placeholder-slug order. Odd rounds run `expansion-year-01` through `04`. Even rounds reverse. Injured players and players on expiring contracts may be selected. The injury and the timeline contract move with the player. Each existing club's protect list includes its only quarterback, only kicker, and only punter when it has exactly one of that position. It must expose at least as many players as the maximum it is allowed to lose, and it may expose more.
+No step creates a person who is not already in the universe. Selection snakes in placeholder-slug order through that event's new clubs. Odd rounds run the lower slug first. Even rounds reverse. A year with one new club has no second club to reverse. Injured players and players on expiring contracts may be selected. The injury and the timeline contract move with the player. Each existing club's protect list includes its only quarterback, only kicker, and only punter when it has exactly one of that position. It must expose at least as many players as the maximum it is allowed to lose, and it may expose more.
 
-| Rule | 1976 | 1996 |
-|------|------|------|
-| Existing clubs | 24 | 28 |
-| New clubs | 4 | 4 |
-| Active target | 40 | 53 |
-| Taxi capacity | up to 8, optional | up to 8, optional |
-| Losses per existing club | 2 or 3 | 3 or 4 |
-| Clubs at the maximum | 16 lose 3 | 20 lose 4 |
-| Clubs at the minimum | 8 lose 2 | 8 lose 3 |
-| Veteran selections, total | 64 | 104 |
-| Veteran selections per new club | 16 | 26 |
-| Rookie picks per new club | 17, at the end of each round | 7, at the end of each round |
-| Undrafted multiplier | 2 | 3, this year only |
-| Undrafted pool | 56 | 96 |
-| Reserved undrafted per new club | 7 | 20 |
-| Reserved undrafted, all new clubs | 28 | 80 |
-| Undrafted prospects left for ordinary signing | 28 | 16 |
+The veteran board, the draftable class, and the undrafted class are different groups. "Undrafted pool" is `2 × N(year)`. It is not the list of veterans the new clubs select. Available veterans are the existing clubs' active rosters from the previous season, assuming every active slot is full. The previous season's active limit is 40 in 1975, 47 in 1994, and 53 in 1998 and 2001. Taxi may add eight names per existing club. Those spots are not required, and the publication check does not count them.
+
+| Rule | 1976 | 1995 | 1999 | 2002 |
+|------|------|------|------|------|
+| Existing clubs | 26 | 28 | 30 | 31 |
+| New clubs | 2 | 2 | 1 | 1 |
+| Active target | 40 | 53 | 53 | 53 |
+| Taxi capacity | up to 8, optional | up to 8, optional | up to 8, optional | up to 8, optional |
+| Prior-season active limit | 40 | 47 | 53 | 53 |
+| Active veterans available | 1,040 | 1,316 | 1,590 | 1,643 |
+| Losses per existing club | 1 or 2 | 1 or 2 | 0 or 1 | 0 or 1 |
+| Clubs at the maximum | 6 lose 2 | 24 lose 2 | 26 lose 1 | 26 lose 1 |
+| Clubs at the minimum | 20 lose 1 | 4 lose 1 | 4 lose 0 | 5 lose 0 |
+| Veteran selections, total | 32 | 52 | 26 | 26 |
+| Veteran selections per new club | 16 | 26 | 26 | 26 |
+| Minimum players exposed | 52 | 56 | 30 | 31 |
+| Exposed and not selected | 20 | 4 | 4 | 5 |
+| Optional taxi names | 208 | 224 | 240 | 248 |
+| Draftable class | 476 | 210 | 217 | 224 |
+| Rookie picks per new club | 17 | 7 | 7 | 7 |
+| Rookies taken by new clubs | 34 | 14 | 7 | 7 |
+| Draftable left for existing clubs | 442 | 196 | 210 | 217 |
+| Undrafted multiplier | 2 | 2 | 2 | 2 |
+| Undrafted pool | 56 | 60 | 62 | 64 |
+| Reserved undrafted per new club | 7 | 20 | 20 | 20 |
+| Reserved undrafted, all new clubs | 14 | 40 | 20 | 20 |
+| Undrafted prospects left for ordinary signing | 42 | 20 | 42 | 44 |
 
 1976 active roster, with no free agents counted:
 
 16 veterans + 17 drafted rookies + 7 undrafted rookies = 40.
 
-`16 × 4 = 64`. The balanced losses are `16 × 3 + 8 × 2 = 64`. The slack below a universal maximum is `24 × 3 − 64 = 8`, which is why eight clubs lose 2 rather than 3. The undrafted pool stays `2 × 28 = 56`. The four new clubs consume 28 of those 56 if each uses the reserved 7. The other 28 remain available to any club. A free-agent signing may replace one of the reserved undrafted signings. Taxi spots may be filled afterward when players remain.
+`16 × 2 = 32`. The balanced losses are `6 × 2 + 20 × 1 = 32`. The slack below a universal maximum of 2 is `26 × 2 − 32 = 20`, which is why twenty clubs lose 1 rather than 2. The old band of 2 or 3 does not fit: 26 clubs each losing at least 2 would be 52 veterans, and two new 40-man rosters that each take 17 rookies have 46 non-rookie spots. The undrafted pool stays `2 × 28 = 56`. The two new clubs reserve 14 of those 56. The other 42 remain available to any club. A free-agent signing may replace one of the reserved undrafted signings. Taxi spots may be filled afterward when players remain.
 
-1996 active roster, with no free agents counted:
+1995, 1999, and 2002 active roster, with no free agents counted:
 
 26 veterans + 7 drafted rookies + 20 undrafted rookies = 53.
 
-`26 × 4 = 104`. The balanced losses are `20 × 4 + 8 × 3 = 104`. The slack below a universal maximum is `28 × 4 − 104 = 8`, which is why eight clubs lose 3 rather than 4. For 1996 only, the release generates 3 undrafted prospects per active franchise, `3 × 32 = 96`, instead of the ordinary 2. The four new clubs consume 80 of those 96 if each uses the reserved 20. The other 16 remain available to any club. There is no guaranteed veteran free-agent reserve. A free-agent signing may replace an undrafted signing. Taxi spots may be filled afterward when players remain.
+In 1995, `26 × 2 = 52`. The balanced losses are `24 × 2 + 4 × 1 = 52`. The slack below a universal maximum of 2 is `28 × 2 − 52 = 4`. The undrafted pool is `2 × 30 = 60`. The two new clubs reserve 40. The other 20 remain for ordinary signing. That remainder is smaller than the 28 existing clubs. The design does not promise each existing club an undrafted signing. The 52 veteran selections come from the 1,316 active players on the 1994 rosters, not from the 60 undrafted prospects.
+
+In 1999 and 2002 one new club selects 26 veterans. That cannot levy a loss on all 30 or 31 existing clubs. The minimum is therefore 0. In 1999, 26 clubs lose 1 and 4 lose 0. In 2002, 26 clubs lose 1 and 5 lose 0. The undrafted pools are `2 × 31 = 62` and `2 × 32 = 64`. Each year reserves 20, so 42 and 44 remain. There is no guaranteed veteran free-agent reserve. A free-agent signing may replace an undrafted signing.
+
+The old multiplier of 3 is not used in any year. It is not required for a reserved count of 14, 40, 20, or 20.
 
 Publication check, taxi excluded and free agents excluded:
 
 veteran selections per new club + rookie picks per new club + undrafted reserved per new club = active target
 
-The reserved count times the number of new clubs must also fit inside that year's shared undrafted pool. 1976 is `7 × 4 = 28`, and 28 is less than 56. 1996 is `20 × 4 = 80`, and 80 is less than 96. Publish is refused when either equality fails or the generated undrafted class is smaller than the pool on the expansion event. The check does not look at a timeline.
+The reserved count times the number of new clubs must also fit inside that year's shared undrafted pool. 1976 is `7 × 2 = 14`, and 14 is less than 56. 1995 is `20 × 2 = 40`, and 40 is less than 60. 1999 and 2002 are `20 × 1 = 20`, and 20 is less than 62 and less than 64. Publish is refused when either equality fails or the generated undrafted class is smaller than the pool on the expansion event. The check does not look at a timeline. The veteran side is feasible when the minimum exposed board is at least the veteran total: 32 ≤ 52, 52 ≤ 56, 26 ≤ 30, and 26 ≤ 31.
 
 When a timeline reaches the expansion offseason, the same shared classes are still there, so a short free-agent list cannot set the season to blocked and cannot create a person. An expansion club may not trade away a rookie pick, or release a reserved undrafted claim, while the three guaranteed sources would then add to less than the active target. A free agent who has not been signed does not restore that sum.
 
 #### How the draft keeps the losses balanced
 
-The new clubs still make meaningful selections. The engine does not pre-assign which clubs lose three players, and it does not pick the players for them. It only decides which existing clubs are still eligible before each selection.
+The new clubs still make meaningful selections. The engine does not pre-assign which clubs lose the maximum, and it does not pick the players for them. It only decides which existing clubs are still eligible before each selection.
 
 Each existing club starts at 0 losses. A selection is legal only when its source club passes both tests:
 
-1. The club is under the maximum. At the maximum it is closed, so no club loses a fourth player in 1976 or a fifth in 1996.
+1. The club is under the maximum. At the maximum it is closed.
 2. If the club is still under the minimum, it stays eligible. If it is already at the minimum, one more loss would put it in the maximum group. That extra loss is allowed only while fewer than `clubs_at_max_loss` clubs are already at the maximum, and only while the picks that would remain are still enough to bring every club up to the minimum.
 
-Early in the draft almost every club is eligible, so the selecting club can chase the exposed player it wants. Late in the draft the board narrows to the clubs that still owe a loss, which is what forces the 16-and-8 split in 1976 and the 20-and-8 split in 1996. A completed draft cannot finish with one club at the maximum and another at zero.
+Early in the draft almost every club is eligible, so the selecting club can chase the exposed player it wants. Late in the draft the board narrows to the clubs that still owe a loss, which is what forces the 6-and-20 split in 1976 and the 24-and-4 split in 1995. In those two years the minimum is 1, so a completed draft does not finish with one club at the maximum and another at zero. In 1999 and 2002 the minimum is defined as 0. Four clubs in 1999 and five in 2002 finish there, because 26 veteran selections cannot reach every existing club.
 
 Staffing order in an expansion offseason:
 
@@ -825,24 +873,24 @@ Staffing order in an expansion offseason:
 
 ### Owner access to expansion
 
-A normal timeline still begins in 1970 on a founding franchise. In the 1976 offseason and again in the 1996 offseason, before the expansion draft, the owner makes a few choices. The GM and head coach carry out the detail.
+A normal timeline still begins in 1970 on a founding franchise. In the 1976, 1995, 1999, and 2002 offseasons, before the expansion draft, the owner makes a few choices. The GM and head coach carry out the detail.
 
 1. **Stay or apply.** The owner keeps the current franchise, or applies for one expansion franchise. Applying is the only pursuit action. There is no separate purchase price in this design.
-2. **If the owner stays,** they name up to three position groups to protect. The GM files the list, keeps the only quarterback, kicker, and punter when the club has just one, and exposes at least 3 players in 1976 or 4 in 1996. Involved mode can pin five names. The GM fills the rest.
+2. **If the owner stays,** they name up to three position groups to protect. The GM files the list, keeps the only quarterback, kicker, and punter when the club has just one, and exposes at least the maximum: 2 players in 1976 and 1995, and 1 player in 1999 and 2002. Involved mode can pin five names. The GM fills the rest.
 3. **If the owner is awarded an expansion franchise,** a later service closes the open `TimelineFranchiseControl` with `expansion_switch` and opens a stint on the new franchise. The former franchise becomes bot-controlled in that timeline, with its current GM, coach, and roster. The new franchise starts with no players and no staff. This ownership change does not alter the shared membership row and does not set `owner_selectable` false. The human who takes the expansion franchise may keep controlling it in later seasons, because those shared rows stay selectable. Phase 4 stores the choice and the control history. It does not perform the award.
 4. **Building the new franchise.** The owner sets up to three position groups to chase, and compete or accumulate. The GM and head coach, once hired, run the expansion draft, the rookie draft, and the reserved undrafted fill. Free agency is optional. The head coach then sets the depth chart.
 
-The new club's players, GM, and head coach are people who already exist on the release. The expansion draft only chooses among veterans already in that timeline. The rookie class that year is the shared class sized with `N(1976) = 28` or `N(1996) = 32`.
+The new club's players, GM, and head coach are people who already exist on the release. The expansion draft only chooses among veterans already in that timeline. The rookie class that year is the shared class sized with `N(1976) = 28`, `N(1995) = 30`, `N(1999) = 31`, or `N(2002) = 32`.
 
 **Acceptance is not fully decided.**
 
 | Situation | Proposed handling |
 |-----------|-------------------|
-| Single-player timeline, owner applies for one of the four clubs | Automatic acceptance. The other three expansion clubs are bot-run. |
+| Single-player timeline, owner applies for one of that year's new clubs | Automatic acceptance. Any other new club that year is bot-run. |
 | Several human owners want the same expansion club | A fair selection among the applicants. The recommended draw is HMAC-SHA256 of the universe seed, the year, the franchise slug, and the sorted applicant ids. It is reproducible. It is not first-click, and it is not an unrepeatable random call. Each human can be awarded at most one expansion club. Leftover clubs are bot-run. The choice of this method still needs approval. |
 | Owner does not apply | They remain with the current franchise. Bots run every expansion club. |
 
-Whether a separate game mode may start a timeline already in 1976 or 1996, skipping 1970, remains unresolved. The normal game begins in 1970. That later-start question is not answered by `owner_selectable`. If such a mode is implemented, its rules belong in timeline-start configuration or another later-phase structure. Phase 1 does not add that configuration.
+Whether a separate game mode may start a timeline already in 1976, 1995, 1999, or 2002, skipping 1970, remains unresolved. The normal game begins in 1970. That later-start question is not answered by `owner_selectable`. If such a mode is implemented, its rules belong in timeline-start configuration or another later-phase structure. Phase 1 does not add that configuration.
 
 ---
 
@@ -936,7 +984,7 @@ Injury susceptibility is `durability`, not a second tag. Scheme fit is not store
 
 | Field | Layer | Type | Range / units | Origin | Use |
 |-------|-------|------|---------------|--------|-----|
-| `team` | Shared | FK, null for free agents | one of 24, or null | Generator | Both |
+| `team` | Shared | FK, null for free agents | one of 26, or null | Generator | Both |
 | `role` | Shared | enum | `starter` `backup` `taxi` `free_agent` | Generator | Both |
 | `depth` | Shared | smallint | ≥ 1 on a team; null if free agent | Generator | Both |
 | `position` | Shared | enum | same as the player | Generator | Both |
@@ -1366,7 +1414,7 @@ Exactly two strengths, one weakness, two traits. Unique tuple plus career-histor
 
 Same post shape as the GM, with `role` in `head_coach`, `offensive_coordinator`, `defensive_coordinator`, `position_coach`, `college_head_coach`. Wins and losses are the post's record. Display only; `motivation`, scheme ratings, and traits are the sim inputs.
 
-Opening assignment: `OpeningStaffAssignment (release, staff, franchise, role)` for the 24 employed GMs, 24 employed head coaches, 24 offensive coordinators, and 24 defensive coordinators. Unique `(release, franchise, role)` and unique `(release, staff)`.
+Opening assignment: `OpeningStaffAssignment (release, staff, franchise, role)` for the 26 employed GMs, 26 employed head coaches, 26 offensive coordinators, and 26 defensive coordinators. Unique `(release, franchise, role)` and unique `(release, staff)`. `fg-founding-1` still writes 24 GM seats and 24 head-coach seats and does not write coordinators.
 
 ### Coordinators
 
@@ -1378,10 +1426,10 @@ Recommended 1970 coordinator pool, same identities in every timeline:
 
 | | Employed on a founding club | Unemployed |
 |--|-----------------------------|------------|
-| Offensive coordinator | 24 | 16 |
-| Defensive coordinator | 24 | 16 |
+| Offensive coordinator | 26 | 14 |
+| Defensive coordinator | 26 | 14 |
 
-Incoming floor, 1971–2029: `4 + E(year)` offense-specialty candidates and `4 + E(year)` defense-specialty candidates. With `E` only in 1976 and 1996, that is 244 per specialty and **488** incoming coordinators. Initial 80 plus 488 is **568** coordinator identities. GM and head-coach identities stay **1,042**. All staff identities in the recommended database are **1,610**.
+The initial pool stays 40 per specialty. Twenty-six of those seats are filled in 1970, so 14 in each specialty remain unemployed. Incoming floor, 1971–2029: `4 + E(year)` offense-specialty candidates and `4 + E(year)` defense-specialty candidates. With `E` of 2, 2, 1, and 1, that is 242 per specialty and **484** incoming coordinators. Initial 80 plus 484 is **564** coordinator identities. GM and head-coach identities are **1,038**. All staff identities in the recommended database are **1,602**.
 
 Version 1 need not show coordinator hiring. The rows are still generated with the release. The same person can remain a coordinator, move to another club, be promoted after a firing, enter an offseason as a head-coach candidate, or return to coordinator work after being fired as a head coach. Each change appends a stint on the same `universe_key`. Pre-1970 posts and timeline stints stay one career. A promotion closes the coordinator stint with `promoted` and opens a `head_coach` stint. A later demotion closes the head-coach stint with `fired` and opens a coordinator stint. An expansion club hires from this shared pool. Do not generate a separate position-coach labor pool. The `position_coach` role exists so historical posts use this same table.
 
@@ -1922,7 +1970,7 @@ Coach posts before debut use the GM post shape with `role` in `head_coach`, `off
 | `specialty`, coach `former_role` | Required once coordinators share the coach table. |
 | `ended_by` on shared posts, and `promoted` on timeline stints | Firings and promotions need a recorded ending. |
 | `TimelineScoutReport` and `TimelineScoutComponent` | Original ratings, current ratings, and the owner's estimate are three different facts. |
-| `slot_order` and the explicit 24-, 28-, and 32-team assignments | Realignment has to be identical in every timeline without inventing cities. |
+| `slot_order` and the explicit 26-, 28-, 30-, 31-, and 32-team assignments | Realignment has to be identical in every timeline without inventing cities. |
 | `Timeline.start_season_year` | The normal game begins in 1970. A later-start mode, if approved, keeps its rules in later-phase timeline-start configuration. It is not `owner_selectable`. |
 | `TimelineExpansionChoice` | The owner's stay-or-apply decision, protect list, and priorities. |
 
@@ -1954,78 +2002,97 @@ The playable clock is 60 seasons, 1970 through 2029 inclusive. `N(year)` is exac
 
 | Seasons | Years | N(year) | Franchise-seasons |
 |---------|-------|---------|-------------------|
-| 1970–1975 | 6 | 24 | 144 |
-| 1976–1995 | 20 | 28 | 560 |
-| 1996–2029 | 34 | 32 | 1,088 |
-| **Total** | **60** | | **1,792** |
+| 1970–1975 | 6 | 26 | 156 |
+| 1976–1994 | 19 | 28 | 532 |
+| 1995–1998 | 4 | 30 | 120 |
+| 1999–2001 | 3 | 31 | 93 |
+| 2002–2029 | 28 | 32 | 896 |
+| **Total** | **60** | | **1,797** |
 
-`slots(year)` and `rounds(year)` are still the era defaults (40+8 and 17 rounds in 1970–1977, then the era table). Undrafted prospects are 2 per active franchise, except 1996, which generates 3 per active franchise. Opening free agents are 5 per founding franchise. Those defaults are not locked. Every player total below is exact only while they hold. Franchise-seasons do not depend on them. Staff totals do not change when the 1996 undrafted multiplier changes.
+Regular-season games use the same lengths as the era profiles: 14 through 1977, 16 through 2020, and 17 from 2021. Games in a season are `N(year) × length / 2`. `31 × 16` is even, so 1999–2001 can be scheduled at 16 games even though the conferences are 16 and 15.
+
+| Seasons | Years | N | Length | Games |
+|---------|-------|---|--------|-------|
+| 1970–1975 | 6 | 26 | 14 | 1,092 |
+| 1976–1977 | 2 | 28 | 14 | 392 |
+| 1978–1994 | 17 | 28 | 16 | 3,808 |
+| 1995–1998 | 4 | 30 | 16 | 960 |
+| 1999–2001 | 3 | 31 | 16 | 744 |
+| 2002–2020 | 19 | 32 | 16 | 4,864 |
+| 2021–2029 | 9 | 32 | 17 | 2,448 |
+| **Total** | **60** | | | **14,308** |
+
+Playoff games are not in the 14,308. Their count still depends on byes and the field, which this document does not turn into a row total.
+
+`slots(year)` and `rounds(year)` are still the era defaults (40+8 and 17 rounds in 1970–1977, then the era table). Undrafted prospects are 2 per active franchise in every year. The old 1996 multiplier of 3 is removed. Opening free agents are 5 per founding franchise. Those defaults are not locked. Every player total below is exact only while they hold. Franchise-seasons and regular-season games do not depend on them.
 
 ### Exact from the schedule
 
 | Fact | Value |
 |------|--------|
-| Founding franchises | 24 |
-| 1976 expansion franchises | 4 |
-| 1996 expansion franchises | 4 |
-| Active clubs, 1996–2029 | 32 |
-| Franchise-seasons, 1970–2029 | 1,792 |
+| Founding franchises | 26 |
+| 1976 expansion franchises | 2 |
+| 1995 expansion franchises | 2 |
+| 1999 expansion franchises | 1 |
+| 2002 expansion franchises | 1 |
+| Active clubs, 2002–2029 | 32 |
+| Franchise-seasons, 1970–2029 | 1,797 |
+| Regular-season games, 1970–2029 | 14,308 |
 | Shared people created by an expansion draft | 0 |
 
 ### Totals that use the era defaults
 
 | Slice | Why it can still move | Rows if defaults hold |
 |-------|----------------------|------------------------|
-| 1970 opening rosters | 40 active + 8 taxi | 1,152 |
-| 1970 free agents | 5 per founding club | 120 |
-| Opening cohort | sum of the two rows above | 1,272 |
-| Draftable prospects | round counts × N(year) | 16,028 |
-| Undrafted prospects | 2 per active club, and 3 per club in 1996 only | 3,616 |
-| Draft prospects | draftable + undrafted | 19,644 |
-| Playable player identities | 1,272 + 19,644 | **20,916** |
-| Archive players | 5-year mean inside 11,520 historical lines | 1,032 |
-| All player identities | 20,916 + 1,032 | **21,948** |
-| Shared pro lines, 1960–1969 | 24 × 48 × 10, before expansion | 11,520 |
-| College season lines | 4 per identity | 87,792 |
-| Head coaches | floor of 8 + E(year) | 580 |
-| GMs | floor of 6 + E(year) | 462 |
-| GM + head-coach identities | | **1,042** |
-| Coordinators, if generated now | floor in the coordinator section | 568 |
-| All staff identities with coordinators | 1,042 + 568 | **1,610** |
+| 1970 opening rosters | 40 active + 8 taxi | 1,248 |
+| 1970 free agents | 5 per founding club | 130 |
+| Opening cohort | sum of the two rows above | 1,378 |
+| Draftable prospects | round counts × N(year) | 16,183 |
+| Undrafted prospects | 2 per active club in every year | 3,594 |
+| Draft prospects | draftable + undrafted | 19,777 |
+| Playable player identities | 1,378 + 19,777 | **21,155** |
+| Archive players | 5-year mean inside 12,480 historical lines | 1,118 |
+| All player identities | 21,155 + 1,118 | **22,273** |
+| Shared pro lines, 1960–1969 | 26 × 48 × 10, before expansion | 12,480 |
+| College season lines | 4 per identity | 89,092 |
+| Head coaches | floor of 8 + E(year) | 578 |
+| GMs | floor of 6 + E(year) | 460 |
+| GM + head-coach identities | | **1,038** |
+| Coordinators, if generated now | floor in the coordinator section | 564 |
+| All staff identities with coordinators | 1,038 + 564 | **1,602** |
 
 Roster-slot seasons, using the era roster defaults and `N(year)`:
 
 | Years | N | Slots per team | Slot-seasons |
 |-------|---|----------------|--------------|
-| 1970–1975 | 24 | 48 | 6,912 |
+| 1970–1975 | 26 | 48 | 7,488 |
 | 1976–1977 | 28 | 48 | 2,688 |
 | 1978–1986 | 28 | 53 | 13,356 |
 | 1987–1994 | 28 | 55 | 12,320 |
-| 1995 | 28 | 61 | 1,708 |
-| 1996–2003 | 32 | 61 | 15,616 |
-| 2004–2013 | 32 | 61 | 19,520 |
-| 2014–2029 | 32 | 61 | 31,232 |
-| **Total** | | | **103,352** |
+| 1995–1998 | 30 | 61 | 7,320 |
+| 1999–2001 | 31 | 61 | 5,673 |
+| 2002–2029 | 32 | 61 | 54,656 |
+| **Total** | | | **103,501** |
 
-The 103,352 figure is maximum roster capacity. It counts every active slot and every taxi slot in every franchise-season. It is not a count of guaranteed occupied rows. Taxi squads are optional. If a season-stat row is created only for a player who actually occupies a slot, the finished total depends on how many taxi positions that timeline fills. Expansion clubs in particular may leave taxi empty. The capacity arithmetic itself does not change.
+The 103,501 figure is maximum roster capacity. It counts every active slot and every taxi slot in every franchise-season. It is not a count of guaranteed occupied rows. Taxi squads are optional. If a season-stat row is created only for a player who actually occupies a slot, the finished total depends on how many taxi positions that timeline fills. Expansion clubs in particular may leave taxi empty. The capacity arithmetic itself does not change.
 
 | Timeline store on one finished run | Depends on | Rows if defaults hold |
 |------------------------------------|------------|------------------------|
-| Player overlays after 2029 | class sizes | 20,916 |
-| Player overlays before the 1970 season, after that draft | 1970 class of 456 | 1,728 |
-| Season lines, one per occupied roster slot | at most the 103,352 capacity | 103,352 only if every taxi slot is filled |
-| Draft picks | draftable seats | 16,028 |
-| Injuries | 30 per franchise-season | 53,760 |
-| Contracts | one per two occupied slot-seasons | 51,676 if capacity is full; fewer if taxi slots stay empty |
-| Staff stints | 4-year mean tenure. GM and head coach only are 2 roles. Seating coordinators as well is 4 roles. | 896 for GM and head coach; 1,792 if coordinators are seated |
+| Player overlays after 2029 | class sizes | 21,155 |
+| Player overlays before the 1970 season, after that draft | 1970 class of 494 | 1,872 |
+| Season lines, one per occupied roster slot | at most the 103,501 capacity | 103,501 only if every taxi slot is filled |
+| Draft picks | draftable seats | 16,183 |
+| Injuries | 30 per franchise-season | 53,910 |
+| Contracts | one per two occupied slot-seasons | not an integer at full capacity; 103,501 is odd, and this document does not choose how to count the leftover slot |
+| Staff stints | 4-year mean tenure. GM and head coach only are 2 roles. Seating coordinators as well is 4 roles. | 1,797 / 4 is 449.25 per role, so the mean no longer yields an integer; the mean is unchanged |
 | Awards | a fixed annual honor list, not N(year) | about 3,500 |
-| Expansion-draft picks | 16 per new club in 1976, 26 per new club in 1996 | 64 in 1976 and 104 in 1996, 168 together |
+| Expansion-draft picks | 16 per new club in 1976; 26 per new club in 1995, 1999, and 2002 | 32 + 52 + 26 + 26 = 136 |
 
-Changing the 1978 active roster from 45 changes the 1978–1986 slot seasons only. Changing 1996–2029 from 32 teams is a new schedule. Splitting the old 15 position labels into 19 positions does not change these row counts, because the active and taxi limits are unchanged. Adding `return_vision` and `special_teams` adds two rating columns per player, not two people. The 1996 undrafted multiplier adds 32 prospects and does not change staff totals, franchise-seasons, or the 103,352 capacity figure. The 20,916 playable identities and the 1,792 franchise-seasons stay as stated while the roster, round, and undrafted-multiplier figures hold.
+Changing the 1978 active roster from 45 changes the 1978–1986 slot seasons only. Changing the club counts in this section is a new schedule. Splitting the old 15 position labels into 19 positions does not change these row counts, because the active and taxi limits are unchanged. Adding `return_vision` and `special_teams` adds two rating columns per player, not two people. Removing the 1996 undrafted multiplier of 3 changes the undrafted class and does not change franchise-seasons, regular-season games, or the 103,501 capacity figure. The 21,155 playable identities and the 1,797 franchise-seasons stay as stated while the roster, round, and undrafted-multiplier figures hold.
 
 ### Obsolete 32-team estimate
 
-An earlier draft reported **28,384** universe player rows for 32 teams in every year and drafts from 1971 through 2049 (1,536 roster slots + 160 free agents + 26,688 draft prospects). That number is retired. A later no-expansion sketch of **17,424** playable players assumed 24 teams in every season through 2029. That sketch is also retired. The schedule in this section is the one to implement, and **20,916** playable players is the total only while the era roster, round, and undrafted-multiplier defaults hold. An earlier expansion sketch that required veteran free agents in 1996 is retired. The 168 veteran selections in this section are 64 in 1976 plus 104 in 1996. They are not that retired sketch.
+An earlier draft reported **28,384** universe player rows for 32 teams in every year and drafts from 1971 through 2049 (1,536 roster slots + 160 free agents + 26,688 draft prospects). That number is retired. A later no-expansion sketch of **17,424** playable players assumed 24 teams in every season through 2029. That sketch is also retired. An intermediate confirmed schedule of 24, then 28, then 32, with franchise-seasons of 1,792 and regular-season games of 14,280, is also retired by the 26-club founding schedule in this section. **21,155** playable players is the total only while the era roster, round, and undrafted-multiplier defaults hold. An earlier expansion sketch that required veteran free agents in 1996 is retired. The 136 veteran selections in this section are 32 in 1976, 52 in 1995, 26 in 1999, and 26 in 2002. They are not that retired sketch.
 
 ---
 
@@ -2041,12 +2108,12 @@ A future implementation can turn these into tests. This document does not add th
 6. Timeline `season_year` values lie in 1970–2029. Shared pro seasons lie in 1960–1969.
 7. `season_year = 1969 + season_index`, and a complete timeline has `season_index` 60 and `season_year` 2029.
 8. Each of the 100 initial GMs has a distinct strength/weakness/trait/history signature, and the same holds for the 100 initial head coaches.
-9. Opening replacement hires are members of the unemployed 76. The other 23 franchises still employ their shared GM and head coach when the 1970 draft starts, unless a later rule explicitly allows poaching.
+9. Opening replacement hires are members of the unemployed 74. The other 25 franchises still employ their shared GM and head coach when the 1970 draft starts, unless a later rule explicitly allows poaching.
 10. Campaign-style code does not insert `League`, `Conference`, `Division`, or `Team` rows and does not update `Team.league`.
 11. A published release rejects edits to an existing `universe_key` and rejects edits to a published expansion schedule. A schedule change is a new release.
 12. Two timelines on one release have the same `N(year)`, the same expansion franchises, and the same draft-class keys for every year from 1970 through 2029.
 13. An expansion draft inserts timeline picks only. It does not change the universe player count.
-14. Every timeline on a release has the same conference slug, division slug, and `slot_order` for each franchise-season, matching the 24-, 28-, and 32-team tables in this document.
+14. Every timeline on a release has the same conference slug, division slug, and `slot_order` for each franchise-season, matching the 26-, 28-, 30-, 31-, and 32-team tables in this document.
 15. A player's `universe_key`, name, birth, college, body, position, `initial` ratings, `potential`, traits, and pre-1970 history are identical on every timeline. `current` ratings and 1970–2029 results are not.
 16. Every active quota sums to that profile's active limit, and every taxi quota sums to that profile's taxi limit. The position enum has 19 values.
 17. Random draws are a pure function of the release seed, season, week, franchise keys, game id, event index, and event type. They do not include the timeline id or the owner's decisions. The same pre-snap state consumes those draws to the same snap outcomes. A draw can be recomputed without that state. A snap outcome cannot, unless the kickoff inputs or a checkpoint were stored. The simulator does not read the scout report.
@@ -2056,15 +2123,15 @@ A future implementation can turn these into tests. This document does not add th
 ## Fit with the current project
 
 - External ids stay natural keys: `universe_key`, college slug, existing team slug.
-- Generation is a management command. The 32-team admin view is the right pattern for a few dozen catalog rows and the wrong pattern for a full player release. If the era defaults hold, one release is 21,948 player identities and, with coordinators included, 1,610 staff identities.
+- Generation is a management command. The 32-team admin view is the right pattern for a few dozen catalog rows and the wrong pattern for a full player release. If the era defaults hold, one release is 22,273 player identities and, with coordinators included, 1,602 staff identities.
 - `League.clean()` and the single active tier-1 rule stay. Timelines reference that tier-1 league and do not become leagues.
 - No new Django setting is required. The generator seed lives on the release. Production settings stay out of this work.
 - The owner FK should use `settings.AUTH_USER_MODEL` when the model is eventually added. This design does not set `AUTH_USER_MODEL`.
-- The live generator's `TEAM_COUNT = 32` is neither the 1970 founding size nor a legal stand-in for `N(year)`. A release cannot be fingerprinted against that tree. Changing the generator is a later code change, not part of this document. The replacement must not hard-code 24 for every season.
+- The live generator's `TEAM_COUNT = 32` is neither the 1970 founding size nor a legal stand-in for `N(year)`. A release cannot be fingerprinted against that tree. Changing the generator is a later code change, not part of this document. `fg-founding-1` remains the 24-club founding generator and is not edited by this schedule. The replacement that writes the 26-club catalog must not hard-code 26 for every season.
 
 Suggested order when implementation is allowed:
 
-1. Represent founding and expansion franchises without a fixed team-count constant (separate work). Then generate and publish one universe release: the 32 placeholder franchises, the alignment in this document, the opening cohort, the archive, 1970–2029 classes sized by `N(year)`, staff classes including coordinators, and the 1976 and 1996 expansion events with their numeric rules filled in.
+1. Represent founding and expansion franchises without a fixed team-count constant (separate work). Then generate and publish one universe release: the 32 placeholder franchises, the alignment in this document, the opening cohort, the archive, 1970–2029 classes sized by `N(year)`, staff classes including coordinators, and the 1976, 1995, 1999, and 2002 expansion events with their numeric rules filled in. That generator is not `fg-founding-1`.
 2. Timeline models and `start_timeline`, including the opening sequence through the 1970 draft and directives.
 3. Season clock that materializes the next class and the next staff class each offseason, stopping after 2029.
 4. Development, injuries, contracts, and awards, writing timeline rows only.
@@ -2075,7 +2142,7 @@ Scoring, schedules, payments, and public pages stay outside this design. Season 
 
 ## Alternatives considered
 
-**Keep the previous draft's 32-team, 1971-first, through-2049 population.** That is the retired 28,384-row model. It does not match a 24-franchise game, a 1970 rookie draft, or a 60-season run.
+**Keep the previous draft's 32-team, 1971-first, through-2049 population.** That is the retired 28,384-row model. It does not match a 26-franchise opening, a 1970 rookie draft, or a 60-season run.
 
 **Put 1970 rookies on the opening rosters and skip a preseason draft.** That makes every timeline's 1970 roster identical through week 1, including rookies. The opening sequence now includes the draft as an owner decision, so rookies stay in the shared class until that timeline drafts them.
 
@@ -2083,7 +2150,7 @@ Scoring, schedules, payments, and public pages stay outside this design. Season 
 
 **Store pre-1970 statistics on each timeline as a copied record book.** The lines would be identical forever. They stay on the universe, and the career page reads both stores.
 
-**Treat 24 as the league size in every season from 1970 through 2029.** Rejected. Four clubs enter in 1976 and four enter in 1996. Class size, roster-slot seasons, and incoming staff use that `N(year)`. The expansion draft redistributes players already in the timeline and does not mint a second player pool.
+**Treat 26 as the league size in every season from 1970 through 2029.** Rejected. Two clubs enter in 1976, two enter in 1995, one enters in 1999, and one enters in 2002. Class size, roster-slot seasons, and incoming staff use that `N(year)`. The expansion draft redistributes players already in the timeline and does not mint a second player pool.
 
 ---
 
@@ -2099,8 +2166,9 @@ These structural choices are accepted and are not waiting on another approval be
 - The seven-step owner offseason.
 - Offensive and defensive coordinators generated with the shared universe, on the coach person.
 - Shared people and pre-timeline histories identical in every timeline.
-- Expansion from 24 to 28 teams in 1976 and from 28 to 32 teams in 1996. No further expansion, departure, or relocation through 2029 unless a later release adds one.
-- The expansion arithmetic in [Recommended expansion draft](#recommended-expansion-draft): 64 veteran selections in 1976 and 104 in 1996. Active rosters are filled from shared veterans, drafted rookies, and reserved undrafted prospects. Free agents are optional.
+- Expansion from 26 to 28 in 1976, to 30 in 1995, to 31 in 1999, and to 32 in 2002. No further expansion, departure, or relocation through 2029 unless a later release adds one.
+- The expansion arithmetic in [Recommended expansion draft](#recommended-expansion-draft): 32 veteran selections in 1976, 52 in 1995, and 26 in each of 1999 and 2002. Active rosters are filled from shared veterans, drafted rookies, and reserved undrafted prospects. The undrafted multiplier is 2 in every year. Free agents are optional.
+- The playoff fields in the era table: 8 teams through 1998, then 12 teams from 1999, with conference-2 using 3 winners and 3 wild cards only in 1999–2001.
 
 Numeric simulation coefficients, salary-cap amounts, the minimum salary, rookie-slot percents, and the other values below stay configurable. `EraRuleProfile` and the expansion-event row can store a later number without a new person table. An empty cap on a 1995-or-later profile still blocks publication of that profile. It does not block the model proposal.
 
@@ -2113,17 +2181,18 @@ The playable horizon is 60 seasons, 1970 through 2029 inclusive.
 | Accrued-season threshold | 4 seasons. | Stored on the profile. |
 | Future-pick window and trade-deadline week | 1, then 2, then 3 years. Deadline after week 8. | Trades exist in every era. The window is a profile field. |
 | Injured reserve | 2, then 3, then 4, with the return rules in the market table. | Profile fields. |
-| Playoff field and overtime years | 8 teams, then 12 from 1996. Ties through 1973. Sudden death from 1974. Both-teams possession from 2012. | Profile fields. |
+| Overtime years | Ties through 1973. Sudden death from 1974. Both-teams possession from 2012. | Profile fields. The playoff field itself is specified above. |
 | Franchise-tag formula | Average of the top five charges at the position, one tag per club, from 1995. | Profile field. It does not set the cap. |
 | Special-teams score weights, development coefficients, and other sim coefficients | The formulas are written. The numbers are recommendations. | They do not add person columns. |
 | How far `talent_evaluation` tightens a scout band | Better evaluators get narrower bands. The noise draw does not change. | The slope is unset. |
-| Free-agent pool and undrafted pool | 5 free agents per founding franchise in 1970. Undrafted prospects are 2 per active franchise, and 3 per active franchise in 1996. | The 1996 multiplier is part of the shared expansion arithmetic. Free agents are not. Changing a multiplier requires the active-roster arithmetic to be recomputed before publish. |
+| Free-agent pool and undrafted pool | 5 free agents per founding franchise in 1970. Undrafted prospects are 2 per active franchise in every year. | The removed 1996 multiplier of 3 is not part of this release. Free agents are not part of the expansion minimum. Changing a multiplier requires the active-roster arithmetic to be recomputed before publish. |
 | Rating draw distributions | Era tables say which traits are more common. | Required before generation. Not a new column. |
-| Archive mean career | 5 years, implying 1,032 archive players. | The 11,520 historical lines stay if the 48-man pre-1970 roster stays. |
+| Archive mean career | 5 years, implying 1,118 archive players. | The 12,480 historical lines stay if the 48-man pre-1970 roster stays. The 5-year mean is still an assumption. |
 | College count | About 48–80 schools, four seasons stored. | Generation choice. |
 | Names, cities, and permanent slugs | Placeholders only. | Not required to describe the model. The catalog link stays empty until a later release names them. |
 | Multi-human expansion award | HMAC fair draw is the candidate. Single-player apply is automatic. | The method is a product choice. The choice row can store it. |
-| A mode that starts in 1976 or 1996 | Not part of Phase 1. The normal game begins in 1970. | Product choice. Eligibility belongs in later-phase timeline-start configuration, not `owner_selectable`. |
+| A mode that starts in 1976, 1995, 1999, or 2002 | Not part of Phase 1. The normal game begins in 1970. | Product choice. Eligibility belongs in later-phase timeline-start configuration, not `owner_selectable`. |
+| Order among playoff qualifiers | Division winners take the seeds ahead of wild cards. The top two seeds bye. The first round is seed 3 against seed 6 and seed 4 against seed 5. | The order among division winners, and the order among wild cards, is not chosen. Tiebreakers are not chosen. |
 
 ### Not a reason to add a second staff table
 
@@ -2136,10 +2205,11 @@ Coordinator identities share the coach table. Specialty limits the coordinator c
 - Describes `leagues` as it exists on `main`, including the 32-team generator. This design does not change that generator.
 - Confirms 19 primary positions and treats returner, snapper, coverage, and emergency kicker or punter as roster roles.
 - Confirms 33 rating components, including `return_vision` and `special_teams`.
-- Confirms the shared schedule: 24 franchises for 1970–1975, 28 for 1976–1995, and 32 for 1996–2029. Names and cities stay placeholders. No further expansion, departure, or relocation is scheduled through 2029.
-- Confirms the playable timeline as 60 seasons, 1970 through 2029 inclusive. Franchise-seasons are exactly 1,792.
-- If the era roster, round, and undrafted-multiplier figures hold: 20,916 playable player identities, 21,948 including the archive assumption, 16,028 draftable prospects, 3,616 undrafted prospects, and 103,352 roster-slot seasons as maximum capacity, plus 1,042 GM and head-coach identities and 1,610 staff identities with coordinators. The 1996 change from 2 to 3 undrafted prospects per club adds 32 people. It does not change staff totals, franchise-seasons, or the capacity figure. Occupied taxi rows can be lower than capacity.
-- Sets the expansion drafts at 64 veteran selections in 1976 and 104 in 1996, 168 together. Each new club reaches 40 active players in 1976 and 53 in 1996 from veterans, drafted rookies, and reserved undrafted prospects. Taxi is optional. Publish does not count timeline free agents.
+- Confirms the shared schedule: 26 franchises for 1970–1975, 28 for 1976–1994, 30 for 1995–1998, 31 for 1999–2001, and 32 for 2002–2029. Names and cities stay placeholders. No further expansion, departure, or relocation is scheduled through 2029.
+- Confirms the playable timeline as 60 seasons, 1970 through 2029 inclusive. Franchise-seasons are exactly 1,797. Regular-season games are exactly 14,308 while the 14-, 16-, and 17-game lengths hold.
+- If the era roster, round, and undrafted-multiplier figures hold: 21,155 playable player identities, 22,273 including the archive assumption, 16,183 draftable prospects, 3,594 undrafted prospects, and 103,501 roster-slot seasons as maximum capacity, plus 1,038 GM and head-coach identities and 1,602 staff identities with coordinators. The undrafted multiplier is 2 in every year. Occupied taxi rows can be lower than capacity.
+- Sets the expansion drafts at 32 veteran selections in 1976, 52 in 1995, 26 in 1999, and 26 in 2002, 136 together. Each new club reaches 40 active players in 1976 and 53 in 1995, 1999, and 2002 from veterans, drafted rookies, and reserved undrafted prospects. Taxi is optional. Publish does not count timeline free agents.
+- `fg-founding-1` remains the unchanged 24-club generator. A later generator version creates the 26-club founding catalog, the 1970 memberships, and the 26 opening seats. This document does not change that code.
 - Sets deterministic draws from the universe-release seed, season, week, franchise keys, game id, event index, and event type. The timeline id and the owner decision fingerprint are not inputs. Those coordinates reproduce the draw. A snap outcome also needs the stored kickoff state or a replay from a checkpoint.
 - The concrete table layout is in [docs/PLAYER_UNIVERSE_MODEL_PROPOSAL.md](PLAYER_UNIVERSE_MODEL_PROPOSAL.md). That file proposes models only. It does not add them. The five Phase 1 models are ready to implement. This document does not implement them.
 - The retired totals of 28,384 and 17,424 stay labeled obsolete. An earlier 1996 rule that required two veteran free agents per new club is also obsolete.

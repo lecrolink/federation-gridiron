@@ -46,7 +46,7 @@ MySQL unique indexes treat `NULL` as distinct. An open-stint rule therefore cann
 
 ### Row counts
 
-Counts below are for one release, or for one timeline that plays 1970 through 2029, using the era defaults in the design. They are planning counts, not rows this document creates. Expansion clubs may leave taxi empty, so realized roster and stat rows can be lower than the full-taxi totals. The archive mean of 1,032 players is an assumption; franchise-seasons, 1,792, are exact.
+Counts below are for one release, or for one timeline that plays 1970 through 2029, using the era defaults in the design. They are planning counts, not rows this document creates. Expansion clubs may leave taxi empty, so realized roster and stat rows can be lower than the full-taxi totals. The archive mean of 1,118 players is an assumption; franchise-seasons, 1,797, are exact. Regular-season games are 14,308 while the 14-, 16-, and 17-game lengths hold.
 
 ## How the 33 components are stored
 
@@ -56,7 +56,7 @@ Three shapes were compared for `speed`, `acceleration`, `agility`, `strength`, `
 |-------|------------|-------------|------------------|------------|
 | Explicit columns on `UniversePlayer` and again on the timeline overlay | A `0–100` check sits next to the name, the body, and the contract. One missing column is easy to miss in a very wide row. | One read returns identity and talent, including columns the match does not want. | Adding component 34 rewrites the person row and the overlay row, which are the tables with the most foreign keys. | The hot loop is simple, but the identity row is no longer stable. |
 | One-row profile with explicit fields. `PlayerRatingProfile` holds `initial_*` and `potential_*`. `PlayerCurrentRating` holds `current_*`. | Each profile has one job. `CheckConstraint` can require every component to be `0–100`. "All 33 are present" is the row existing. `current <= potential` crosses two tables, so the timeline service enforces it in `full_clean()`; it is not a single-table SQL check. | The match loads one profile row of 33 small integers. Identity and pre-1970 history stay off that read. | A new component adds columns only to the profile tables. Person keys, stints, and stats do not move. | One row per player is the natural vector. No join per component inside a snap. |
-| Normalized component rows, one row per player per component | A unique `(player, component)` constraint can require 33 rows only with a count check outside the database, or with 33 partial indexes. A player with 32 rows looks valid until a query notices. | A snap that needs several components either joins 33 rows or pivots them. At 21,948 players, initial plus potential is about 1.45 million rating rows before any timeline exists. | A new component is an inserted code, which is easy, and a backfill of every person, which is not free. | The inner loop pays a join or a pivot on every player on the field. |
+| Normalized component rows, one row per player per component | A unique `(player, component)` constraint can require 33 rows only with a count check outside the database, or with 33 partial indexes. A player with 32 rows looks valid until a query notices. | A snap that needs several components either joins 33 rows or pivots them. At 22,273 players, initial plus potential is about 1.47 million rating rows before any timeline exists. | A new component is an inserted code, which is easy, and a backfill of every person, which is not free. | The inner loop pays a join or a pivot on every player on the field. |
 
 Recommendation: the one-row profile with explicit fields.
 
@@ -83,7 +83,7 @@ One publication of the fictional universe.
 
 ### EraRuleProfile
 
-Versioned rules for a contiguous span of seasons. Nine working rows: `y1970`, `y1974`, `y1976`, `y1978`, `y1987`, `y1995`, `y1996`, `y2012`, `y2021`.
+Versioned rules for a contiguous span of seasons. Ten working rows: `y1970`, `y1974`, `y1976`, `y1978`, `y1987`, `y1995`, `y1999`, `y2002`, `y2012`, `y2021`. `y1996` is not a profile. The old 1996–2011 span split where the playoff field changes, in 1999 and again in 2002. `playoff_format` follows the design: `eight_team_3_and_1` for 1970–1975 and 1995–1998, `eight_team_2_and_2` for 1976–1994, `twelve_team_fill_to_six` for 1999–2001, and `twelve_team_4_and_2` from 2002. In 1999–2001 conference-2 qualifies 3 division winners and 3 wild cards. Conference-1 qualifies 4 and 2. From 2002 both conferences qualify 4 and 2. The field is 12 teams from 1999 through 2029, with byes for the top two seeds in each conference.
 
 - Ownership: shared.
 - Primary key: `BigAutoField`. Public key: `profile_key`, `CharField(32)`, unique with the release.
@@ -131,12 +131,12 @@ How often a college appears for players generated under a profile. Display and g
 The franchise identity inside a release. This is not `leagues.Team`. Timeline roster, staff, and results point here.
 
 - Ownership: shared.
-- Primary key: `BigAutoField`. Public key: `placeholder_slug`, `SlugField`, unique with the release. Values: `founding-01` through `founding-24`, `expansion-1976-01` through `expansion-1976-04`, `expansion-1996-01` through `expansion-1996-04`.
+- Primary key: `BigAutoField`. Public key: `placeholder_slug`, `SlugField`, unique with the release. Values: `founding-01` through `founding-26`, `expansion-1976-01` and `expansion-1976-02`, `expansion-1995-01` and `expansion-1995-02`, `expansion-1999-01`, and `expansion-2002-01`. There is no `expansion-1976-03`, `expansion-1976-04`, or `expansion-1996` slug.
 - Foreign keys: `release` `CASCADE`; `catalog_team` to `leagues.Team`, `PROTECT`, null; `history_predecessor` to self, `PROTECT`, null. No predecessor is scheduled.
 - Fields: `display_name` `CharField(255)` (the placeholder until a name is chosen); `origin` choices `founding` or `expansion`; `first_active_season` `PositiveSmallIntegerField`; `final_active_season` `PositiveSmallIntegerField`, null while the club remains active. `origin` is stored. Display code does not infer it from the debut year.
 - Unique: `(release, placeholder_slug)`; `(release, catalog_team)` when `catalog_team` is not null. MySQL allows many null catalog links, which is what placeholder franchises need.
 - Database checks: `origin` is `founding` or `expansion`; `final_active_season` is null or greater than or equal to `first_active_season`.
-- Model validation, because it reads the parent release: `first_active_season` is inside the release's playable span; `final_active_season`, when set, is inside that span; a founding franchise begins in the release's first season; an expansion franchise begins after that season. The confirmed release's expansion years, 1976 and 1996, are checked when that release is published. They are not a check constraint on this table.
+- Model validation, because it reads the parent release: `first_active_season` is inside the release's playable span; `final_active_season`, when set, is inside that span; a founding franchise begins in the release's first season; an expansion franchise begins after that season. The confirmed release's expansion years, 1976, 1995, 1999, and 2002, are checked when that release is published. They are not a check constraint on this table. `fg-founding-1` still writes 24 founding clubs. A later generator version writes the 26-club catalog.
 - Indexes: `(release, first_active_season)`.
 - Application guard after publish: slug, origin, first season, display name, catalog link once set, predecessor. A null `catalog_team` may still be set once. `display_name` changes for a later release by a `FranchiseHistoryEvent`. This release schedules none. The guard is not a database trigger.
 - Rows: 32.
@@ -154,7 +154,7 @@ Conference and division for one franchise in one season. The same rows in every 
 - Database checks: `slot_order` is at least 1; `conference_slug` and `division_slug` are nonempty. Model validation also requires both values to be slugs, one slot per release, season, conference, and division, and a year inside the franchise's active span and the release's playable span. Conference count, division count, slot limit, and realignment are publication checks against the versioned schedule.
 - Indexes: `(season_year, conference_slug, division_slug, slot_order)`.
 - Application guard after publish. Not a database trigger.
-- Rows: 1,792.
+- Rows: 1,797.
 - Created at release publication.
 
 ### FranchiseHistoryEvent
@@ -174,20 +174,20 @@ Rename, relocation, or reorganization. The table exists so a later release can a
 
 ### ExpansionEvent
 
-The 1976 and 1996 entry rules, including the active-roster arithmetic.
+The 1976, 1995, 1999, and 2002 entry rules, including the active-roster arithmetic.
 
 - Ownership: shared.
 - Primary key: `BigAutoField`. Public key: `(release, season_year)`.
 - Foreign keys: `release` `CASCADE`.
 - Fields: `season_year`; `existing_club_count`; `new_club_count`; `active_target`; `taxi_capacity`; `max_losses_per_existing`; `min_losses_per_existing`; `clubs_at_max_loss`; `clubs_at_min_loss`; `veteran_picks_per_new`; `veteran_picks_total`; `rookie_picks_per_new`; `undrafted_multiplier`; `undrafted_pool`; `undrafted_reserved_per_new`; all of those `PositiveSmallIntegerField`. There is no free-agent reserve column. Rule text: `expansion_draft_order_rule`, `roster_building_rule`, `free_agent_rule`, `rookie_draft_slot_rule`, `gm_hiring_rule`, `hc_hiring_rule`, each a non-empty `TextField` before publish. `free_agent_rule` says free agents may replace an undrafted signing and are not required.
 - Unique: `(release, season_year)`.
-- Database checks, all on the row, and none of them read a timeline free-agent list or hardcode 1976 or 1996: `veteran_picks_per_new * new_club_count = veteran_picks_total`; `clubs_at_max_loss + clubs_at_min_loss = existing_club_count`; `clubs_at_max_loss * max_losses_per_existing + clubs_at_min_loss * min_losses_per_existing = veteran_picks_total`; `min_losses_per_existing < max_losses_per_existing`; `veteran_picks_per_new + rookie_picks_per_new + undrafted_reserved_per_new = active_target`; `undrafted_reserved_per_new * new_club_count <= undrafted_pool`; `undrafted_pool = undrafted_multiplier * (existing_club_count + new_club_count)`. Taxi capacity is not in the active-roster sum. Rule text may be empty while the release is draft. Publication requires each rule text to be nonempty and checks the confirmed rows. The stored 1976 row is 24, 4, 40, 8, max 3, min 2, 16 clubs at 3, 8 clubs at 2, 16 veterans per new club, 64 total, 17 rookies, multiplier 2, pool 56, reserved 7. `16 + 17 + 7 = 40` and `16 × 3 + 8 × 2 = 64`. The stored 1996 row is 28, 4, 53, 8, max 4, min 3, 20 clubs at 4, 8 clubs at 3, 26 veterans per new club, 104 total, 7 rookies, multiplier 3, pool 96, reserved 20. `26 + 7 + 20 = 53` and `20 × 4 + 8 × 3 = 104`. Conference and division placement stays on `FranchiseSeasonMembership`. There is no separate placement column and no free-agent reserve column.
+- Database checks, all on the row, and none of them read a timeline free-agent list or hardcode 1976, 1995, 1999, or 2002: `veteran_picks_per_new * new_club_count = veteran_picks_total`; `clubs_at_max_loss + clubs_at_min_loss = existing_club_count`; `clubs_at_max_loss * max_losses_per_existing + clubs_at_min_loss * min_losses_per_existing = veteran_picks_total`; `min_losses_per_existing < max_losses_per_existing`; `veteran_picks_per_new + rookie_picks_per_new + undrafted_reserved_per_new = active_target`; `undrafted_reserved_per_new * new_club_count <= undrafted_pool`; `undrafted_pool = undrafted_multiplier * (existing_club_count + new_club_count)`. Taxi capacity is not in the active-roster sum. Rule text may be empty while the release is draft. Publication requires each rule text to be nonempty and checks the confirmed rows. The stored 1976 row is 26 existing, 2 new, active 40, taxi 8, max 2, min 1, 6 clubs at 2, 20 clubs at 1, 16 veterans per new club, 32 total, 17 rookies, multiplier 2, pool 56, reserved 7. `16 + 17 + 7 = 40` and `6 × 2 + 20 × 1 = 32`. The stored 1995 row is 28 existing, 2 new, active 53, taxi 8, max 2, min 1, 24 clubs at 2, 4 clubs at 1, 26 veterans per new club, 52 total, 7 rookies, multiplier 2, pool 60, reserved 20. `26 + 7 + 20 = 53` and `24 × 2 + 4 × 1 = 52`. The stored 1999 row is 30 existing, 1 new, active 53, taxi 8, max 1, min 0, 26 clubs at 1, 4 clubs at 0, 26 veterans, 26 total, 7 rookies, multiplier 2, pool 62, reserved 20. `26 × 1 + 4 × 0 = 26`. The stored 2002 row is 31 existing, 1 new, active 53, taxi 8, max 1, min 0, 26 clubs at 1, 5 clubs at 0, 26 veterans, 26 total, 7 rookies, multiplier 2, pool 64, reserved 20. `26 × 1 + 5 × 0 = 26`. The undrafted pool is the undrafted class, not the veteran board. Conference and division placement stays on `FranchiseSeasonMembership`. There is no separate placement column and no free-agent reserve column. A minimum of 0 is a legal small integer, and it is below the maximum of 1.
 - Indexes: `season_year`.
 - Immutable after publish.
-- Rows: 2.
+- Rows: 4.
 - Created at release publication.
 
-The publication service also refuses the release if the generated undrafted class is smaller than `undrafted_pool`, or if the multiplier is not 2 in a normal year and 3 in 1996. It does not look for veteran free agents. A timeline season is not blocked by a free-agent shortage. The shared classes are already on the release.
+The publication service also refuses the release if the generated undrafted class is smaller than `undrafted_pool`, or if the multiplier is not 2. The old 1996 multiplier of 3 is not part of this release. It does not look for veteran free agents. A timeline season is not blocked by a free-agent shortage. The shared classes are already on the release.
 
 ### ExpansionClub
 
@@ -196,12 +196,12 @@ Which new franchises belong to an expansion event.
 - Ownership: shared.
 - Primary key: `BigAutoField`.
 - Foreign keys: `event` `CASCADE`; `franchise` `PROTECT`.
-- Fields: `selection_order` `PositiveSmallIntegerField` (1–4, placeholder slug order).
+- Fields: `selection_order` `PositiveSmallIntegerField` (1 through that event's new-club count, at most 2, placeholder slug order).
 - Unique: `(event, franchise)`; `(event, selection_order)`.
 - Checks: the franchise's `first_active_season` equals the event year.
 - Indexes: the unique keys.
 - Immutable after publish.
-- Rows: 8.
+- Rows: 6.
 - Created at release publication.
 
 ### HistoricalStanding
@@ -216,7 +216,7 @@ Shared 1960–1969 record book used for display and for the 1970 draft order. No
 - Checks: wins, losses, and ties are nonnegative. A database check requires `draft_order` to be null or at least 1. Model validation places the year in the ten seasons immediately before the release's first playable season, allows `draft_order` only in the last of those seasons, and limits the rows to founding franchises. For the confirmed 1970 release that window is 1960–1969, and draft order is allowed only in 1969. Phase 1 does not check that wins + losses + ties equal a schedule length, because the approved design does not fix the 1960–1969 game count. That equality can be added when a length is approved, without a new table.
 - Indexes: `(season_year, draft_order)`.
 - Application guard after publish. Not a database trigger.
-- Rows: 240 if 24 clubs played each of those ten years. The generator fills this from the same seed. It does not replay the seasons.
+- Rows: 260 if 26 clubs played each of those ten years. The generator fills this from the same seed. It does not replay the seasons. `fg-founding-1` does not write these rows.
 - Created at release publication.
 
 ### DraftClass
@@ -228,10 +228,10 @@ Header for one rookie class, 1970 through 2029.
 - Foreign keys: `release` `CASCADE`; `profile` to `EraRuleProfile`, `PROTECT`.
 - Fields: `season_year`; `franchise_count`; `rounds`; `draftable_count`; `undrafted_multiplier` `PositiveSmallIntegerField`; `undrafted_count`.
 - Unique: `(release, season_year)`.
-- Database checks: `draftable_count = rounds * franchise_count`; `undrafted_count = undrafted_multiplier * franchise_count`; rounds, franchise count, and the multiplier are at least 1. Model validation places the year inside the release, requires the profile to cover that year, and requires `rounds` to match the profile. It does not hardcode 1970–2029. Publication requires the multiplier to be 2, except an expansion year, which uses that `ExpansionEvent.undrafted_multiplier`. The confirmed 1996 class uses 3. Publication does not force every class through the two-per-franchise rule.
+- Database checks: `draftable_count = rounds * franchise_count`; `undrafted_count = undrafted_multiplier * franchise_count`; rounds, franchise count, and the multiplier are at least 1. Model validation places the year inside the release, requires the profile to cover that year, and requires `rounds` to match the profile. It does not hardcode 1970–2029. Publication requires the multiplier to be 2 in every year, including each expansion year, which uses that `ExpansionEvent.undrafted_multiplier`. The old confirmed 1996 class used 3. This release does not. Publication does not force every class through the two-per-franchise rule except by that multiplier check.
 - Indexes: `season_year`.
 - Immutable after publish.
-- Rows: 60. Draftable prospects across those rows: 16,028. Undrafted: 3,616. All draft prospects: 19,644.
+- Rows: 60. Draftable prospects across those rows: 16,183. Undrafted: 3,594. All draft prospects: 19,777.
 - Created at release publication.
 
 Membership is `UniversePlayer.draft_class`, not a second copy of the person.
@@ -249,7 +249,7 @@ One fictional player. Identity only. No current rating, contract, roster, or tim
 - Indexes: `(release, cohort)`; `(draft_class, board_rank)`; `(position)`.
 - Immutable after publish: every field on this row. A timeline never updates it.
 - Mutable: nothing after publish.
-- Rows: 21,948 if the archive mean holds, of which 20,916 are playable and 1,032 are archive. Opening cohort 1,272. The extra 32 playable identities are the 1996 undrafted class.
+- Rows: 22,273 if the archive mean holds, of which 21,155 are playable and 1,118 are archive. Opening cohort 1,378. The undrafted multiplier is 2 in every year, so there is no extra 1996 class.
 - Created at release publication.
 
 ### PlayerRatingProfile
@@ -279,7 +279,7 @@ Display only. The simulator reads `board_rank` and the rating profile, not these
 - Checks: four seasons before the player's anchor year when an anchor is stored; `starts <= games`. There is no permanent games maximum. College schedule length, including a later postseason, is a publication or era-rule check once those rules exist. `PositiveSmallIntegerField` already rejects a negative count.
 - Indexes: `(player, season_year)`.
 - Immutable after publish.
-- Rows: 87,792 at four seasons per identity.
+- Rows: 89,092 at four seasons per identity.
 - Created at release publication.
 
 ### UniverseProStint
@@ -309,7 +309,7 @@ Shared counting stats for 1960–1969. Same columns as `TimelinePlayerSeason`.
 - Checks: year in 1960–1969.
 - Indexes: `(franchise, season_year)`; `(player, season_year)`.
 - Immutable after publish.
-- Rows: 11,520 if the historical roster is 24 clubs times 48 players times 10 years.
+- Rows: 12,480 if the historical roster is 26 clubs times 48 players times 10 years.
 - Created at release publication.
 
 ### UniverseAward
@@ -337,7 +337,7 @@ Honors for 1960–1969.
 - Checks: the two strengths differ; the two traits differ; priorities differ when both are set; birth year fits the age band in the design.
 - Indexes: `(release, debut_year)`.
 - Immutable after publish.
-- Rows: 462 if the incoming floor holds (100 initial, the rest arriving 1971–2029).
+- Rows: 460 if the incoming floor holds (100 initial, the rest arriving 1971–2029).
 - Created at release publication. A timeline does not mint a GM.
 
 ### GMRatingProfile
@@ -350,7 +350,7 @@ Honors for 1960–1969.
 - Checks: every rating 0–100; each initial ability is less than or equal to its potential.
 - Indexes: the one-to-one.
 - Immutable after publish.
-- Rows: 462.
+- Rows: 460.
 - Created at release publication.
 
 ### UniverseCoach
@@ -365,7 +365,7 @@ Head coaches, coordinators, and historical position coaches are one person table
 - Checks: strengths differ; traits differ; scheme enums respect the debut year.
 - Indexes: `(release, debut_year, specialty)`.
 - Immutable after publish, including `specialty` and the preferred schemes. Scheme ratings may rise later only inside the timeline current profile, and only up to potential.
-- Rows: 1,148. That is 580 head-coach identities plus 568 coordinator identities. A person who is later promoted does not become a second row.
+- Rows: 1,142. That is 578 head-coach identities plus 564 coordinator identities. A person who is later promoted does not become a second row.
 - Created at release publication.
 
 ### CoachRatingProfile
@@ -378,7 +378,7 @@ Head coaches, coordinators, and historical position coaches are one person table
 - Checks: 0–100, and initial less than or equal to potential, except reputation.
 - Indexes: the one-to-one.
 - Immutable after publish.
-- Rows: 1,148.
+- Rows: 1,142.
 - Created at release publication.
 
 ### UniverseStaffPost
@@ -409,7 +409,7 @@ The 1970 pre-draft roster and free-agent pool. A template. `start_timeline` copi
 - Checks: free agents have null franchise, null depth, and role `free_agent`; rostered players have a founding franchise; the player is in the opening cohort.
 - Indexes: `(franchise, role)`.
 - Immutable after publish.
-- Rows: 1,272 if 24 clubs times 48 slots plus 5 free agents per club. Taxi slots in this template are filled. Expansion taxi later is not.
+- Rows: 1,378 if 26 clubs times 48 slots plus 5 free agents per club. Taxi slots in this template are filled. Expansion taxi later is not.
 - Created at release publication.
 
 ### OpeningContract
@@ -424,7 +424,7 @@ Shared template for opening veterans. Free agents have none.
 - Database checks: `years` is at least 1; `end_year >= start_year`; salary, guarantee, and bonus are nonnegative; `guaranteed` is at most salary times years. Model validation refuses a free-agent assignment, requires the contract to cover the release's first playable season, and, when an era profile covers that season, keeps `years` inside that profile's veteran range. The confirmed 1–5 length and the year 1970 are not schema constants. There is no separate status or rookie flag: the assignment already carries the player and franchise, and every opening contract is a veteran template. Amounts are ledger units. The 1970 market is uncapped. The scale may be configured later without a new column.
 - Indexes: the one-to-one.
 - Immutable after publish. The timeline copy is the contract that can change.
-- Rows: 1,152.
+- Rows: 1,248.
 - Created at release publication.
 
 ### OpeningStaffAssignment
@@ -469,7 +469,7 @@ One campaign. Not a `leagues.League`, and not limited to one human forever. The 
 - Foreign keys: `created_by` to the auth user, `SET_NULL`, null; `release` `PROTECT`. There is no `owned_franchise` column.
 - Fields: `name` `CharField(255)`; `start_season_year` and `current_season_year` `PositiveSmallIntegerField`; `season_index` `PositiveSmallIntegerField`; `phase` choices `choose_franchise`, `staff`, `direction`, `draft`, `instructions`, `roster_cut`, `regular`, `playoffs`, `offseason`, `complete`; `status` choices `active`, `completed`, `archived`; `decision_audit` `CharField(64)`, null. The design's `decision_fingerprint` is this hash. It records decisions for inspection. It is not a random seed. `persist_snap_draws` `BooleanField`, default false; `created_at`; `updated_at`; `completed_at`, null while `active`.
 - Unique: none across campaigns. Two timelines may share a name.
-- Database checks: the name is nonempty; phase and status are in the lists above; `season_index` is at least 1; `current_season_year` is at least `start_season_year`; `current_season_year = start_season_year + season_index - 1`; `completed_at` is null exactly while `status` is `active`. Model validation places both years inside the parent release, requires a published release when the timeline is created, and requires `phase = complete` when `status` is `completed`. It does not hardcode 1970, 1976, 1996, or a 60-season cap. The creation path, which this phase does not implement, sets `start_season_year` to the release's first playable season. For the confirmed release that year is 1970. A later start in 1976 or 1996 can use the same columns. Start-year eligibility is not read from `FranchiseSeasonMembership.owner_selectable`. An expansion award changes a control stint. It does not set the shared `owner_selectable` flag false.
+- Database checks: the name is nonempty; phase and status are in the lists above; `season_index` is at least 1; `current_season_year` is at least `start_season_year`; `current_season_year = start_season_year + season_index - 1`; `completed_at` is null exactly while `status` is `active`. Model validation places both years inside the parent release, requires a published release when the timeline is created, and requires `phase = complete` when `status` is `completed`. It does not hardcode 1970, 1976, 1995, 1999, 2002, or a 60-season cap. The creation path, which this phase does not implement, sets `start_season_year` to the release's first playable season. For the confirmed release that year is 1970. A later start in 1976, 1995, 1999, or 2002 can use the same columns. Whether that mode exists remains unresolved. Start-year eligibility is not read from `FranchiseSeasonMembership.owner_selectable`. An expansion award changes a control stint. It does not set the shared `owner_selectable` flag false.
 - Indexes: `(created_by, release)`; `(release, status)`.
 - Immutable while the timeline is `active`: `created_by`, `release`, `start_season_year`, `created_at`. Mutable: `name`, `current_season_year`, `season_index`, `phase`, `decision_audit`, `persist_snap_draws`. `completed` may become `archived`. An `archived` timeline cannot be changed. A `completed` or `archived` timeline accepts no new child rows through `clean()` and `save()`.
 - Rows: one per campaign. Unbounded across users. Zero in this migration.
@@ -514,7 +514,7 @@ The clock for one year of one timeline.
 - Foreign keys: `timeline` `CASCADE`; `profile` to `EraRuleProfile`, `PROTECT`.
 - Fields: `season_index`; `season_year`; `phase` the same family as the header, for that year; `expansion_gate` choices `not_expansion`, `ready`, `blocked`, default `not_expansion`; `setup_complete`, `directives_locked`, `regular_season_simulated`, and `postseason_complete` `BooleanField`, default false; `completed_at`, null unless `phase` is `complete`. The shorter words setup, regular season, postseason, and complete are these booleans plus `phase` values `regular`, `playoffs`, and `complete`. The header's finer phases remain the stored vocabulary.
 - Unique: `(timeline, season_year)`.
-- Database checks: phase and expansion gate are in their lists; `season_index` is at least 1; directives lock only after setup is complete; the regular season is marked simulated only after directives are locked, which also requires setup to be complete; postseason completion follows regular-season simulation; `phase = complete` requires `postseason_complete`, and therefore the earlier milestones; `completed_at` is set exactly when `phase` is `complete`. The opening flow does not lock directives before setup is complete. Model validation places the year inside the timeline and the release, requires `season_year = start_season_year + season_index - 1`, requires the profile to belong to the release and cover the year, and refuses `directives_locked` while an `OwnerDirective` for that season is still unlocked. It does not hardcode `1969 + season_index`. The header phase and the season phase are both stored. They are not forced to be equal. For 1976 and 1996, a later service may set `expansion_gate` to `ready` from the shared expansion arithmetic. It is not `blocked` because the timeline has too few free agents. Taxi does not count. A failure of the shared arithmetic is a release-publication error, not a reason to invent a person at season entry.
+- Database checks: phase and expansion gate are in their lists; `season_index` is at least 1; directives lock only after setup is complete; the regular season is marked simulated only after directives are locked, which also requires setup to be complete; postseason completion follows regular-season simulation; `phase = complete` requires `postseason_complete`, and therefore the earlier milestones; `completed_at` is set exactly when `phase` is `complete`. The opening flow does not lock directives before setup is complete. Model validation places the year inside the timeline and the release, requires `season_year = start_season_year + season_index - 1`, requires the profile to belong to the release and cover the year, and refuses `directives_locked` while an `OwnerDirective` for that season is still unlocked. It does not hardcode `1969 + season_index`. The header phase and the season phase are both stored. They are not forced to be equal. For 1976, 1995, 1999, and 2002, a later service may set `expansion_gate` to `ready` from the shared expansion arithmetic. It is not `blocked` because the timeline has too few free agents. Taxi does not count. A failure of the shared arithmetic is a release-publication error, not a reason to invent a person at season entry.
 - Indexes: the unique key; `(profile, season_year)`.
 - Immutable: `season_index`, `season_year`, `profile`, `timeline`. Mutable while the timeline is active: `phase`, `expansion_gate`, and the progress flags.
 - Rows: 60 per completed timeline once a campaign is played through. This phase creates none of them, including the opening year.
@@ -634,7 +634,7 @@ A job inside the timeline. Promotion closes one stint and opens another on the s
 - Checks: `end` is null or at least `start`; reason is null exactly while the stint is open; a coordinator role matches specialty.
 - Indexes: `(franchise, role, end_year)`; `(staff, start_year)`.
 - Immutable: staff, role, start, franchise. Mutable: end and `reason_ended`, written once when the stint closes. Win-loss is not stored; it is derived from standings.
-- Rows: about 896 GM and head-coach stints at a 4-year mean, or about 1,792 if coordinators are seated the same way. One timeline.
+- Rows: the 4-year mean no longer divides 1,797 franchise-seasons. That is 449.25 stints per role, 898.5 for GM and head coach, and 1,797 if coordinators are seated the same way. The mean is unchanged. One timeline.
 - Created at timeline creation for the opening jobs, including an `opening_replace` close when the owner hires. Later hires, firings, and promotions append rows during the offseason.
 
 ### TimelinePlayer
@@ -649,7 +649,7 @@ The overlay. Created when the person becomes relevant. Retirement is `status = r
 - Checks: the player is not archive; `seasons_played` 0–60; career-altering count 0–10; `retired` status matches a non-null `retired_year`.
 - Indexes: `(timeline, status)`; `(player)`.
 - Immutable: `timeline`, `player`. Mutable: status, seasons played, injury count, retirement year.
-- Rows: 1,272 at timeline creation for the opening cohort. The 1970 class during the opening draft. Each later class at season entry. A completed timeline holds 20,916 overlays. A second timeline holds its own 20,916 and no extra `UniversePlayer` rows.
+- Rows: 1,378 at timeline creation for the opening cohort. The 1970 class during the opening draft. Each later class at season entry. A completed timeline holds 21,155 overlays. A second timeline holds its own 21,155 and no extra `UniversePlayer` rows.
 - Created at timeline creation, the opening draft, and season entry. Not during an ordinary snap.
 
 ### PlayerCurrentRating
@@ -714,7 +714,7 @@ Where the player is. A cut, signing, or trade closes one stint and opens another
 - Checks: one open stint; free-agent role matches a null franchise; years inside 1970–2029.
 - Indexes: `(franchise, start_year)`; `(overlay, start_year)`.
 - Immutable: overlay, franchise, role, start. Mutable: the end, written once. A depth-chart change that does not change the club does not require a new stint.
-- Rows: several per player. The 103,352 figure is maximum roster capacity, counting every taxi slot, not a guaranteed number of occupied seasons. Slot-seasons themselves are not stint rows.
+- Rows: several per player. The 103,501 figure is maximum roster capacity, counting every taxi slot, not a guaranteed number of occupied seasons. Slot-seasons themselves are not stint rows.
 - Created at timeline creation from `OpeningAssignment`, then during transactions.
 
 ### DepthChartEntry
@@ -787,7 +787,7 @@ The right to pick, including a pick that was traded. Created before the draft. `
 - Checks: round does not exceed the profile's `draft_rounds`; overall pick does not exceed `draftable_count`.
 - Indexes: `(timeline, season_year, current_franchise)`.
 - Immutable: year, round, slot, original franchise, overall pick. Mutable: `current_franchise`, until the pick is used.
-- Rows: 16,028 per completed timeline, equal to the draftable prospects.
+- Rows: 16,183 per completed timeline, equal to the draftable prospects.
 - Created at season entry from the previous standings and the shared order rule. The 1970 board is created during the opening draft from `HistoricalStanding`.
 
 ### TimelineDraftPick
@@ -800,7 +800,7 @@ The right to pick, including a pick that was traded. Created before the draft. `
 - Checks: the prospect's class year matches the slot year; the prospect is `draftable`.
 - Indexes: `(prospect)`.
 - Immutable once written.
-- Rows: 16,028 per completed timeline.
+- Rows: 16,183 per completed timeline.
 - Created during the draft, which is the opening sequence in 1970 and the offseason afterward.
 
 Undrafted signings do not insert a pick. They insert a contract and a stint.
@@ -843,7 +843,7 @@ The agreement. A pick-for-pick deal has no roster stint, so the stint list canno
 - Checks: the player's open stint is on that franchise; a club with exactly one quarterback, kicker, or punter has that player protected; the number unprotected is at least `max_losses_per_existing`; the number lost later cannot exceed that maximum.
 - Indexes: `(event, franchise, protected)`.
 - Immutable once the expansion draft starts.
-- Rows: one per rostered player on existing clubs in that offseason. About 1,152 in 1976 if every active and taxi spot is full, and about 1,700 in 1996. Taxi players may be on the list. They are not required to exist.
+- Rows: one per rostered player on existing clubs in that offseason. If every active and taxi spot is full, that is 1,248 in 1976 (26 × 48), 1,540 in 1995 (28 × 55), 1,830 in 1999 (30 × 61), and 1,891 in 2002 (31 × 61). The 1995 board uses the 1994 active limit of 47. Taxi players may be on the list. They are not required to exist.
 - Created at season entry for the expansion offseason.
 
 ### TimelineExpansionPick
@@ -856,7 +856,7 @@ The agreement. A pick-for-pick deal has no roster stint, so the stint list canno
 - Checks: pick number is 1 through `veteran_picks_total`; the selecting franchise is one of the event's new clubs; the player was unprotected; each existing franchise loses at most `max_losses_per_existing` players; the finished losses are only the minimum or the maximum, and the counts match `clubs_at_max_loss` and `clubs_at_min_loss`.
 - Indexes: `(event, selecting_franchise)`.
 - Immutable once written.
-- Rows: 64 in 1976 and 104 in 1996, 168 per timeline that completes both drafts.
+- Rows: 32 in 1976, 52 in 1995, 26 in 1999, and 26 in 2002, 136 per timeline that completes all four drafts.
 - Created during the expansion draft. The row does not create a `UniversePlayer`.
 
 ### FreeAgentOffer
@@ -888,7 +888,7 @@ The fixture. Its identity is the replay game id.
 - Checks: home and away differ; both memberships exist for that shared season. This later model decides which calendar weeks exist, which are byes, how many games each franchise plays, whether a franchise is scheduled in a week, and how postseason weeks are numbered. `schedule_length` remains games per franchise, not the maximum week.
 - Indexes: `(timeline, season_year, week)`.
 - Immutable: teams, year, week, kind. Mutable: `played`.
-- Rows: 14,280 regular-season games per completed timeline if the schedule lengths hold (1,008 + 392 + 3,808 + 224 + 6,400 + 2,448). Playoff games add a few hundred more, depending on byes and the field.
+- Rows: 14,308 regular-season games per completed timeline if the schedule lengths hold (1,092 + 392 + 3,808 + 960 + 744 + 4,864 + 2,448). Playoff games add a few hundred more, depending on byes and the field. They are not in the 14,308.
 - Created at season entry for the regular season. Playoff fixtures are created when the bracket is known.
 
 ### GameKickoffState
@@ -935,7 +935,7 @@ One row per franchise per season. Rebuildable from `GameResult`. Stored so the d
 - Checks: the membership for that franchise-season matches the slugs; wins + losses + ties does not exceed the games played so far.
 - Indexes: `(timeline, season_year, conference_slug, division_slug)`.
 - Immutable: timeline, franchise, year, slugs. Mutable: the counting columns, until the season is complete.
-- Rows: 1,792 per completed timeline.
+- Rows: 1,797 per completed timeline.
 - Created at season entry, then updated during simulation.
 
 ### PlayoffBerth
@@ -945,10 +945,10 @@ One row per franchise per season. Rebuildable from `GameResult`. Stored so the d
 - Foreign keys: `timeline` `CASCADE`; `franchise` `PROTECT`.
 - Fields: `season_year`; `seed` `PositiveSmallIntegerField`; `berth` choices `division`, `wild_card`.
 - Unique: `(timeline, season_year, franchise)`; `(timeline, season_year, seed)`.
-- Checks: the count of berths matches the profile's playoff format.
+- Checks: the count of berths matches the profile's playoff format. That is 8 berths through 1998 and 12 from 1999.
 - Indexes: `(timeline, season_year)`.
 - Immutable once the bracket is built.
-- Rows: 8 or 12 per season, a few hundred per timeline.
+- Rows: 8 per season for 1970–1998 and 12 per season for 1999–2029, which is `29 × 8 + 31 × 12 = 604` per completed timeline. The unique key `(timeline, season_year, seed)` allows one seed 1 per season. Each conference seeds its own qualifiers, so two clubs can both be seed 1. This row does not yet name a conference. How those two seeds are stored is unresolved. This proposal does not add a column for it.
 - Created at the end of the regular season, during simulation.
 
 ### TimelinePlayerSeason
@@ -963,7 +963,7 @@ Counting stats for 1970–2029 in one timeline. The design's `TimelineSeason` st
 - Checks: the stat-block checks; the year is inside the timeline.
 - Indexes: `(franchise, season_year)`; `(overlay, season_year)`.
 - Immutable after the season is complete. Mutable while that season is in progress.
-- Rows: at most 103,352. That number is maximum capacity, with every taxi slot occupied. Rows are created for occupants, so a timeline that leaves taxi empty stores fewer. Expansion clubs are expected to leave some taxi spots empty.
+- Rows: at most 103,501. That number is maximum capacity, with every taxi slot occupied. Rows are created for occupants, so a timeline that leaves taxi empty stores fewer. Expansion clubs are expected to leave some taxi spots empty.
 - Created during simulation, the first week the player participates.
 
 ### TimelineAward
@@ -1018,8 +1018,8 @@ Existing `League`, `Conference`, `Division`, `Team`, and `MovementPath` rows rem
 - Models: `UniverseRelease`, `UniverseFranchise`, `FranchiseSeasonMembership`, `FranchiseHistoryEvent`, `HistoricalStanding`.
 - Depends on: `leagues.League` existing. `catalog_team` stays null.
 - Validation in this phase: generic structure only. A founding franchise begins in its release's first season, an expansion franchise begins later, membership and history years stay inside the franchise and the release, and historical years are the ten seasons before the release starts. The confirmed schedule is not a database check.
-- Confirmed release, checked at publication in phase 8 and not by this migration: 24 founding franchises; playable seasons 1970–2029; expansion to 28 franchises in 1976; expansion to 32 franchises in 1996; the accepted conference and division alignment; 1,792 franchise-season memberships; `owner_selectable` true on every one of those active memberships; no bot-only franchise-season; no history events.
-- Rows: 1 release, 32 franchises, 1,792 memberships, 0 history events, about 240 historical standings.
+- Confirmed release, checked at publication in phase 8 and not by this migration: 26 founding franchises; playable seasons 1970–2029; expansion to 28 franchises in 1976, 30 in 1995, 31 in 1999, and 32 in 2002; the accepted conference and division alignment; 1,797 franchise-season memberships; `owner_selectable` true on every one of those active memberships; no bot-only franchise-season; no history events. `fg-founding-1` is not this generator.
+- Rows: 1 release, 32 franchises, 1,797 memberships, 0 history events, 260 historical standings.
 - League data: untouched.
 - Rollback: drop these tables. The catalog is unchanged.
 
@@ -1029,7 +1029,7 @@ Existing `League`, `Conference`, `Division`, `Team`, and `MovementPath` rows rem
 - Depends on: phase 1 franchises, for origin franchise and pro stints.
 - Validation: one profile per person; every component 0–100 and initial at or under potential; 19-position enum; 1970–2029 prospects have null origin pick fields; trait and staff-signature checks; college seasons are four per player when that default is on. Phase 2 does not make that count of four a database invariant.
 - Technical notes from implementation, not game-rule changes: `draft_class` and `origin_profile` are added with phase 3, when `DraftClass` and `EraRuleProfile` exist. The `(draft_class, board_rank)` unique constraint arrives with that foreign key. `UniverseAward` stores `release` so one honor per release, season, kind, and slot can be a real unique key; non-all-league rows use an empty `slot` because MySQL treats nulls as distinct. History rows point at `UniverseFranchise` with `PROTECT`. Shared pro years are the ten seasons before the release's first playable season, not a hardcoded 1960–1969 check. `UniverseStaffPost.role` accepts every role named in the design or in this proposal: GM posts may be `gm`, `personnel_director`, `scout`, or `college_coach`; coach posts may be `head_coach`, `offensive_coordinator`, `defensive_coordinator`, `position_coach`, or `college_head_coach`. The design's `origin_draft_franchise` is `UniversePlayer.origin_franchise`. The design's single award `staff` reference is `gm` or `coach`. Django's cross-database index name limit is 30 characters, so the three franchise indexes are `universe_prostint_fr_idx`, `universe_proseason_fr_idx`, and `universe_staffpost_fr_idx` on the columns this proposal lists. Every shared staff post ends no later than `debut_year - 1`. A post that names a Federation franchise also ends before the release's first playable season. An incoming person may keep an external or college post through the season before debut. `games` versus `schedule_length`, including college schedule length, waits for a later rule phase. Phase 2 does not cap college games at 12. Initial-staff signature uniqueness and the exact debut age bands stay publication checks. The database age check is only that debut falls between 20 and 80 years after birth. Published-release immutability remains `clean`, `save`, and instance `delete`, not a database trigger. Bounded lists use the explicit ordered columns already named in this proposal.
-- Rows: 21,948 players and the same number of rating profiles, 87,792 college seasons, 11,520 historical pro seasons, 462 GMs, 1,148 coaches, and their profiles, once a generator runs. The migration itself inserts nothing.
+- Rows: 22,273 players and the same number of rating profiles, 89,092 college seasons, 12,480 historical pro seasons, 460 GMs, 1,142 coaches, and their profiles, once a generator runs. The migration itself inserts nothing. `fg-founding-1` does not write these rows.
 - League data: untouched.
 - Rollback: drop the people tables. Phase 1 remains.
 
@@ -1037,9 +1037,9 @@ Existing `League`, `Conference`, `Division`, `Team`, and `MovementPath` rows rem
 
 - Models: `EraRuleProfile`, `EraCollegeWeight`, `DraftClass`, `ExpansionEvent`, `ExpansionClub`, `OpeningAssignment`, `OpeningContract`, `OpeningStaffAssignment`.
 - Depends on: phases 1 and 2.
-- Validation: nine profiles for the confirmed release; quota columns sum to that profile's active and taxi limits, which are 40, 45, 47, or 53 and taxi 8 on that release; spans do not overlap; expansion publication checks `16 + 17 + 7 = 40` and `26 + 7 + 20 = 53`, with veteran totals 64 and 104; the undrafted multiplier is 2 except for 3 in 1996; no free-agent reserve is required; opening assignment counts; a modern profile with an empty `cap_limit` fails the publish service and does not fail merely because the column exists. Those confirmed numbers are publication checks, not schema constants. `OwnerDirective` stays a phase 4 timeline model.
+- Validation: ten profiles for the confirmed release; quota columns sum to that profile's active and taxi limits, which are 40, 45, 47, or 53 and taxi 8 on that release; spans do not overlap; expansion publication checks `16 + 17 + 7 = 40` in 1976 and `26 + 7 + 20 = 53` in 1995, 1999, and 2002, with veteran totals 32, 52, 26, and 26; the undrafted multiplier is 2 in every year; no free-agent reserve is required; opening assignment counts; a modern profile with an empty `cap_limit` fails the publish service and does not fail merely because the column exists. Those confirmed numbers are publication checks, not schema constants. `OwnerDirective` stays a phase 4 timeline model.
 - Technical notes from implementation, not new game rules: quotas stay the proposal's explicit `quota_active_*` and `quota_taxi_*` columns, one pair per position, not a child table. `UniversePlayer.draft_class` and `origin_profile` are added here. `(draft_class, board_rank)` is unique; MySQL still allows many null ranks. Franchise foreign keys use `PROTECT`. `rookie_slot_scale` is the one `JSONField`, which MySQL stores as JSON. Opening contracts do not duplicate the assignment's player or franchise and do not add a status or rookie flag.
-- Rows: 9 profiles, 60 draft-class headers, 2 expansion events, 8 expansion clubs, 1,272 assignments, 1,152 opening contracts, 96 staff assignments, plus college weights.
+- Rows: 10 profiles, 60 draft-class headers, 4 expansion events, 6 expansion clubs, 1,378 assignments, 1,248 opening contracts, 104 staff assignments, plus college weights. The 104 staff assignments are 26 each of GM, head coach, offensive coordinator, and defensive coordinator. `fg-founding-1` still writes 24 GM seats and 24 head-coach seats and does not write coordinators or expansion events.
 - League data: untouched.
 - Rollback: drop these tables. People and franchises remain. Draft-class foreign keys on players must be added in this phase, so reversing it also clears `UniversePlayer.draft_class`.
 
@@ -1057,7 +1057,7 @@ Existing `League`, `Conference`, `Division`, `Team`, and `MovementPath` rows rem
 - Models: `TimelinePlayer`, `PlayerCurrentRating`, `TimelineScoutReport`, `TimelineScoutComponent`, `TimelineStaff`, `GMCurrentRating`, `CoachCurrentRating`, `TimelineStaffScoutReport`, `TimelineStaffScoutComponent`, `StaffStint`.
 - Depends on: phase 4 and the shared people.
 - Validation: unique `(timeline, player)`; no archive overlays; current values start equal to initial and never exceed potential; a new timeline has overlays only for the opening cohort and, once the opening draft starts, the 1970 class.
-- Rows: none in the migration. A started timeline has 1,272 player overlays and 280 staff overlays before later classes exist.
+- Rows: none in the migration. A started timeline has 1,378 player overlays and 280 staff overlays before later classes exist. The 280 is the initial pool of 100 GMs, 100 head coaches, and 80 coordinators. Twenty-six of each GM, head-coach, and coordinator specialty are seated.
 - League data: untouched.
 - Rollback: drop overlay tables. Timeline headers remain. Shared people remain.
 
@@ -1065,8 +1065,8 @@ Existing `League`, `Conference`, `Division`, `Team`, and `MovementPath` rows rem
 
 - Models: `RosterStint`, `DepthChartEntry`, `SpecialTeamsRole`, `TimelineContract`, `Injury`, `DraftSlot`, `TimelineDraftPick`, `Trade`, `TradeAsset`, `ExpansionProtection`, `TimelineExpansionPick`, `FreeAgentOffer`.
 - Depends on: phase 5.
-- Validation: one open stint and one active contract; expansion losses are 2 or 3 in 1976 and 3 or 4 in 1996, with no club above the maximum; expansion picks are 64 and 104; the active-roster gate uses shared veterans, rookies, and reserved undrafted prospects, and it does not treat taxi or free agents as required; draft slots equal that year's class size.
-- Rows: none in the migration. A full timeline later holds 16,028 draft picks, 168 expansion picks, and the contract and injury volumes in the design.
+- Validation: one open stint and one active contract; expansion losses are 1 or 2 in 1976 and 1995, and 0 or 1 in 1999 and 2002, with no club above the maximum; expansion picks are 32, 52, 26, and 26; the active-roster gate uses shared veterans, rookies, and reserved undrafted prospects, and it does not treat taxi or free agents as required; draft slots equal that year's class size.
+- Rows: none in the migration. A full timeline later holds 16,183 draft picks, 136 expansion picks, and the contract and injury volumes in the design. Full roster capacity is 103,501 slot-seasons, which is odd, so one contract per two occupied slot-seasons is not an integer. The design does not choose how to count that leftover slot. Injuries at 30 per franchise-season are 53,910.
 - League data: untouched.
 - Rollback: drop these tables. Overlays and shared identity remain. No roster has been written to `Team`.
 
@@ -1075,7 +1075,7 @@ Existing `League`, `Conference`, `Division`, `Team`, and `MovementPath` rows rem
 - Models: `ScheduleGame`, `GameResult`, `Standing`, `PlayoffBerth`, `TimelinePlayerSeason`, `TimelineAward`, `DevelopmentEvent`. `GameKickoffState` and `SimulationAuditRecord` already exist from phase 4. This phase can attach a schedule fixture to the stored `game_key`. It does not replace the kickoff payload or store the random draw.
 - Depends on: phase 4 franchises-in-a-timeline, phase 5 overlays, and phase 3 profiles for schedule length and playoff size.
 - Validation: regular-season game count matches `N(year) * schedule_length / 2`; `games` and `starts` fit the profile; award kinds match the shared list; development deltas fit −20 to 20; a played game has one kickoff state; audit hashes are not treated as a substitute for that state; snap detail is absent unless `persist_snap_draws` is on.
-- Rows: none in the migration. A full timeline later holds 14,280 regular-season games plus playoffs, the same number of kickoff states, 1,792 standings, and at most 103,352 player-seasons if every taxi slot is occupied.
+- Rows: none in the migration. A full timeline later holds 14,308 regular-season games plus playoffs, the same number of kickoff states, 1,797 standings, and at most 103,501 player-seasons if every taxi slot is occupied.
 - League data: untouched.
 - Rollback: drop the stat tables. Transactions and people remain. Results on a user's timeline disappear with the drop and are not stored anywhere else.
 
@@ -1083,7 +1083,7 @@ Existing `League`, `Conference`, `Division`, `Team`, and `MovementPath` rows rem
 
 - Models: none. This phase fills `catalog_fingerprint` and `validation_fingerprint` and refuses `status = published` when a check fails.
 - Depends on: phases 1–3. It does not need timeline tables to publish a release. Timeline season entry reuses the expansion inequality.
-- Validation: the confirmed first release must contain 24 founding franchises, playable seasons 1970–2029, expansion to 28 franchises in 1976, expansion to 32 franchises in 1996, the accepted conference and division alignment, and 1,792 franchise-season memberships with `owner_selectable` true on every active row. No bot-only franchise-season is scheduled. Expansion franchises in that release enter in 1976 or 1996. The same gate checks the franchise fingerprint, quota sums, staff signatures, expansion arithmetic with taxi excluded, prospect counts, and the rule that no origin pick is baked onto a 1970–2029 prospect. HMAC construction for person keys uses the release seed and a named key. It does not use `random.Random`. Phase 1 does not implement this validator. The schema stays usable for a corrected or extended release without a migration that only changes the horizon.
+- Validation: the confirmed first release must contain 26 founding franchises, playable seasons 1970–2029, expansion to 28 franchises in 1976, 30 in 1995, 31 in 1999, and 32 in 2002, the accepted conference and division alignment, and 1,797 franchise-season memberships with `owner_selectable` true on every active row. No bot-only franchise-season is scheduled. Expansion franchises in that release enter in 1976, 1995, 1999, or 2002. The same gate checks the franchise fingerprint, quota sums, staff signatures, expansion arithmetic with taxi excluded, prospect counts, the undrafted multiplier of 2 in every year, and the rule that no origin pick is baked onto a 1970–2029 prospect. HMAC construction for person keys uses the release seed and a named key. It does not use `random.Random`. Phase 1 does not implement this validator. The schema stays usable for a corrected or extended release without a migration that only changes the horizon. `fg-founding-1` remains the 24-club generator and does not satisfy this gate.
 - Rows: updates the one release row's fingerprint columns when a generator eventually runs. This document does not run it.
 - League data: untouched.
 - Rollback: set the release back to `draft` and clear the fingerprints. No table is dropped.
@@ -1114,7 +1114,7 @@ These do not block the tables above. The columns already store either outcome.
 |----------|-------------------------|-----------------------------------|
 | Snap-level audit detail | `SimulationAuditRecord` stores the ordered event and optional hashes. `GameKickoffState` stores one snapshot per game. `Timeline.persist_snap_draws` defaults to false. | Whether debugging should also persist every snap's detail. Turning it on changes volume, not the seed, and it is not required to replay from kickoff. |
 | Multi-human expansion award | `selection_method` can store `automatic` or `fair_draw`. Single-player apply is `automatic`. | Whether the fair HMAC draw is the method when several humans apply. |
-| A campaign that starts in 1976 or 1996 | The normal creation path uses the release's first season. The columns do not hardcode 1970. | Whether that mode exists, and what happens to the skipped seasons. Store the rules in later-phase timeline-start configuration. Do not infer them from `owner_selectable`. |
+| A campaign that starts in 1976, 1995, 1999, or 2002 | The normal creation path uses the release's first season. The columns do not hardcode 1970. | Whether that mode exists, and what happens to the skipped seasons. Store the rules in later-phase timeline-start configuration. Do not infer them from `owner_selectable`. |
 | Permanent franchise names | `display_name` is the placeholder slug text. `catalog_team` is null. | The real names, cities, and slugs, and when a catalog `Team` row may be linked. Linking still must not put roster data on `Team`. |
 | Cap, minimum salary, rookie-slot percents, and sim coefficients | `cap_limit`, `minimum_salary`, and `rookie_slot_scale` are nullable. Weights and development coefficients are not person columns. | The numbers. A 1995 profile still cannot publish with an empty cap. That is a data check, not a schema change. |
 
@@ -1128,9 +1128,9 @@ Phase 1 adds only these five models:
 - `FranchiseHistoryEvent`
 - `HistoricalStanding`
 
-The migration creates the tables and leaves them empty. A later generator fills the confirmed release with `founding-01` through `founding-24`, `expansion-1976-01` through `expansion-1976-04`, and `expansion-1996-01` through `expansion-1996-04`. `catalog_team` stays null until a catalog link is chosen. `display_name` can hold the placeholder slug. `FranchiseHistoryEvent` has no scheduled rows. `HistoricalStanding` for that release is one row per founding franchise per year from 1960 through 1969, 240 rows. `seed` is a `BigIntegerField`. Conference and division membership are slug strings plus `slot_order` and `owner_selectable`. Every active membership in that release has `owner_selectable` true. The 1970 and 1976 shapes are not the live 32-team generator tree, and they are not check constraints on the membership table.
+The migration creates the tables and leaves them empty. A later generator, not `fg-founding-1`, fills the confirmed release with `founding-01` through `founding-26`, `expansion-1976-01` and `expansion-1976-02`, `expansion-1995-01` and `expansion-1995-02`, `expansion-1999-01`, and `expansion-2002-01`. `catalog_team` stays null until a catalog link is chosen. `display_name` can hold the placeholder slug. `FranchiseHistoryEvent` has no scheduled rows. `HistoricalStanding` for that release is one row per founding franchise per year from 1960 through 1969, 260 rows. `seed` is a `BigIntegerField`. Conference and division membership are slug strings plus `slot_order` and `owner_selectable`. Every active membership in that release has `owner_selectable` true. The 1970, 1976, 1995, and 1999 shapes are not the live 32-team generator tree, and they are not check constraints on the membership table.
 
-The database does not require 24 founding clubs, a 1970–2029 horizon, debut years of 1970, 1976, or 1996, two named conferences, divisions `d1`–`d4`, or the era slot limits. Those rules remain the confirmed release. Phase 8 is the publication gate that refuses any other shape for that release. Phase 1 does not implement that gate.
+The database does not require 26 founding clubs, a 1970–2029 horizon, debut years of 1970, 1976, 1995, 1999, or 2002, two named conferences, divisions `d1`–`d4`, or the era slot limits. Those rules remain the confirmed release. Phase 8 is the publication gate that refuses any other shape for that release. Phase 1 does not implement that gate.
 
 No open decision changes the columns of those five models. Permanent names and cities are strings written into columns that already exist, and they can wait. The salary cap, minimum salary, rookie-slot percents, simulation coefficients, development formulas, expansion-draft counts, and replay storage do not appear on these five models. Expansion rules are phase 3. Replay tables are phase 7.
 
@@ -1139,6 +1139,6 @@ No open decision changes the columns of those five models. Permanent names and c
 - Phase 1 models, the `universe` app, and its initial migration are implemented. Later models in this file remain proposals. The migration inserts no rows.
 - Keeps `leagues.Team` as catalog data.
 - Stores the 33 components as explicit columns on `PlayerRatingProfile` and `PlayerCurrentRating`.
-- Uses the expansion arithmetic from the design: 16 + 17 + 7 = 40 in 1976, and 26 + 7 + 20 = 53 in 1996. Taxi capacity is optional. Timeline free agents are not part of the publication check.
+- Uses the expansion arithmetic from the design: 16 + 17 + 7 = 40 in 1976, and 26 + 7 + 20 = 53 in 1995, 1999, and 2002. The undrafted multiplier is 2 in every year. Taxi capacity is optional. Timeline free agents are not part of the publication check. Veteran selections are not taken from the undrafted pool.
 - Uses stable draw coordinates. `GameKickoffState` plus `SimulationAuditRecord` are the MVP replay records. A draw can be recomputed from the coordinates. A snap outcome cannot, unless that kickoff state or a checkpoint is available.
-- Phase 1 stores `origin` and `owner_selectable`. Publication of the confirmed 1970–2029 release, including its 24, 28, and 32 franchise schedule and 1,792 memberships, waits for phase 8.
+- Phase 1 stores `origin` and `owner_selectable`. Publication of the confirmed 1970–2029 release, including its 26, 28, 30, 31, and 32 franchise schedule and 1,797 memberships, waits for phase 8.
