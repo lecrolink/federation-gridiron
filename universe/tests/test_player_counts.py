@@ -194,4 +194,10 @@ class QuotaSumTests(SimpleTestCase):
             'DE': 1, 'DT': 0, 'ILB': 1, 'OLB': 0, 'CB': 0,
             'FS': 1, 'SS': 0, 'K': 0, 'P': 0,
         })
-        self.assertIs(taxi_quota(2029), taxi_quota(1970))
+        self.assertEqual(taxi_quota(2029), taxi_quota(1970))
+        returned_taxi = taxi_quota(1970)
+        returned_taxi['QB'] = 0
+        self.assertEqual(taxi_quota(1970)['QB'], 1)
+        returned_active = active_quota(1970)
+        returned_active['QB'] = 0
+        self.assertEqual(active_quota(1970)['QB'], 2)

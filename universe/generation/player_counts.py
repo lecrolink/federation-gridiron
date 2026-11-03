@@ -165,18 +165,26 @@ def quota_total(quota):
 
 
 def active_quota(year):
-    """The documented per-franchise active quota for one season."""
+    """The documented per-franchise active quota for one season.
+
+    The result is a fresh dict. Changing it does not change the stored quota.
+    """
     _require_season(year)
     if year <= 1977:
-        return ACTIVE_QUOTA_1970
-    if year <= 1986:
-        return ACTIVE_QUOTA_45
-    if year <= 1994:
-        return ACTIVE_QUOTA_47
-    return ACTIVE_QUOTA_53
+        source = ACTIVE_QUOTA_1970
+    elif year <= 1986:
+        source = ACTIVE_QUOTA_45
+    elif year <= 1994:
+        source = ACTIVE_QUOTA_47
+    else:
+        source = ACTIVE_QUOTA_53
+    return dict(source)
 
 
 def taxi_quota(year):
-    """The documented taxi quota. It is the same eight in every season."""
+    """The documented taxi quota. It is the same eight in every season.
+
+    The result is a fresh dict. Changing it does not change the stored quota.
+    """
     _require_season(year)
-    return TAXI_QUOTA
+    return dict(TAXI_QUOTA)
