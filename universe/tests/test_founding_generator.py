@@ -265,8 +265,8 @@ class FoundingReleaseTests(TestCase):
         )
         self.assertTrue(all(gm.universe_key.startswith('g-') for gm in gms))
         self.assertTrue(all(coach.universe_key.startswith('c-') for coach in coaches))
-        self.assertTrue(gm.debut_year == 1970 and gm.identity.universe_key == gm.universe_key for gm in gms)
         for gm in gms:
+            self.assertEqual(gm.universe_key, gm.identity.universe_key)
             age = 1970 - gm.birth_year
             self.assertGreaterEqual(age, AGE_MIN)
             self.assertLessEqual(age, AGE_MAX)
