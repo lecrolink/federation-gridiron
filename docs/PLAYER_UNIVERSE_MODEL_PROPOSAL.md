@@ -73,7 +73,7 @@ One publication of the fictional universe.
 - Ownership: shared.
 - Primary key: `BigAutoField`. Public key: `slug`, `CharField(max_length=64)`, unique. Example: `fg-1970-1`.
 - Foreign keys: `root_league` to `leagues.League`, `PROTECT`.
-- Fields: `generator_version` `CharField(64)`; `seed` `BigIntegerField`, the integer from the design, never a Django setting; `founding_franchise_count` `PositiveSmallIntegerField`; `expansion_schedule_version` `PositiveIntegerField`; `catalog_fingerprint` `CharField(64)`; `validation_fingerprint` `CharField(64)`; `first_season_year` `PositiveSmallIntegerField`; `season_count` `PositiveSmallIntegerField`; `last_season_year` `PositiveSmallIntegerField`; `status` `CharField` choices `draft` or `published`; `created_at` and `published_at` `DateTimeField`. The confirmed release stores 24, 1970, 60, and 2029 in these columns. Those numbers are not database checks.
+- Fields: `generator_version` `CharField(64)`; `seed` `BigIntegerField`, the integer from the design, never a Django setting; `founding_franchise_count` `PositiveSmallIntegerField`; `expansion_schedule_version` `PositiveIntegerField`; `catalog_fingerprint` `CharField(64)`; `validation_fingerprint` `CharField(64)`; `first_season_year` `PositiveSmallIntegerField`; `season_count` `PositiveSmallIntegerField`; `last_season_year` `PositiveSmallIntegerField`; `status` `CharField` choices `draft` or `published`; `created_at` and `published_at` `DateTimeField`. `fg-founding-2` stores 26, 1970, 60, and 2029 on the confirmed release. `fg-founding-1` still stores 24. Those numbers are not database checks.
 - Unique: `slug`.
 - Checks: `founding_franchise_count` is at least 1; `season_count` is at least 1; `last_season_year` is at least `first_season_year`; `first_season_year + season_count - 1 = last_season_year`; `status = published` implies both fingerprints and `published_at` are set.
 - Indexes: `status`.
@@ -133,14 +133,28 @@ The franchise identity inside a release. This is not `leagues.Team`. Timeline ro
 - Ownership: shared.
 - Primary key: `BigAutoField`. Public key: `placeholder_slug`, `SlugField`, unique with the release. Values: `founding-01` through `founding-26`, `expansion-1976-01` and `expansion-1976-02`, `expansion-1995-01` and `expansion-1995-02`, `expansion-1999-01`, and `expansion-2002-01`. There is no `expansion-1976-03`, `expansion-1976-04`, or `expansion-1996` slug.
 - Foreign keys: `release` `CASCADE`; `catalog_team` to `leagues.Team`, `PROTECT`, null; `history_predecessor` to self, `PROTECT`, null. No predecessor is scheduled.
-- Fields: `display_name` `CharField(255)` (the placeholder until a name is chosen); `origin` choices `founding` or `expansion`; `first_active_season` `PositiveSmallIntegerField`; `final_active_season` `PositiveSmallIntegerField`, null while the club remains active. `origin` is stored. Display code does not infer it from the debut year.
+- Fields: `display_name` `CharField(255)`; `origin` choices `founding` or `expansion`; `first_active_season` `PositiveSmallIntegerField`; `final_active_season` `PositiveSmallIntegerField`, null while the club remains active. `origin` is stored. Display code does not infer it from the debut year. `fg-founding-1` sets `display_name` to `Founding franchise NN`. `fg-founding-2` sets it from the provisional city and nickname. The placeholder slug stays the identity.
 - Unique: `(release, placeholder_slug)`; `(release, catalog_team)` when `catalog_team` is not null. MySQL allows many null catalog links, which is what placeholder franchises need.
 - Database checks: `origin` is `founding` or `expansion`; `final_active_season` is null or greater than or equal to `first_active_season`.
-- Model validation, because it reads the parent release: `first_active_season` is inside the release's playable span; `final_active_season`, when set, is inside that span; a founding franchise begins in the release's first season; an expansion franchise begins after that season. The confirmed release's expansion years, 1976, 1995, 1999, and 2002, are checked when that release is published. They are not a check constraint on this table. `fg-founding-1` still writes 24 founding clubs. A later generator version writes the 26-club catalog.
+- Model validation, because it reads the parent release: `first_active_season` is inside the release's playable span; `final_active_season`, when set, is inside that span; a founding franchise begins in the release's first season; an expansion franchise begins after that season. The confirmed release's expansion years, 1976, 1995, 1999, and 2002, are checked when that release is published. They are not a check constraint on this table. `fg-founding-1` still writes 24 founding clubs. `fg-founding-2` writes the 26-club catalog, the expansion clubs, and the provisional names below.
 - Indexes: `(release, first_active_season)`.
 - Application guard after publish: slug, origin, first season, display name, catalog link once set, predecessor. A null `catalog_team` may still be set once. `display_name` changes for a later release by a `FranchiseHistoryEvent`. This release schedules none. The guard is not a database trigger.
 - Rows: 32.
 - Created at release publication.
+
+### ProvisionalFranchiseName
+
+The fictional provisional city and nickname for one placeholder slug. `fg-founding-2` writes these rows. `fg-founding-1` does not read or write them.
+
+- Ownership: shared.
+- Primary key: `BigAutoField`. There is no foreign key to `UniverseFranchise`.
+- Foreign keys: `release` `CASCADE`. Deleting the release deletes the names. Deleting a franchise does not.
+- Fields: `placeholder_slug` `SlugField`; `city` and `nickname` `CharField(255)`; `city_status` and `nickname_status` choices `provisional` or `replaced`. The two statuses are independent.
+- Unique: `(release, placeholder_slug)`.
+- Checks: city, nickname, and slug are nonempty; each status is `provisional` or `replaced`.
+- Model validation: a replaced field keeps its value and status. A city must differ from every other franchise's city in the release, and a nickname must differ from every other franchise's nickname, compared exact and case-sensitive. Cities do not block nicknames.
+- Rows: 32 for `fg-founding-2`. The generator also keeps the approved 40-name lists in code. Eight of each list stay unused on a given draw.
+- Created when `fg-founding-2` generates the draft. Later naming fills only a provisional field, marks that field replaced, and sets the franchise `display_name` to the city, one space, and the nickname. Permanent slugs and catalog links stay empty.
 
 ### FranchiseSeasonMembership
 

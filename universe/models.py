@@ -318,6 +318,107 @@ class UniverseFranchise(models.Model):
         return super().delete(*args, **kwargs)
 
 
+class ProvisionalFranchiseName(models.Model):
+    """Fictional city and nickname for one placeholder slug.
+
+    The row is keyed by the release and ``placeholder_slug``. It does not
+    point at ``UniverseFranchise``, so deleting and recreating a franchise
+    cannot cascade into a name that has already been replaced.
+    """
+
+    class Status(models.TextChoices):
+        PROVISIONAL = 'provisional', 'Provisional'
+        REPLACED = 'replaced', 'Replaced'
+
+    release = models.ForeignKey(
+        UniverseRelease,
+        on_delete=models.CASCADE,
+        related_name='provisional_franchise_names',
+    )
+    placeholder_slug = models.SlugField(max_length=64)
+    city = models.CharField(max_length=255)
+    city_status = models.CharField(max_length=16, choices=Status.choices)
+    nickname = models.CharField(max_length=255)
+    nickname_status = models.CharField(max_length=16, choices=Status.choices)
+
+    class Meta:
+        ordering = ['release', 'placeholder_slug']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['release', 'placeholder_slug'],
+                name='unique_provisional_name_slug',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(city='')
+                    & ~models.Q(nickname='')
+                    & ~models.Q(placeholder_slug='')
+                ),
+                name='provisional_name_nonempty',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    city_status__in=['provisional', 'replaced'],
+                    nickname_status__in=['provisional', 'replaced'],
+                ),
+                name='provisional_name_status',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.placeholder_slug} {self.city} {self.nickname}'
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        _require_slug(self.placeholder_slug, 'placeholder_slug', errors)
+        if not self.city:
+            errors['city'] = 'Enter a nonempty city.'
+        if not self.nickname:
+            errors['nickname'] = 'Enter a nonempty nickname.'
+        if self.release_id:
+            previous = _previous(self)
+            if previous is not None:
+                for value_field, status_field in (
+                    ('city', 'city_status'),
+                    ('nickname', 'nickname_status'),
+                ):
+                    if getattr(previous, status_field) != self.Status.REPLACED:
+                        continue
+                    if (
+                        getattr(self, value_field) != getattr(previous, value_field)
+                        or getattr(self, status_field) != self.Status.REPLACED
+                    ):
+                        errors[value_field] = 'A replaced city or nickname is kept.'
+            siblings = type(self).objects.filter(release_id=self.release_id)
+            if self.pk:
+                siblings = siblings.exclude(pk=self.pk)
+            for other in siblings:
+                if self.city and other.city == self.city:
+                    errors['city'] = (
+                        'That city is already used by another franchise in this release.'
+                    )
+                if self.nickname and other.nickname == self.nickname:
+                    errors['nickname'] = (
+                        'That nickname is already used by another franchise '
+                        'in this release.'
+                    )
+            _reject_published_child(self, self.release, errors, new_row_field='release')
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.release.status == UniverseRelease.Status.PUBLISHED:
+            raise ValidationError(
+                'A provisional name on a published release cannot be deleted.'
+            )
+        return super().delete(*args, **kwargs)
+
+
 class FranchiseSeasonMembership(models.Model):
     franchise = models.ForeignKey(
         UniverseFranchise,
