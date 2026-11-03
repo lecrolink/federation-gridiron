@@ -24,7 +24,7 @@ The repository today is a Django 5.2 project (`requirements.txt`) with one domai
 
 `leagues/services/league_generator.py` still upserts **2 conferences, 8 divisions, and 32 teams** (`CONFERENCE_COUNT`, `DIVISION_COUNT`, `TEAM_COUNT`). That generator is the code on `main`. It is not the product shape this design uses.
 
-The confirmed schedule is 26 franchises for 1970–1975, 28 for 1976–1994, 30 for 1995–1998, 31 for 1999–2001, and 32 for 2002–2029. Names, cities, and permanent slugs are not chosen. The release uses placeholders until they are. This document does not change code. `fg-founding-1` remains the shipped 24-club founding generator. A later generator version writes the 26-club founding catalog, the 1970 memberships, and the 26 opening seats. This document does not hard-code 26 as the size of every season.
+The confirmed schedule is 26 franchises for 1970–1975, 28 for 1976–1994, 30 for 1995–1998, 31 for 1999–2001, and 32 for 2002–2029. Permanent slugs and catalog links are not chosen. The release uses placeholder slugs until they are. `fg-founding-1` remains the shipped 24-club founding generator. `fg-founding-2` writes the 26-club founding catalog, the 1970–2029 memberships, the four expansion events, the 26 opening seats, and one provisional city and nickname for each of the 32 placeholder slugs. This document does not hard-code 26 as the size of every season.
 
 A franchise identity is shared by every timeline on a release. The current `Team` row can store only one conference and one division, so it cannot by itself represent expansion, realignment, or a last active season. Those facts belong on the shared franchise records below. Timeline code does not create franchises and does not write `Team.league`, `Team.conference`, or `Team.division`.
 
@@ -589,7 +589,9 @@ Placeholders, not permanent identities. There is no `expansion-1976-03`, `expans
 | `expansion-1999-01` | 1999 | 1999 expansion franchise 01 |
 | `expansion-2002-01` | 2002 | 2002 expansion franchise 01 |
 
-City, nickname, and final slug stay empty until chosen. Every timeline on the release uses these same placeholders and the same entry years.
+Permanent slugs and catalog links stay empty until chosen. Every timeline on the release uses these same placeholder slugs and the same entry years. The display-name column above is what `fg-founding-1` writes. `fg-founding-1` does not read or write provisional names.
+
+`fg-founding-2` writes one `ProvisionalFranchiseName` row for each of the 32 placeholder slugs when the release is generated, including clubs that have not debuted. The row is unique on the release and `placeholder_slug`. It does not point at `UniverseFranchise`, so recreating a franchise row cannot erase it. `city` and `nickname` are fictional and each has its own status, `provisional` or `replaced`. The first write is provisional. Later naming may change a field only while that field is still provisional, and it then marks that field replaced. A replaced value is kept when the seed changes and when the franchise row is rebuilt. A city or nickname replacement is rejected when that exact, case-sensitive value is already used by another franchise in the same release. `display_name` is the city, one space, and the nickname. A new draw walks the expansion slugs in lexicographic order, then `founding-01` through `founding-26` in numeric order. The frozen lists hold 40 fictional cities and 40 fictional nicknames, in the approved order. Real NFL cities and NFL team nicknames are not in those lists. Final franchise identities stay unresolved.
 
 `N(year)` is the number of franchises whose `first_active_season` is less than or equal to `year` and whose `final_active_season` is null or greater than or equal to `year`.
 
