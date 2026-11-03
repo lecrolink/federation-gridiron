@@ -385,6 +385,42 @@ class ScheduleReleaseTests(TestCase):
         franchise = UniverseFranchise.objects.get(placeholder_slug='founding-02')
         self.assertEqual(franchise.display_name, f'{second.city} {second.nickname}')
 
+    def test_replacement_locks_the_release_before_the_sibling_check(self):
+        second = ProvisionalFranchiseName.objects.get(placeholder_slug='founding-02')
+        events = []
+        real_select = UniverseRelease.objects.select_for_update
+        real_filter = ProvisionalFranchiseName.objects.filter
+
+        def select_for_update(*args, **kwargs):
+            queryset = real_select(*args, **kwargs)
+            real_get = queryset.get
+
+            def get(*get_args, **get_kwargs):
+                events.append(('lock', get_kwargs.get('pk')))
+                return real_get(*get_args, **get_kwargs)
+
+            queryset.get = get
+            return queryset
+
+        def filter(*args, **kwargs):
+            if kwargs.get('release_id') == second.release_id:
+                events.append('siblings')
+            return real_filter(*args, **kwargs)
+
+        with (
+            patch.object(UniverseRelease.objects, 'select_for_update', side_effect=select_for_update),
+            patch.object(ProvisionalFranchiseName.objects, 'filter', side_effect=filter),
+        ):
+            replace_provisional_value(second, 'nickname', 'Lockname')
+
+        self.assertEqual(events[0], ('lock', second.release_id))
+        self.assertEqual(events[1], 'siblings')
+        second.refresh_from_db()
+        self.assertEqual(second.nickname, 'Lockname')
+        self.assertEqual(second.nickname_status, 'replaced')
+        franchise = UniverseFranchise.objects.get(placeholder_slug='founding-02')
+        self.assertEqual(franchise.display_name, f'{second.city} Lockname')
+
     def test_duplicate_stored_names_and_an_exhausted_list_refuse(self):
         franchise_id = UniverseFranchise.objects.get(placeholder_slug='founding-03').pk
         first, second = list(self.release.provisional_franchise_names.order_by('placeholder_slug')[:2])

@@ -8,7 +8,7 @@ These are fictional names. They are not NFL cities or NFL team nicknames.
 from django.db import transaction
 
 from universe.generation.founding import hmac_int
-from universe.models import ProvisionalFranchiseName, UniverseFranchise
+from universe.models import ProvisionalFranchiseName, UniverseFranchise, UniverseRelease
 
 CITIES = (
     'Aldermere',
@@ -215,25 +215,29 @@ def replace_provisional_value(name, field, value):
     """Fill one provisional field and mark that field replaced.
 
     The other field is left as it is. A replaced field is not rewritten.
+    Replacements for one release lock that release row, then reject an exact
+    case-sensitive duplicate before either write.
     """
     if field not in FIELDS:
         raise ProvisionalNameError('Only a city or a nickname can be replaced.')
-    status_field = _status_field(field)
-    if getattr(name, status_field) != ProvisionalFranchiseName.Status.PROVISIONAL:
-        raise ProvisionalNameError('A replaced city or nickname is kept.')
     if not isinstance(value, str) or value == '':
         raise ProvisionalNameError('A replacement needs a nonempty value.')
-    siblings = ProvisionalFranchiseName.objects.filter(
-        release_id=name.release_id,
-    ).exclude(pk=name.pk)
-    for other in siblings:
-        if getattr(other, field) == value:
-            raise ProvisionalNameError(
-                f'That {field} is already used by another franchise in this release.'
-            )
-    setattr(name, field, value)
-    setattr(name, status_field, ProvisionalFranchiseName.Status.REPLACED)
+    status_field = _status_field(field)
     with transaction.atomic():
+        UniverseRelease.objects.select_for_update().get(pk=name.release_id)
+        name.refresh_from_db()
+        if getattr(name, status_field) != ProvisionalFranchiseName.Status.PROVISIONAL:
+            raise ProvisionalNameError('A replaced city or nickname is kept.')
+        siblings = ProvisionalFranchiseName.objects.filter(
+            release_id=name.release_id,
+        ).exclude(pk=name.pk)
+        for other in siblings:
+            if getattr(other, field) == value:
+                raise ProvisionalNameError(
+                    f'That {field} is already used by another franchise in this release.'
+                )
+        setattr(name, field, value)
+        setattr(name, status_field, ProvisionalFranchiseName.Status.REPLACED)
         name.save()
         franchise = UniverseFranchise.objects.filter(
             release_id=name.release_id,
