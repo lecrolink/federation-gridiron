@@ -26,6 +26,7 @@ from universe.generation.player_counts import (
 from universe.generation.player_identities import build_prospects, year_position_counts
 from universe.generation.prospects import (
     ProspectGenerationError,
+    _insert_players,
     _validate_generated_players,
     generate_prospects,
     later_profile_values,
@@ -43,6 +44,7 @@ from universe.models import (
     UniverseRelease,
 )
 from universe.people import (
+    College,
     PlayerRatingProfile,
     UniversePlayer,
     UniverseProSeason,
@@ -586,29 +588,33 @@ class ProspectCommandTests(TestCase):
             connection.execute_wrappers.remove(count_queries)
         fk_lookups = []
         player_inserts = []
-        other = []
         for sql in executed:
             if sql.startswith('SELECT %s AS "a" FROM "universe_'):
                 fk_lookups.append(sql)
             elif sql.startswith('INSERT INTO "universe_universeplayer"'):
                 player_inserts.append(sql)
-            else:
-                other.append(sql)
-        other_repeats = Counter(other)
-        other_top = [(count, sql[:160]) for sql, count in other_repeats.most_common(3)]
-        # clean_fields() looks up each foreign key. Check-constraint SQL is the
-        # other bucket: one pass per prospect would be hundreds of thousands.
+        repeats = Counter(executed)
+        top = [(count, sql[:160]) for sql, count in repeats.most_common(3)]
+        fk_repeats = Counter(fk_lookups)
+        # One pass per prospect would repeat a statement about 19,777 times.
+        # Profile and class validation may still look up their own foreign keys.
         self.assertLess(
-            len(other),
+            len(executed),
             4000,
-            f'non-fk writer queries were {len(other)}; top {other_top}',
+            f'full write ran {len(executed)} queries; top {top}',
         )
         self.assertLess(
-            max(other_repeats.values(), default=0),
-            500,
-            f'a non-fk statement repeated too often; top {other_top}',
+            max(repeats.values(), default=0),
+            2000,
+            f'a statement repeated once per prospect; top {top}',
         )
-        self.assertGreater(len(fk_lookups), 19000)
+        self.assertLess(
+            len(fk_lookups),
+            500,
+            f'foreign-key existence queries were {len(fk_lookups)}',
+        )
+        self.assertLess(max(fk_repeats.values(), default=0), 200)
+        self.assertGreater(len(player_inserts), 0)
         self.assertLess(len(player_inserts), 19777)
         self.assertEqual(created.getvalue().strip(), 'created')
         self.assertEqual(UniversePlayer.objects.filter(cohort='draft').count(), 19777)
@@ -668,7 +674,7 @@ class ProspectCommandTests(TestCase):
         self.assertEqual(OpeningAssignment.objects.filter(release=self.release).count(), 1378)
 
     def test_field_validation_fails_before_player_insertion(self):
-        seen = {'players': False, 'profiles': None, 'flags': None}
+        seen = {'players': False, 'profiles': None, 'flags': None, 'queries': None}
         real_clean = UniversePlayer.full_clean
 
         def spy_clean(self, *args, **kwargs):
@@ -677,7 +683,19 @@ class ProspectCommandTests(TestCase):
                 kwargs.get('validate_unique', True),
                 kwargs.get('validate_constraints', True),
             )
-            return real_clean(self, *args, **kwargs)
+            seen['exclude'] = kwargs.get('exclude')
+            queries = []
+
+            def wrap(execute, sql, params, many, context):
+                queries.append(sql)
+                return execute(sql, params, many, context)
+
+            connection.execute_wrappers.append(wrap)
+            try:
+                return real_clean(self, *args, **kwargs)
+            finally:
+                connection.execute_wrappers.remove(wrap)
+                seen['queries'] = queries
 
         def bad_prospects(seed, slug):
             rows = list(build_prospects(seed, slug))
@@ -701,6 +719,14 @@ class ProspectCommandTests(TestCase):
             with self.assertRaisesRegex(ProspectGenerationError, 'failed validation'):
                 generate_prospects(self.league.id, SEED)
         self.assertEqual(seen['flags'], (False, False))
+        self.assertEqual(set(seen['exclude']), {
+            'release',
+            'college',
+            'origin_franchise',
+            'draft_class',
+            'origin_profile',
+        })
+        self.assertEqual(seen['queries'], [])
         self.assertEqual(seen['profiles'], 12)
         self.assertFalse(seen['players'])
         self.assertEqual(EraRuleProfile.objects.count(), 1)
@@ -752,18 +778,129 @@ class ProspectCommandTests(TestCase):
             trait_3=None,
         )
         before = UniversePlayer.objects.count()
-        with self.assertRaisesRegex(ProspectGenerationError, 'failed validation'):
-            _validate_generated_players([player])
+        calls = {'extra': 0}
+        real_extra = UniversePlayer.extra_clean
+
+        def spy_extra(self, errors):
+            calls['extra'] += 1
+            return real_extra(self, errors)
+
+        with patch.object(UniversePlayer, 'extra_clean', spy_extra):
+            with self.assertRaisesRegex(ProspectGenerationError, 'class year') as caught:
+                _validate_generated_players([player])
+        self.assertEqual(calls['extra'], 1)
+        self.assertIn('failed validation', str(caught.exception))
         self.assertEqual(UniversePlayer.objects.count(), before)
         self.assertFalse(UniversePlayer.objects.filter(universe_key='b' * 64).exists())
 
-    def test_a_player_constraint_failure_rolls_back_the_writer(self):
+    def test_untrusted_relations_are_rejected_before_insertion(self):
+        profile = EraRuleProfile.objects.get(release=self.release, profile_key='y1970')
+        college = self.release.colleges.order_by('slug').first()
+        draft_class = DraftClass(
+            release=self.release,
+            profile=profile,
+            season_year=1970,
+            franchise_count=26,
+            rounds=17,
+            draftable_count=17 * 26,
+            undrafted_multiplier=2,
+            undrafted_count=52,
+        )
+        draft_class.save()
+        college_ids = set(self.release.colleges.values_list('pk', flat=True))
+        classes_by_year = {1970: draft_class}
+        franchise = UniverseFranchise.objects.filter(release=self.release).order_by('pk').first()
+
+        def build():
+            return UniversePlayer(
+                release=self.release,
+                college=college,
+                origin_franchise=None,
+                draft_class=draft_class,
+                origin_profile=profile,
+                universe_key='c' * 64,
+                name='Relation Prospect',
+                birth_year=1950,
+                birth_day=1,
+                position='QB',
+                secondary_position_1=None,
+                secondary_position_2=None,
+                handedness='right',
+                height_in=72,
+                weight_lb=200,
+                cohort=UniversePlayer.Cohort.DRAFT,
+                draft_pool=UniversePlayer.DraftPool.DRAFTABLE,
+                first_pro_year=1970,
+                origin_draft_year=1970,
+                origin_draft_round=None,
+                origin_draft_pick=None,
+                peak_age=28,
+                development_rate=40,
+                decline_rate=40,
+                board_rank=None,
+                trait_1=None,
+                trait_2=None,
+                trait_3=None,
+            )
+
+        foreign_college = College(
+            release=self.release,
+            slug='not-approved',
+            name='Not Approved',
+        )
+        foreign_college.pk = max(college_ids) + 1
+        foreign_class = DraftClass(
+            release=self.release,
+            profile=profile,
+            season_year=1970,
+            franchise_count=26,
+            rounds=17,
+            draftable_count=17 * 26,
+            undrafted_multiplier=2,
+            undrafted_count=52,
+        )
+        foreign_class.pk = draft_class.pk + 1
+        foreign_profile = EraRuleProfile(
+            release=self.release,
+            first_year=1970,
+            last_year=1973,
+        )
+        foreign_profile.pk = profile.pk + 1
+        foreign_release = UniverseRelease(slug='other-release')
+        foreign_release.pk = self.release.pk + 1
+        cases = (
+            ('college', lambda row: setattr(row, 'college', foreign_college), 'stored colleges'),
+            ('class', lambda row: setattr(row, 'draft_class', foreign_class), 'stored class'),
+            ('profile', lambda row: setattr(row, 'origin_profile', foreign_profile), 'origin profile'),
+            ('release', lambda row: setattr(row, 'release', foreign_release), 'locked release'),
+            ('origin franchise', lambda row: setattr(row, 'origin_franchise', franchise), 'origin franchise'),
+        )
+        for name, mutate, pattern in cases:
+            with self.subTest(name=name):
+                row = build()
+                mutate(row)
+                inserted = {'called': False}
+
+                def reject_insert(*args, **kwargs):
+                    inserted['called'] = True
+                    raise AssertionError('Player bulk insertion ran after an untrusted relation.')
+
+                with patch(
+                    'universe.generation.prospects.UniversePlayer.objects.bulk_create',
+                    reject_insert,
+                ):
+                    with self.assertRaisesRegex(ProspectGenerationError, pattern):
+                        _insert_players([row], self.release, college_ids, classes_by_year)
+                self.assertFalse(inserted['called'])
+                self.assertFalse(UniversePlayer.objects.filter(universe_key='c' * 64).exists())
+
+    def test_a_player_foreign_key_failure_rolls_back_the_writer(self):
         seen = {}
 
         def reject_insert(*args, **kwargs):
             seen['profiles'] = EraRuleProfile.objects.count()
             seen['classes'] = DraftClass.objects.count()
-            raise IntegrityError('UNIQUE constraint failed: universe_universeplayer.universe_key')
+            raise IntegrityError('FOREIGN KEY constraint failed')
 
         with patch(
             'universe.generation.prospects.UniversePlayer.objects.bulk_create',

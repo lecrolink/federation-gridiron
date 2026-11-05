@@ -52,6 +52,15 @@ from universe.rules import DraftClass, EraRuleProfile, OpeningAssignment
 
 OPENING_PROFILE_KEY = 'y1970'
 PLAYER_BATCH_SIZE = 500
+# Foreign keys whose clean_fields() path would query the database.
+# Scalar fields stay in full_clean. Inserts still enforce the keys.
+_PROSPECT_RELATION_FIELDS = frozenset((
+    'release',
+    'college',
+    'origin_franchise',
+    'draft_class',
+    'origin_profile',
+))
 
 _PLAYER_FIELDS = frozenset((
     'release',
@@ -691,6 +700,7 @@ def _write_prospects(release, seed):
         for row in release.draft_classes.select_related('profile')
     }
     colleges = {college.slug: college for college in release.colleges.all()}
+    college_ids = _require_stored_relation_ids(release, colleges, classes_by_year)
     built_rows = build_prospects(seed, release.slug)
     draftable, undrafted, prospects = prospect_totals()
     if len(built_rows) != prospects:
@@ -763,7 +773,7 @@ def _write_prospects(release, seed):
         raise ProspectGenerationError(
             'The draftable and undrafted totals drifted from 16,183 and 3,594.'
         )
-    _insert_players(players)
+    _insert_players(players, release, college_ids, classes_by_year)
 
 
 def _save_all(rows):
@@ -779,23 +789,170 @@ def _save_all(rows):
         type(rows[0]).objects.bulk_create(rows, batch_size=PLAYER_BATCH_SIZE)
 
 
-def _validate_generated_players(rows):
-    """Field validation and extra_clean, without per-row constraint queries.
+def _cached_related(instance, name):
+    """Return a related object already loaded on the instance.
 
-    ``full_clean(validate_unique=False, validate_constraints=False)`` still
-    runs ``clean_fields()``, ``clean()``, and ``UniversePlayer.extra_clean()``.
-    Declared check and unique constraints are enforced by the insert.
+    A missing cache entry is untrusted. This never queries.
     """
+    return instance._state.fields_cache.get(name)
+
+
+def _prospect_relation_exclude():
+    actual = frozenset(
+        field.name
+        for field in UniversePlayer._meta.concrete_fields
+        if field.is_relation
+    )
+    if actual != _PROSPECT_RELATION_FIELDS:
+        raise ProspectGenerationError(
+            'UniversePlayer foreign keys changed. Prospect validation must name each one.'
+        )
+    return _PROSPECT_RELATION_FIELDS
+
+
+def _require_stored_relation_ids(release, colleges, classes_by_year):
+    """Require stored ids before any prospect row is constructed."""
+    if release.pk is None:
+        raise ProspectGenerationError('The target release is not stored.')
+    if len(colleges) != len(COLLEGES):
+        raise ProspectGenerationError(
+            'The prospect writer expected the opening writer\'s 64 colleges.'
+        )
+    college_ids = set()
+    for college in colleges.values():
+        if college.pk is None or college.release_id != release.pk:
+            raise ProspectGenerationError(
+                'A prospect college is missing its stored id.'
+            )
+        college_ids.add(college.pk)
+    if len(college_ids) != len(COLLEGES):
+        raise ProspectGenerationError(
+            'The prospect writer expected the opening writer\'s 64 colleges.'
+        )
+    if len(classes_by_year) != SEASON_COUNT:
+        raise ProspectGenerationError(
+            'The prospect writer expected 60 stored draft classes.'
+        )
+    for year, draft_class in classes_by_year.items():
+        profile = _cached_related(draft_class, 'profile')
+        if (
+            draft_class.pk is None
+            or draft_class.release_id != release.pk
+            or draft_class.season_year != year
+            or draft_class.profile_id is None
+            or profile is None
+            or profile.pk is None
+            or profile.pk != draft_class.profile_id
+            or profile.release_id != release.pk
+            or not (profile.first_year <= year <= profile.last_year)
+        ):
+            raise ProspectGenerationError(
+                'A draft class or origin profile is missing its stored id.'
+            )
+    return college_ids
+
+
+def _require_trusted_prospect_relations(player, release, college_ids, classes_by_year):
+    """Check excluded foreign keys against objects already held in memory."""
+    cached_release = _cached_related(player, 'release')
+    if (
+        release.pk is None
+        or player.release_id != release.pk
+        or cached_release is None
+        or cached_release.pk != release.pk
+    ):
+        raise ProspectGenerationError(
+            'A generated prospect release is not the locked release.'
+        )
+    if (
+        player.origin_franchise_id is not None
+        or _cached_related(player, 'origin_franchise') is not None
+    ):
+        raise ProspectGenerationError(
+            'A generated prospect origin franchise must be null.'
+        )
+    college = _cached_related(player, 'college')
+    if (
+        college is None
+        or college.pk is None
+        or player.college_id != college.pk
+        or college.pk not in college_ids
+        or college.release_id != release.pk
+    ):
+        raise ProspectGenerationError(
+            'A generated prospect college is not one of the stored colleges.'
+        )
+    draft_class = _cached_related(player, 'draft_class')
+    stored_class = (
+        classes_by_year.get(draft_class.season_year)
+        if draft_class is not None
+        else None
+    )
+    if (
+        draft_class is None
+        or draft_class.pk is None
+        or player.draft_class_id != draft_class.pk
+        or stored_class is None
+        or stored_class.pk != draft_class.pk
+        or stored_class.release_id != release.pk
+        or stored_class.season_year != draft_class.season_year
+    ):
+        raise ProspectGenerationError(
+            'A generated prospect draft class is not the stored class for its year.'
+        )
+    profile = _cached_related(player, 'origin_profile')
+    stored_profile = _cached_related(stored_class, 'profile')
+    if (
+        profile is None
+        or profile.pk is None
+        or stored_profile is None
+        or stored_profile.pk is None
+        or player.origin_profile_id != profile.pk
+        or profile.pk != stored_profile.pk
+        or profile.release_id != release.pk
+        or stored_profile.release_id != release.pk
+        or stored_class.profile_id != stored_profile.pk
+        or not (
+            stored_profile.first_year
+            <= stored_class.season_year
+            <= stored_profile.last_year
+        )
+    ):
+        raise ProspectGenerationError(
+            'A generated prospect origin profile does not cover its class year.'
+        )
+
+
+def _validate_generated_players(rows):
+    """Scalar clean_fields, clean, and extra_clean, without relation queries.
+
+    ``full_clean`` excludes the trusted foreign keys, and it still runs
+    ``clean_fields()`` for every other field, ``clean()``, and
+    ``UniversePlayer.extra_clean()``. Unique and check constraints stay off
+    here. The insert enforces those, plus the foreign keys.
+    """
+    exclude = _prospect_relation_exclude()
     for row in rows:
         try:
-            row.full_clean(validate_unique=False, validate_constraints=False)
+            row.full_clean(
+                exclude=exclude,
+                validate_unique=False,
+                validate_constraints=False,
+            )
         except ValidationError as exc:
             raise ProspectGenerationError(
                 f'A generated row failed validation: {exc}'
             ) from exc
 
 
-def _insert_players(rows):
+def _insert_players(rows, release, college_ids, classes_by_year):
+    for row in rows:
+        _require_trusted_prospect_relations(
+            row,
+            release,
+            college_ids,
+            classes_by_year,
+        )
     _validate_generated_players(rows)
     try:
         UniversePlayer.objects.bulk_create(rows, batch_size=PLAYER_BATCH_SIZE)
