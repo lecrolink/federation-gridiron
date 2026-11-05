@@ -36,9 +36,16 @@ CAP_STATUS = ('off', 'on')
 
 FRANCHISE_TAGS = ('off', 'top_five_position_average')
 
+# twelve_team_fill_to_six is the approved 1999–2001 value: 12 teams, 6
+# qualifiers per conference, every division winner, wild cards filling each
+# conference to 6, byes for the top two seeds in each conference, and a first
+# round of 3 vs 6 and 4 vs 5. In those seasons conference-1 supplies 4
+# division winners and 2 wild cards, and conference-2 supplies 3 and 3.
+# Order inside either group is outside this value.
 PLAYOFF_FORMATS = (
     'eight_team_3_and_1',
     'eight_team_2_and_2',
+    'twelve_team_fill_to_six',
     'twelve_team_4_and_2',
 )
 
