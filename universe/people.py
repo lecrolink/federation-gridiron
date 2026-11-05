@@ -720,9 +720,16 @@ class UniversePlayer(ReleaseChild):
                     errors['first_pro_year'] = (
                         'A draftable prospect\'s class year is inside the release.'
                     )
+            # Undrafted prospects keep a null origin year. A year that is
+            # present must still be the shared class year, not a timeline result.
+            undrafted_without_year = (
+                self.draft_pool == self.DraftPool.UNDRAFTED
+                and self.origin_draft_year is None
+            )
             if (
                 class_year is not None
                 and self.origin_draft_year != class_year
+                and not undrafted_without_year
                 and 'origin_draft_year' not in errors
             ):
                 errors['origin_draft_year'] = (
