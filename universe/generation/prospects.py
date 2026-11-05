@@ -37,6 +37,7 @@ from universe.generation.player_counts import (
 )
 from universe.generation.player_identities import (
     DRAFT_POOL_DRAFTABLE,
+    DRAFT_POOL_UNDRAFTED,
     build_opening_cohort,
     build_prospects,
     founding_club_slugs,
@@ -485,6 +486,13 @@ def _profile_for_year(profiles, year):
     return None
 
 
+def _expected_pool(index, rounds):
+    """Draftable seats are the first ``rounds`` offsets of each generation block."""
+    if index % (rounds + UNDRAFTED_MULTIPLIER) < rounds:
+        return DRAFT_POOL_DRAFTABLE
+    return DRAFT_POOL_UNDRAFTED
+
+
 def _prospect_years(built):
     """Class year on a draftable prospect. Undrafted prospects store neither year."""
     if built.draft_pool == DRAFT_POOL_DRAFTABLE:
@@ -585,25 +593,34 @@ def _class_matches(stored, count, profile):
     ))
 
 
-def _prospect_matches(player, built, draft_class, profile):
-    first_pro_year, origin_draft_year = _prospect_years(built)
-    if (
-        built.draft_round is not None
-        or built.draft_pick is not None
-        or built.destination_slug is not None
-        or built.origin_franchise_slug is not None
-        or built.board_rank is not None
-        or built.origin_draft_year is not None
-    ):
-        raise ProspectGenerationError(
-            'The approved prospect builder assigned a draft destination.'
+def _generated_prospect_matches(player, built, draft_class, profile):
+    """In-memory class, pool, year, body, growth, and null-field checks.
+
+    These run before insertion. They do not query the database. Check and
+    unique constraints are left to the batched insert.
+    """
+    expected_pool = _expected_pool(built.index, draft_class.rounds)
+    if built.draft_pool != expected_pool or player.draft_pool != expected_pool:
+        return False
+    if expected_pool == DRAFT_POOL_DRAFTABLE:
+        years_match = (
+            player.first_pro_year == built.season_year
+            and player.origin_draft_year == built.season_year
         )
-    return all((
+    else:
+        years_match = (
+            player.first_pro_year is None
+            and player.origin_draft_year is None
+        )
+    return years_match and all((
         player.release_id == profile.release_id,
         player.college.slug == built.college_slug,
         player.college.name == built.college_name,
         player.origin_profile_id == profile.pk,
+        profile.first_year <= built.season_year <= profile.last_year,
         player.draft_class_id == draft_class.pk,
+        draft_class.season_year == built.season_year,
+        draft_class.profile_id == profile.pk,
         player.universe_key == built.universe_key,
         player.name == built.name,
         player.birth_year == built.birth_year,
@@ -613,9 +630,6 @@ def _prospect_matches(player, built, draft_class, profile):
         player.height_in == built.height_in,
         player.weight_lb == built.weight_lb,
         player.cohort == UniversePlayer.Cohort.DRAFT,
-        player.draft_pool == built.draft_pool,
-        player.first_pro_year == first_pro_year,
-        player.origin_draft_year == origin_draft_year,
         player.peak_age == built.peak_age,
         player.development_rate == built.development_rate,
         player.decline_rate == built.decline_rate,
@@ -629,6 +643,22 @@ def _prospect_matches(player, built, draft_class, profile):
         player.trait_2 is None,
         player.trait_3 is None,
     ))
+
+
+def _prospect_matches(player, built, draft_class, profile):
+    _prospect_years(built)
+    if (
+        built.draft_round is not None
+        or built.draft_pick is not None
+        or built.destination_slug is not None
+        or built.origin_franchise_slug is not None
+        or built.board_rank is not None
+        or built.origin_draft_year is not None
+    ):
+        raise ProspectGenerationError(
+            'The approved prospect builder assigned a draft destination.'
+        )
+    return _generated_prospect_matches(player, built, draft_class, profile)
 
 
 def _write_prospects(release, seed):
@@ -689,7 +719,7 @@ def _write_prospects(release, seed):
             raise ProspectGenerationError(
                 'A prospect college is not one of the opening writer\'s 64 colleges.'
             )
-        players.append(UniversePlayer(
+        player = UniversePlayer(
             release=release,
             college=college,
             origin_franchise=None,
@@ -718,21 +748,59 @@ def _write_prospects(release, seed):
             trait_1=None,
             trait_2=None,
             trait_3=None,
-        ))
-    if draftable_seen != draftable or undrafted_seen != undrafted:
+        )
+        if not _generated_prospect_matches(player, built, draft_class, profile):
+            raise ProspectGenerationError(
+                'A generated prospect does not match the approved class, pool, '
+                'body, or null-field rules.'
+            )
+        players.append(player)
+    if (
+        len(seen_keys) != len(players)
+        or draftable_seen != draftable
+        or undrafted_seen != undrafted
+    ):
         raise ProspectGenerationError(
             'The draftable and undrafted totals drifted from 16,183 and 3,594.'
         )
-    _save_all(players)
+    _insert_players(players)
 
 
 def _save_all(rows):
+    """Full validation for the small profile and draft-class sets."""
     for row in rows:
         try:
-            row.full_clean(validate_unique=False)
+            row.full_clean()
         except ValidationError as exc:
             raise ProspectGenerationError(
                 f'A generated row failed validation: {exc}'
             ) from exc
     if rows:
         type(rows[0]).objects.bulk_create(rows, batch_size=PLAYER_BATCH_SIZE)
+
+
+def _validate_generated_players(rows):
+    """Field validation and extra_clean, without per-row constraint queries.
+
+    ``full_clean(validate_unique=False, validate_constraints=False)`` still
+    runs ``clean_fields()``, ``clean()``, and ``UniversePlayer.extra_clean()``.
+    Declared check and unique constraints are enforced by the insert.
+    """
+    for row in rows:
+        try:
+            row.full_clean(validate_unique=False, validate_constraints=False)
+        except ValidationError as exc:
+            raise ProspectGenerationError(
+                f'A generated row failed validation: {exc}'
+            ) from exc
+
+
+def _insert_players(rows):
+    _validate_generated_players(rows)
+    try:
+        UniversePlayer.objects.bulk_create(rows, batch_size=PLAYER_BATCH_SIZE)
+    except IntegrityError as exc:
+        raise ProspectGenerationError(
+            'A prospect insert violated a database constraint. '
+            'The writer rolled back the profiles, classes, and players.'
+        ) from exc

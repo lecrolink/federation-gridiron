@@ -1,11 +1,12 @@
 import socket
-from collections import defaultdict
+from collections import Counter, defaultdict
 from io import StringIO
+from unittest.mock import patch
 
 from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.db import connection
+from django.db import IntegrityError, connection
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
@@ -25,6 +26,7 @@ from universe.generation.player_counts import (
 from universe.generation.player_identities import build_prospects, year_position_counts
 from universe.generation.prospects import (
     ProspectGenerationError,
+    _validate_generated_players,
     generate_prospects,
     later_profile_values,
 )
@@ -488,6 +490,22 @@ class ProspectWriterTests(TestCase):
         self.assertEqual(profile.playoff_format, 'twelve_team_4_and_2')
         self.assertEqual(EraRuleProfile.objects.get(profile_key='y1970').pk, self.y1970_id)
 
+    def test_a_changed_draft_class_is_refused_on_rerun(self):
+        profile_ids = set(EraRuleProfile.objects.values_list('pk', flat=True))
+        class_ids = set(DraftClass.objects.values_list('pk', flat=True))
+        player_ids = set(UniversePlayer.objects.values_list('pk', flat=True))
+        row = DraftClass.objects.get(release=self.release, season_year=1970)
+        other = EraRuleProfile.objects.get(release=self.release, profile_key='y1974')
+        DraftClass.objects.filter(pk=row.pk).update(profile_id=other.pk)
+        with self.assertRaisesRegex(ProspectGenerationError, 'will not delete or replace'):
+            generate_prospects(self.league.id, SEED)
+        row.refresh_from_db()
+        self.assertEqual(row.profile_id, other.pk)
+        self.assertEqual(set(EraRuleProfile.objects.values_list('pk', flat=True)), profile_ids)
+        self.assertEqual(set(DraftClass.objects.values_list('pk', flat=True)), class_ids)
+        self.assertEqual(set(UniversePlayer.objects.values_list('pk', flat=True)), player_ids)
+        self.assertEqual(set(OpeningAssignment.objects.values_list('pk', flat=True)), self.assignment_ids)
+
     def test_published_and_pinned_releases_are_refused(self):
         player_ids = set(UniversePlayer.objects.values_list('pk', flat=True))
         UniverseRelease.objects.filter(pk=self.release.pk).update(
@@ -550,12 +568,48 @@ class ProspectCommandTests(TestCase):
 
     def test_command_prints_created_and_then_unchanged(self):
         created = StringIO()
-        call_command(
-            'generate_prospects',
-            league_id=self.league.id,
-            seed=SEED,
-            stdout=created,
+        executed = []
+
+        def count_queries(execute, sql, params, many, context):
+            executed.append(sql)
+            return execute(sql, params, many, context)
+
+        connection.execute_wrappers.append(count_queries)
+        try:
+            call_command(
+                'generate_prospects',
+                league_id=self.league.id,
+                seed=SEED,
+                stdout=created,
+            )
+        finally:
+            connection.execute_wrappers.remove(count_queries)
+        fk_lookups = []
+        player_inserts = []
+        other = []
+        for sql in executed:
+            if sql.startswith('SELECT %s AS "a" FROM "universe_'):
+                fk_lookups.append(sql)
+            elif sql.startswith('INSERT INTO "universe_universeplayer"'):
+                player_inserts.append(sql)
+            else:
+                other.append(sql)
+        other_repeats = Counter(other)
+        other_top = [(count, sql[:160]) for sql, count in other_repeats.most_common(3)]
+        # clean_fields() looks up each foreign key. Check-constraint SQL is the
+        # other bucket: one pass per prospect would be hundreds of thousands.
+        self.assertLess(
+            len(other),
+            4000,
+            f'non-fk writer queries were {len(other)}; top {other_top}',
         )
+        self.assertLess(
+            max(other_repeats.values(), default=0),
+            500,
+            f'a non-fk statement repeated too often; top {other_top}',
+        )
+        self.assertGreater(len(fk_lookups), 19000)
+        self.assertLess(len(player_inserts), 19777)
         self.assertEqual(created.getvalue().strip(), 'created')
         self.assertEqual(UniversePlayer.objects.filter(cohort='draft').count(), 19777)
         self.assertEqual(DraftClass.objects.count(), 60)
@@ -586,6 +640,142 @@ class ProspectCommandTests(TestCase):
         self.assertEqual(UniversePlayer.objects.filter(cohort='draft').count(), 0)
         self.assertEqual(DraftClass.objects.count(), 0)
         self.assertEqual(EraRuleProfile.objects.count(), 1)
+        self.assertEqual(UniversePlayer.objects.filter(cohort='opening').count(), 1378)
+
+    def test_a_mismatched_college_is_refused_before_insertion(self):
+        college = self.release.colleges.order_by('slug').first()
+        College = college.__class__
+        College.objects.filter(pk=college.pk).update(name='Wrong College')
+        with self.assertRaisesRegex(ProspectGenerationError, 'will not delete or replace'):
+            generate_prospects(self.league.id, SEED)
+        college.refresh_from_db()
+        self.assertEqual(college.name, 'Wrong College')
+        self.assertEqual(EraRuleProfile.objects.count(), 1)
+        self.assertEqual(DraftClass.objects.count(), 0)
+        self.assertEqual(UniversePlayer.objects.filter(cohort='draft').count(), 0)
+        self.assertEqual(UniversePlayer.objects.filter(cohort='opening').count(), 1378)
+
+    def test_a_changed_opening_player_is_refused_before_insertion(self):
+        player = UniversePlayer.objects.filter(cohort='opening').order_by('pk').first()
+        UniversePlayer.objects.filter(pk=player.pk).update(name='Edited Opening')
+        with self.assertRaisesRegex(ProspectGenerationError, 'will not delete or replace'):
+            generate_prospects(self.league.id, SEED)
+        player.refresh_from_db()
+        self.assertEqual(player.name, 'Edited Opening')
+        self.assertEqual(EraRuleProfile.objects.count(), 1)
+        self.assertEqual(DraftClass.objects.count(), 0)
+        self.assertEqual(UniversePlayer.objects.filter(cohort='draft').count(), 0)
+        self.assertEqual(OpeningAssignment.objects.filter(release=self.release).count(), 1378)
+
+    def test_field_validation_fails_before_player_insertion(self):
+        seen = {'players': False, 'profiles': None, 'flags': None}
+        real_clean = UniversePlayer.full_clean
+
+        def spy_clean(self, *args, **kwargs):
+            seen['profiles'] = EraRuleProfile.objects.count()
+            seen['flags'] = (
+                kwargs.get('validate_unique', True),
+                kwargs.get('validate_constraints', True),
+            )
+            return real_clean(self, *args, **kwargs)
+
+        def bad_prospects(seed, slug):
+            rows = list(build_prospects(seed, slug))
+            rows[0] = rows[0]._replace(position='NOPE')
+            return tuple(rows)
+
+        def reject_insert(*args, **kwargs):
+            seen['players'] = True
+            raise AssertionError('Player bulk insertion ran after invalid field data.')
+
+        with patch(
+            'universe.generation.prospects.build_prospects',
+            bad_prospects,
+        ), patch(
+            'universe.generation.prospects.UniversePlayer.full_clean',
+            spy_clean,
+        ), patch(
+            'universe.generation.prospects.UniversePlayer.objects.bulk_create',
+            reject_insert,
+        ):
+            with self.assertRaisesRegex(ProspectGenerationError, 'failed validation'):
+                generate_prospects(self.league.id, SEED)
+        self.assertEqual(seen['flags'], (False, False))
+        self.assertEqual(seen['profiles'], 12)
+        self.assertFalse(seen['players'])
+        self.assertEqual(EraRuleProfile.objects.count(), 1)
+        self.assertEqual(DraftClass.objects.count(), 0)
+        self.assertEqual(UniversePlayer.objects.filter(cohort='draft').count(), 0)
+
+    def test_extra_clean_rejects_a_draftable_player_before_insert(self):
+        profile = EraRuleProfile.objects.get(release=self.release, profile_key='y1970')
+        college = self.release.colleges.order_by('slug').first()
+        draft_class = DraftClass(
+            release=self.release,
+            profile=profile,
+            season_year=1970,
+            franchise_count=26,
+            rounds=17,
+            draftable_count=17 * 26,
+            undrafted_multiplier=2,
+            undrafted_count=52,
+        )
+        draft_class.save()
+        player = UniversePlayer(
+            release=self.release,
+            college=college,
+            origin_franchise=None,
+            draft_class=draft_class,
+            origin_profile=profile,
+            universe_key='b' * 64,
+            name='Bad Prospect',
+            birth_year=1950,
+            birth_day=1,
+            position='QB',
+            secondary_position_1=None,
+            secondary_position_2=None,
+            handedness='right',
+            height_in=72,
+            weight_lb=200,
+            cohort=UniversePlayer.Cohort.DRAFT,
+            draft_pool=UniversePlayer.DraftPool.DRAFTABLE,
+            first_pro_year=None,
+            origin_draft_year=None,
+            origin_draft_round=None,
+            origin_draft_pick=None,
+            peak_age=28,
+            development_rate=40,
+            decline_rate=40,
+            board_rank=None,
+            trait_1=None,
+            trait_2=None,
+            trait_3=None,
+        )
+        before = UniversePlayer.objects.count()
+        with self.assertRaisesRegex(ProspectGenerationError, 'failed validation'):
+            _validate_generated_players([player])
+        self.assertEqual(UniversePlayer.objects.count(), before)
+        self.assertFalse(UniversePlayer.objects.filter(universe_key='b' * 64).exists())
+
+    def test_a_player_constraint_failure_rolls_back_the_writer(self):
+        seen = {}
+
+        def reject_insert(*args, **kwargs):
+            seen['profiles'] = EraRuleProfile.objects.count()
+            seen['classes'] = DraftClass.objects.count()
+            raise IntegrityError('UNIQUE constraint failed: universe_universeplayer.universe_key')
+
+        with patch(
+            'universe.generation.prospects.UniversePlayer.objects.bulk_create',
+            reject_insert,
+        ):
+            with self.assertRaisesRegex(ProspectGenerationError, 'rolled back'):
+                generate_prospects(self.league.id, SEED)
+        self.assertEqual(seen['profiles'], 12)
+        self.assertEqual(seen['classes'], 60)
+        self.assertEqual(EraRuleProfile.objects.count(), 1)
+        self.assertEqual(DraftClass.objects.count(), 0)
+        self.assertEqual(UniversePlayer.objects.filter(cohort='draft').count(), 0)
         self.assertEqual(UniversePlayer.objects.filter(cohort='opening').count(), 1378)
 
 
