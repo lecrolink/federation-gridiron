@@ -43,6 +43,21 @@ from universe.rules import EraRuleProfile, OpeningAssignment
 
 PROFILE_KEY = 'y1970'
 OPENING_LAST_YEAR = 1973
+PLAYER_BATCH_SIZE = 500
+# Foreign keys whose clean_fields() path would query once per opening player.
+# Scalar fields stay in full_clean. Inserts still enforce the keys.
+_OPENING_RELATION_FIELDS = frozenset((
+    'release',
+    'college',
+    'origin_franchise',
+    'draft_class',
+    'origin_profile',
+))
+_ASSIGNMENT_RELATION_FIELDS = frozenset((
+    'release',
+    'player',
+    'franchise',
+))
 
 _PLAYER_FIELDS = frozenset((
     'release',
@@ -266,9 +281,17 @@ def _same_profile(profile, expected):
     return True
 
 
+def _opening_players(release):
+    """The opening writer's owned rows. Draft and archive cohorts stay out."""
+    return UniversePlayer.objects.filter(
+        release=release,
+        cohort=UniversePlayer.Cohort.OPENING,
+    )
+
+
 def _opening_state(release, seed, franchises):
     players = list(
-        UniversePlayer.objects.filter(release=release).select_related(
+        _opening_players(release).select_related(
             'college',
             'origin_profile',
         )
@@ -368,11 +391,18 @@ def _write_opening(release, seed, franchises):
         _save_all([EraRuleProfile(release=release, **y1970_values())])
         profile = release.era_profiles.get(profile_key=PROFILE_KEY)
     colleges = {college.slug: college for college in release.colleges.all()}
+    _require_opening_relation_ids(release, colleges, profile)
     built_rows = build_opening_cohort(seed, release.slug)
+    if len(built_rows) != opening_cohort_count():
+        raise OpeningGenerationError('The opening cohort drifted from 1,378.')
     players = []
+    seen_keys = set()
     for built in built_rows:
+        if built.universe_key in seen_keys:
+            raise OpeningGenerationError('Opening keys must be unique.')
+        seen_keys.add(built.universe_key)
         peak_age, development_rate, decline_rate = growth_draws(seed, built.universe_key)
-        players.append(UniversePlayer(
+        player = UniversePlayer(
             release=release,
             college=colleges[built.college_slug],
             origin_franchise=None,
@@ -401,25 +431,39 @@ def _write_opening(release, seed, franchises):
             trait_1=None,
             trait_2=None,
             trait_3=None,
-        ))
-    _save_all(players)
+        )
+        _require_trusted_opening_player(player, built, release, colleges, profile)
+        players.append(player)
+    _insert_opening_players(players)
     stored_players = {
         player.universe_key: player
-        for player in UniversePlayer.objects.filter(release=release)
+        for player in _opening_players(release)
     }
+    if set(stored_players) != seen_keys:
+        raise OpeningGenerationError('The opening insert did not store the expected keys.')
     assignments = []
     for built in built_rows:
-        assignments.append(OpeningAssignment(
+        player = stored_players[built.universe_key]
+        assignment = OpeningAssignment(
             release=release,
-            player=stored_players[built.universe_key],
+            player=player,
             franchise=franchises[built.club_slug] if built.on_roster else None,
             role=built.slot_kind,
             depth=built.depth if built.on_roster else None,
-        ))
-    _save_all(assignments)
+        )
+        _require_trusted_opening_assignment(
+            assignment,
+            built,
+            release,
+            player,
+            franchises,
+        )
+        assignments.append(assignment)
+    _save_assignments(assignments)
 
 
 def _save_all(rows):
+    """Ordinary full validation for the college and y1970 profile rows."""
     for row in rows:
         try:
             row.full_clean()
@@ -428,4 +472,210 @@ def _save_all(rows):
                 f'A generated row failed validation: {exc}'
             ) from exc
     if rows:
-        type(rows[0]).objects.bulk_create(rows, batch_size=500)
+        type(rows[0]).objects.bulk_create(rows, batch_size=PLAYER_BATCH_SIZE)
+
+
+def _cached_related(instance, name):
+    """Return a related object already loaded on the instance. Never fetches."""
+    return instance._state.fields_cache.get(name)
+
+
+def _relation_exclude(model, expected):
+    actual = frozenset(
+        field.name
+        for field in model._meta.concrete_fields
+        if field.is_relation
+    )
+    if actual != expected:
+        raise OpeningGenerationError(
+            f'{model.__name__} foreign keys changed. Opening validation must name each one.'
+        )
+    return expected
+
+
+def _require_opening_relation_ids(release, colleges, profile):
+    """Require stored ids before any opening player is constructed."""
+    if release.pk is None:
+        raise OpeningGenerationError('The target release is not stored.')
+    approved = {slug: name for name, slug, _kind in COLLEGES}
+    if set(colleges) != set(approved) or len(colleges) != len(COLLEGES):
+        raise OpeningGenerationError(
+            'The opening writer expected the 64 approved colleges.'
+        )
+    seen_ids = set()
+    for slug, college in colleges.items():
+        if (
+            college.pk is None
+            or college.release_id != release.pk
+            or college.name != approved[slug]
+            or college.slug != slug
+        ):
+            raise OpeningGenerationError('An opening college is missing its stored id.')
+        seen_ids.add(college.pk)
+    if len(seen_ids) != len(COLLEGES):
+        raise OpeningGenerationError(
+            'The opening writer expected the 64 approved colleges.'
+        )
+    if (
+        profile is None
+        or profile.pk is None
+        or profile.release_id != release.pk
+        or profile.profile_key != PROFILE_KEY
+        or profile.first_year != FIRST_SEASON_YEAR
+        or profile.last_year != OPENING_LAST_YEAR
+    ):
+        raise OpeningGenerationError('The y1970 profile is missing its stored id.')
+
+
+def _require_trusted_opening_player(player, built, release, colleges, profile):
+    """Check excluded player foreign keys against objects already in memory."""
+    cached_release = _cached_related(player, 'release')
+    if (
+        release.pk is None
+        or player.release_id != release.pk
+        or cached_release is None
+        or cached_release.pk != release.pk
+    ):
+        raise OpeningGenerationError(
+            'A generated opening player release is not the locked release.'
+        )
+    if (
+        player.origin_franchise_id is not None
+        or _cached_related(player, 'origin_franchise') is not None
+    ):
+        raise OpeningGenerationError(
+            'A generated opening player origin franchise must be null.'
+        )
+    if player.draft_class_id is not None or _cached_related(player, 'draft_class') is not None:
+        raise OpeningGenerationError(
+            'A generated opening player draft class must be null.'
+        )
+    college = colleges.get(built.college_slug)
+    cached_college = _cached_related(player, 'college')
+    if (
+        college is None
+        or college.pk is None
+        or cached_college is None
+        or player.college_id != college.pk
+        or cached_college.pk != college.pk
+        or college.release_id != release.pk
+        or cached_college.release_id != release.pk
+        or college.slug != built.college_slug
+        or college.name != built.college_name
+    ):
+        raise OpeningGenerationError(
+            'A generated opening player college is not one of the stored colleges.'
+        )
+    cached_profile = _cached_related(player, 'origin_profile')
+    if (
+        profile is None
+        or profile.pk is None
+        or cached_profile is None
+        or player.origin_profile_id != profile.pk
+        or cached_profile.pk != profile.pk
+        or profile.release_id != release.pk
+        or profile.profile_key != PROFILE_KEY
+        or not (profile.first_year <= FIRST_SEASON_YEAR <= profile.last_year)
+    ):
+        raise OpeningGenerationError(
+            'A generated opening player origin profile is not the stored y1970 profile.'
+        )
+
+
+def _require_trusted_opening_assignment(assignment, built, release, player, franchises):
+    """Check assignment release, player, and franchise without querying."""
+    cached_release = _cached_related(assignment, 'release')
+    cached_player = _cached_related(assignment, 'player')
+    if (
+        release.pk is None
+        or assignment.release_id != release.pk
+        or cached_release is None
+        or cached_release.pk != release.pk
+        or player.pk is None
+        or player.release_id != release.pk
+        or player.cohort != UniversePlayer.Cohort.OPENING
+        or assignment.player_id != player.pk
+        or cached_player is None
+        or cached_player.pk != player.pk
+        or assignment.role != built.slot_kind
+    ):
+        raise OpeningGenerationError(
+            'A generated opening assignment does not match its player or release.'
+        )
+    cached_franchise = _cached_related(assignment, 'franchise')
+    if not built.on_roster:
+        if (
+            assignment.franchise_id is not None
+            or cached_franchise is not None
+            or assignment.depth is not None
+            or built.slot_kind != 'free_agent'
+        ):
+            raise OpeningGenerationError(
+                'A generated opening free agent has a franchise or depth.'
+            )
+        return
+    franchise = franchises[built.club_slug]
+    if (
+        franchise.pk is None
+        or franchise.release_id != release.pk
+        or franchise.origin != UniverseFranchise.Origin.FOUNDING
+        or assignment.franchise_id != franchise.pk
+        or cached_franchise is None
+        or cached_franchise.pk != franchise.pk
+        or cached_franchise.release_id != release.pk
+        or assignment.depth != built.depth
+        or assignment.depth is None
+    ):
+        raise OpeningGenerationError(
+            'A generated opening assignment franchise is not the stored founding club.'
+        )
+
+
+def _validate_opening_players(rows):
+    """Scalar clean_fields, clean, and extra_clean, without relation queries."""
+    exclude = _relation_exclude(UniversePlayer, _OPENING_RELATION_FIELDS)
+    for row in rows:
+        try:
+            row.full_clean(
+                exclude=exclude,
+                validate_unique=False,
+                validate_constraints=False,
+            )
+        except ValidationError as exc:
+            raise OpeningGenerationError(
+                f'A generated row failed validation: {exc}'
+            ) from exc
+
+
+def _insert_opening_players(rows):
+    _validate_opening_players(rows)
+    try:
+        UniversePlayer.objects.bulk_create(rows, batch_size=PLAYER_BATCH_SIZE)
+    except IntegrityError as exc:
+        raise OpeningGenerationError(
+            'An opening insert violated a database constraint. '
+            'The writer rolled back the colleges, profile, players, and assignments.'
+        ) from exc
+
+
+def _save_assignments(rows):
+    """Scalar assignment validation. Relationship checks already ran in memory."""
+    exclude = _relation_exclude(OpeningAssignment, _ASSIGNMENT_RELATION_FIELDS)
+    for row in rows:
+        try:
+            row.full_clean(
+                exclude=exclude,
+                validate_unique=False,
+                validate_constraints=False,
+            )
+        except ValidationError as exc:
+            raise OpeningGenerationError(
+                f'A generated row failed validation: {exc}'
+            ) from exc
+    try:
+        OpeningAssignment.objects.bulk_create(rows, batch_size=PLAYER_BATCH_SIZE)
+    except IntegrityError as exc:
+        raise OpeningGenerationError(
+            'An opening insert violated a database constraint. '
+            'The writer rolled back the colleges, profile, players, and assignments.'
+        ) from exc
