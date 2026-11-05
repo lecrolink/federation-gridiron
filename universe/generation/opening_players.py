@@ -32,7 +32,7 @@ from universe.generation.player_counts import (
 from universe.generation.player_identities import (
     build_opening_cohort,
     founding_club_slugs,
-    hmac_int,
+    growth_draws,
 )
 from universe.generation.player_names import COLLEGES
 from universe.generation.schedule import FOUNDING_FRANCHISE_COUNT, GENERATOR_VERSION
@@ -88,21 +88,6 @@ _COLLEGE_FIELDS = frozenset(('release', 'slug', 'name'))
 
 class OpeningGenerationError(Exception):
     """The opening cohort cannot be written."""
-
-
-def growth_draws(seed, universe_key):
-    """Approved peak age and development rates for one stored player key.
-
-    The decimal seed is the HMAC key. The message is the stored universe
-    key plus the field name. Inclusive results are peak age 24–32 and both
-    rates 25–75.
-    """
-    peak_age = 24 + (hmac_int(seed, f'{universe_key}:peak_age') % 9)
-    development_rate = 25 + (
-        hmac_int(seed, f'{universe_key}:development_rate') % 51
-    )
-    decline_rate = 25 + (hmac_int(seed, f'{universe_key}:decline_rate') % 51)
-    return peak_age, development_rate, decline_rate
 
 
 def y1970_values():

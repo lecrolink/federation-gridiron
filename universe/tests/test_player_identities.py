@@ -24,8 +24,11 @@ from universe.generation.player_counts import (
 )
 from universe.generation.player_identities import (
     BODY_BANDS_THROUGH_1977,
+    DRAFT_POOL_DRAFTABLE,
+    DRAFT_POOL_UNDRAFTED,
     FREE_AGENT_DEBUT_YEAR,
     FREE_AGENT_POSITIONS,
+    LEFT_HAND_PER_THOUSAND,
     OPENING_AGE_BANDS,
     OTHER_LEFT_HAND_PER_THOUSAND,
     PROSPECT_AGE_BAND,
@@ -35,9 +38,13 @@ from universe.generation.player_identities import (
     SLOT_STARTER,
     SLOT_TAXI,
     build_player_universe,
+    build_prospects,
+    growth_draws,
     hmac_int,
     joe_threshold,
+    order_seat_indexes,
     player_key,
+    position_seat_coordinate,
     resolve_given_name,
 )
 from universe.generation.player_names import (
@@ -331,6 +338,14 @@ class PlayerUniverseTests(SimpleTestCase):
             other.prospects[0].universe_key,
             self.universe.prospects[0].universe_key,
         )
+        self.assertEqual(
+            [prospect.draft_pool for prospect in other.prospects],
+            [prospect.draft_pool for prospect in self.universe.prospects],
+        )
+        self.assertNotEqual(
+            [prospect.position for prospect in other.prospects],
+            [prospect.position for prospect in self.universe.prospects],
+        )
         self.assertNotEqual(
             other.class_headers[0].universe_key,
             self.universe.class_headers[0].universe_key,
@@ -531,15 +546,73 @@ class PlayerUniverseTests(SimpleTestCase):
                 ]
                 self.assertEqual(prospect.college_name, college_name)
                 self.assertEqual(prospect.college_slug, college_slug)
-                self.assertIsNone(prospect.position)
-                self.assertIsNone(prospect.draft_pool)
+                self.assertIn(prospect.position, POSITIONS)
+                offset = index % (header.rounds + 2)
+                if offset < header.rounds:
+                    self.assertEqual(prospect.draft_pool, DRAFT_POOL_DRAFTABLE)
+                    self.assertEqual(prospect.debut_year, header.season_year)
+                else:
+                    self.assertEqual(prospect.draft_pool, DRAFT_POOL_UNDRAFTED)
+                    self.assertIsNone(prospect.debut_year)
+                self.assertEqual(prospect.first_pro_year, prospect.debut_year)
                 self.assertIsNone(prospect.draft_round)
                 self.assertIsNone(prospect.draft_pick)
                 self.assertIsNone(prospect.destination_slug)
-                self.assertIsNone(prospect.debut_year)
-                self.assertFalse(hasattr(prospect, 'height_in'))
-                self.assertFalse(hasattr(prospect, 'handedness'))
-                self.assertFalse(hasattr(prospect, 'peak_age'))
+                self.assertIsNone(prospect.origin_draft_year)
+                self.assertIsNone(prospect.origin_franchise_slug)
+                self.assertIsNone(prospect.board_rank)
+                height_low, height_high, weight_low, weight_high = (
+                    BODY_BANDS_THROUGH_1977[prospect.position]
+                )
+                if header.season_year > 1977:
+                    height_low += 1
+                    height_high += 1
+                    weight_low += 10
+                    weight_high += 10
+                self.assertEqual(
+                    prospect.height_in,
+                    height_low + (
+                        hmac_int(SEED, f'{prospect.universe_key}:height_in')
+                        % (height_high - height_low + 1)
+                    ),
+                )
+                self.assertEqual(
+                    prospect.weight_lb,
+                    weight_low + (
+                        hmac_int(SEED, f'{prospect.universe_key}:weight_lb')
+                        % (weight_high - weight_low + 1)
+                    ),
+                )
+                self.assertGreaterEqual(prospect.height_in, height_low)
+                self.assertLessEqual(prospect.height_in, height_high)
+                self.assertGreaterEqual(prospect.weight_lb, weight_low)
+                self.assertLessEqual(prospect.weight_lb, weight_high)
+                self.assertGreaterEqual(prospect.height_in, 64)
+                self.assertLessEqual(prospect.height_in, 84)
+                self.assertGreaterEqual(prospect.weight_lb, 160)
+                self.assertLessEqual(prospect.weight_lb, 360)
+                rate = (
+                    LEFT_HAND_PER_THOUSAND
+                    if prospect.position in ('QB', 'K', 'P')
+                    else OTHER_LEFT_HAND_PER_THOUSAND
+                )
+                hand_ticket = hmac_int(SEED, f'{prospect.universe_key}:handedness') % 1000
+                self.assertEqual(
+                    prospect.handedness,
+                    'left' if hand_ticket < rate else 'right',
+                )
+                peak_age, development_rate, decline_rate = growth_draws(
+                    SEED, prospect.universe_key,
+                )
+                self.assertEqual(prospect.peak_age, peak_age)
+                self.assertEqual(prospect.development_rate, development_rate)
+                self.assertEqual(prospect.decline_rate, decline_rate)
+                self.assertGreaterEqual(prospect.peak_age, 24)
+                self.assertLessEqual(prospect.peak_age, 32)
+                self.assertGreaterEqual(prospect.development_rate, 25)
+                self.assertLessEqual(prospect.development_rate, 75)
+                self.assertGreaterEqual(prospect.decline_rate, 25)
+                self.assertLessEqual(prospect.decline_rate, 75)
 
         self.assertEqual(len(by_year[1970]), 494)
         self.assertEqual(draft_class(1970).class_size, 494)
@@ -569,3 +642,174 @@ class PlayerUniverseTests(SimpleTestCase):
         self.assertEqual(len(keys), 1378 + 19777 + 60)
         self.assertEqual(len(keys), len(set(keys)))
         self.assertTrue(all(len(key) == 64 for key in keys))
+
+
+# Approved largest-remainder seats. The key is the first year of the era.
+ERA_POSITION_TOTALS = {
+    1970: {
+        'QB': 252, 'HB': 252, 'FB': 168, 'WR': 419, 'TE': 168,
+        'LT': 168, 'LG': 168, 'C': 168, 'RG': 168, 'RT': 168,
+        'DE': 335, 'DT': 335, 'ILB': 252, 'OLB': 335, 'CB': 252,
+        'FS': 168, 'SS': 84, 'K': 84, 'P': 84,
+    },
+    1978: {
+        'QB': 200, 'HB': 200, 'FB': 133, 'WR': 466, 'TE': 133,
+        'LT': 133, 'LG': 200, 'C': 133, 'RG': 133, 'RT': 133,
+        'DE': 266, 'DT': 266, 'ILB': 200, 'OLB': 266, 'CB': 266,
+        'FS': 133, 'SS': 133, 'K': 67, 'P': 67,
+    },
+    1987: {
+        'QB': 122, 'HB': 122, 'FB': 41, 'WR': 326, 'TE': 82,
+        'LT': 82, 'LG': 122, 'C': 81, 'RG': 122, 'RT': 81,
+        'DE': 163, 'DT': 163, 'ILB': 122, 'OLB': 163, 'CB': 204,
+        'FS': 81, 'SS': 81, 'K': 41, 'P': 41,
+    },
+    1995: {
+        'QB': 491, 'HB': 491, 'FB': 164, 'WR': 1636, 'TE': 327,
+        'LT': 327, 'LG': 491, 'C': 327, 'RG': 491, 'RT': 327,
+        'DE': 818, 'DT': 655, 'ILB': 654, 'OLB': 654, 'CB': 982,
+        'FS': 491, 'SS': 327, 'K': 164, 'P': 164,
+    },
+}
+ALL_ERA_POSITION_TOTALS = {
+    'QB': 1065, 'HB': 1065, 'FB': 506, 'WR': 2847, 'TE': 710,
+    'LT': 710, 'LG': 981, 'C': 709, 'RG': 914, 'RT': 709,
+    'DE': 1582, 'DT': 1419, 'ILB': 1228, 'OLB': 1418, 'CB': 1704,
+    'FS': 873, 'SS': 625, 'K': 356, 'P': 356,
+}
+ERA_CLASS_SIZES = {1970: 4028, 1978: 3528, 1987: 2240, 1995: 9981}
+
+# Recorded draftable and undrafted counts for seed 1970 and slug fg-1970-1.
+SEED_1970_POOL_COUNTS = {
+    'QB': (894, 171), 'HB': (884, 181), 'FB': (427, 79), 'WR': (2283, 564),
+    'TE': (599, 111), 'LT': (576, 134), 'LG': (808, 173), 'C': (584, 125),
+    'RG': (736, 178), 'RT': (578, 131), 'DE': (1290, 292), 'DT': (1163, 256),
+    'ILB': (1008, 220), 'OLB': (1166, 252), 'CB': (1371, 333), 'FS': (705, 168),
+    'SS': (522, 103), 'K': (299, 57), 'P': (290, 66),
+}
+
+
+def _era_key(year):
+    if year <= 1977:
+        return 1970
+    if year <= 1986:
+        return 1978
+    if year <= 1994:
+        return 1987
+    return 1995
+
+
+class ProspectPositionPackTests(SimpleTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.prospects = build_prospects(SEED, RELEASE_SLUG)
+        cls.again = build_prospects(SEED, RELEASE_SLUG)
+
+    def test_rerun_matches_and_every_class_keeps_its_size(self):
+        self.assertEqual(self.again, self.prospects)
+        self.assertEqual(len(self.prospects), 19777)
+        self.assertEqual(prospect_totals(), (16183, 3594, 19777))
+        self.assertEqual(opening_cohort_count(), 1378)
+        self.assertEqual(playable_identity_count(), 21155)
+        by_year = {}
+        for prospect in self.prospects:
+            by_year.setdefault(prospect.season_year, []).append(prospect)
+        self.assertEqual(set(by_year), set(range(1970, 2030)))
+        draftable = 0
+        undrafted = 0
+        for year, group in by_year.items():
+            count = draft_class(year)
+            self.assertEqual(len(group), count.class_size)
+            block = count.rounds + 2
+            self.assertEqual(len(group) // block, count.franchise_count)
+            for start in range(0, len(group), block):
+                chunk = group[start:start + block]
+                self.assertEqual(
+                    [row.draft_pool for row in chunk[:count.rounds]],
+                    [DRAFT_POOL_DRAFTABLE] * count.rounds,
+                )
+                self.assertEqual(
+                    [row.draft_pool for row in chunk[count.rounds:]],
+                    [DRAFT_POOL_UNDRAFTED, DRAFT_POOL_UNDRAFTED],
+                )
+                self.assertTrue(all(row.debut_year == year for row in chunk[:count.rounds]))
+                self.assertTrue(all(row.debut_year is None for row in chunk[count.rounds:]))
+            draftable += sum(row.draft_pool == DRAFT_POOL_DRAFTABLE for row in group)
+            undrafted += sum(row.draft_pool == DRAFT_POOL_UNDRAFTED for row in group)
+        self.assertEqual(draftable, 16183)
+        self.assertEqual(undrafted, 3594)
+
+    def test_era_and_all_era_position_totals(self):
+        era_counts = {era: {position: 0 for position in POSITIONS} for era in ERA_POSITION_TOTALS}
+        all_counts = {position: 0 for position in POSITIONS}
+        by_year = {}
+        for prospect in self.prospects:
+            era_counts[_era_key(prospect.season_year)][prospect.position] += 1
+            all_counts[prospect.position] += 1
+            by_year.setdefault(prospect.season_year, []).append(prospect.position)
+        for era, expected in ERA_POSITION_TOTALS.items():
+            self.assertEqual(era_counts[era], expected)
+            self.assertEqual(sum(expected.values()), ERA_CLASS_SIZES[era])
+        self.assertEqual(all_counts, ALL_ERA_POSITION_TOTALS)
+        self.assertEqual(sum(all_counts.values()), 19777)
+        for year, positions in by_year.items():
+            self.assertEqual(len(positions), draft_class(year).class_size)
+
+    def test_seed_1970_vector_and_full_digest_shuffle(self):
+        prospects = build_prospects(1970, RELEASE_SLUG)
+        self.assertEqual(build_prospects(1970, RELEASE_SLUG), prospects)
+        pools = {
+            position: [0, 0] for position in POSITIONS
+        }
+        by_year = {}
+        for prospect in prospects:
+            slot = 0 if prospect.draft_pool == DRAFT_POOL_DRAFTABLE else 1
+            pools[prospect.position][slot] += 1
+            by_year.setdefault(prospect.season_year, []).append(prospect.position)
+            self.assertIsNone(prospect.draft_round)
+            self.assertIsNone(prospect.draft_pick)
+            self.assertIsNone(prospect.destination_slug)
+            self.assertIsNone(prospect.origin_draft_year)
+            self.assertIsNone(prospect.origin_franchise_slug)
+            self.assertIsNone(prospect.board_rank)
+        self.assertEqual(
+            {position: tuple(counts) for position, counts in pools.items()},
+            SEED_1970_POOL_COUNTS,
+        )
+        self.assertEqual(sum(row[0] for row in pools.values()), 16183)
+        self.assertEqual(sum(row[1] for row in pools.values()), 3594)
+        self.assertTrue(all(row[0] and row[1] for row in pools.values()))
+
+        seats = by_year[1970]
+        counts = {position: seats.count(position) for position in POSITIONS}
+        multiset = []
+        for position in POSITIONS:
+            multiset.extend([position] * counts[position])
+        digests = []
+        for original_index in range(len(multiset)):
+            message = position_seat_coordinate(RELEASE_SLUG, 1970, original_index)
+            self.assertEqual(
+                message,
+                f'p-{RELEASE_SLUG}-draft-1970-seat-{original_index:05d}:position',
+            )
+            digests.append(hmac.new(
+                b'1970', message.encode('utf-8'), hashlib.sha256,
+            ).digest())
+            self.assertEqual(len(digests[-1]), 32)
+        self.assertEqual(len(set(digests)), len(digests))
+        order = order_seat_indexes(digests)
+        self.assertEqual(seats, [multiset[index] for index in order])
+
+
+class SeatOrderTests(SimpleTestCase):
+    def test_full_digest_beats_a_shared_eight_byte_prefix(self):
+        later = b'\x00' * 8 + b'\x02' + b'\x00' * 23
+        earlier = b'\x00' * 8 + b'\x01' + b'\x00' * 23
+        self.assertEqual(len(later), 32)
+        self.assertEqual(order_seat_indexes((later, earlier)), (1, 0))
+
+    def test_an_equal_digest_keeps_the_smaller_original_index(self):
+        tied = b'\x10' * 32
+        first = b'\x00' * 32
+        self.assertEqual(order_seat_indexes((tied, tied, first)), (2, 0, 1))
