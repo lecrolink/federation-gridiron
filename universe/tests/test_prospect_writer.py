@@ -12,7 +12,10 @@ from django.utils import timezone
 
 from leagues.models import League
 from timelines.models import Timeline
-from universe.generation.opening_players import generate_opening_players
+from universe.generation.opening_players import (
+    OpeningGenerationError,
+    generate_opening_players,
+)
 from universe.generation.player_counts import (
     EXPANSION_YEARS,
     UNDRAFTED_MULTIPLIER,
@@ -464,6 +467,51 @@ class ProspectWriterTests(TestCase):
         self.assertEqual(self.release.validation_fingerprint, 'kept-validation')
         self.assertEqual(self.release.expansion_schedule_version, 3)
         self.assertEqual(self.release.status, UniverseRelease.Status.DRAFT)
+
+    def test_opening_writer_is_unchanged_after_prospects(self):
+        opening_ids = set(
+            UniversePlayer.objects.filter(cohort='opening').values_list('pk', flat=True)
+        )
+        prospect_ids = set(
+            UniversePlayer.objects.filter(cohort='draft').values_list('pk', flat=True)
+        )
+        assignment_ids = set(OpeningAssignment.objects.values_list('pk', flat=True))
+        self.assertEqual(generate_opening_players(self.league.id, SEED), 'unchanged')
+        self.assertEqual(set(
+            UniversePlayer.objects.filter(cohort='opening').values_list('pk', flat=True)
+        ), opening_ids)
+        self.assertEqual(set(
+            UniversePlayer.objects.filter(cohort='draft').values_list('pk', flat=True)
+        ), prospect_ids)
+        self.assertEqual(set(OpeningAssignment.objects.values_list('pk', flat=True)), assignment_ids)
+        self.assertEqual(len(opening_ids), 1378)
+        self.assertEqual(len(prospect_ids), 19777)
+
+        player = UniversePlayer.objects.filter(cohort='opening').order_by('pk').first()
+        UniversePlayer.objects.filter(pk=player.pk).update(name='Edited Opening')
+        with self.assertRaisesRegex(OpeningGenerationError, 'will not delete or replace'):
+            generate_opening_players(self.league.id, SEED)
+        player.refresh_from_db()
+        self.assertEqual(player.name, 'Edited Opening')
+        self.assertEqual(set(
+            UniversePlayer.objects.filter(cohort='draft').values_list('pk', flat=True)
+        ), prospect_ids)
+
+        extra = UniversePlayer.objects.filter(cohort='opening').order_by('pk').last()
+        kept_name = extra.name
+        kept_pk = extra.pk
+        extra.pk = None
+        extra.universe_key = 'd' * 64
+        extra.name = 'Extra Opening'
+        UniversePlayer.objects.bulk_create([extra])
+        with self.assertRaisesRegex(OpeningGenerationError, 'will not delete or replace'):
+            generate_opening_players(self.league.id, SEED)
+        self.assertEqual(UniversePlayer.objects.get(pk=kept_pk).name, kept_name)
+        self.assertEqual(UniversePlayer.objects.get(universe_key='d' * 64).name, 'Extra Opening')
+        self.assertEqual(set(
+            UniversePlayer.objects.filter(cohort='draft').values_list('pk', flat=True)
+        ), prospect_ids)
+        self.assertEqual(UniversePlayer.objects.filter(cohort='opening').count(), 1379)
 
     def test_a_different_seed_refuses_without_deleting(self):
         player_ids = set(UniversePlayer.objects.values_list('pk', flat=True))

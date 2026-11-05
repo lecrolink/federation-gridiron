@@ -1,11 +1,14 @@
 import hashlib
 import hmac
+import socket
+from collections import Counter
 from io import StringIO
+from unittest.mock import patch
 
 from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.db import connection
+from django.db import IntegrityError, connection
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
@@ -13,8 +16,12 @@ from leagues.models import League
 from timelines.models import Timeline
 from universe.generation.opening_players import (
     OpeningGenerationError,
+    _require_trusted_opening_assignment,
+    _require_trusted_opening_player,
+    _validate_opening_players,
     generate_opening_players,
     growth_draws,
+    y1970_values,
 )
 from universe.generation.player_counts import ACTIVE_QUOTA_1970, TAXI_QUOTA
 from universe.generation.player_identities import (
@@ -32,7 +39,7 @@ from universe.generation.schedule import (
     POOL_SIZE,
     generate_schedule_release,
 )
-from universe.models import HistoricalStanding, UniverseRelease
+from universe.models import HistoricalStanding, UniverseFranchise, UniverseRelease
 from universe.people import College, PlayerRatingProfile, UniversePlayer, UniverseStaffIdentity
 from universe.rules import (
     DraftClass,
@@ -46,6 +53,20 @@ from universe.rules import (
 SEED = 1970
 OTHER_SEED = 1971
 RELEASE_SLUG = 'fg-1970-1'
+
+_ORIGINAL_CONNECT = socket.socket.connect
+
+
+def _blocked_connect(self, address):
+    raise AssertionError(f'Outbound connections are blocked: {address}')
+
+
+def setUpModule():
+    socket.socket.connect = _blocked_connect
+
+
+def tearDownModule():
+    socket.socket.connect = _ORIGINAL_CONNECT
 
 
 class SqliteSettingsTests(SimpleTestCase):
@@ -300,12 +321,42 @@ class OpeningWriterTests(TestCase):
 
     def test_command_prints_created_and_then_unchanged(self):
         created = StringIO()
-        call_command(
-            'generate_opening_players',
-            league_id=self.league.id,
-            seed=SEED,
-            stdout=created,
+        executed = []
+
+        def count_queries(execute, sql, params, many, context):
+            executed.append(sql)
+            return execute(sql, params, many, context)
+
+        connection.execute_wrappers.append(count_queries)
+        try:
+            call_command(
+                'generate_opening_players',
+                league_id=self.league.id,
+                seed=SEED,
+                stdout=created,
+            )
+        finally:
+            connection.execute_wrappers.remove(count_queries)
+        repeats = Counter(executed)
+        top = [(count, sql[:140]) for sql, count in repeats.most_common(3)]
+        relation_or_check = [
+            sql for sql in executed
+            if 'AS "a"' in sql or 'AS "_check"' in sql or 'AS `a`' in sql or 'AS `_check`' in sql
+        ]
+        relation_repeats = Counter(relation_or_check)
+        # One constraint or foreign-key lookup per opening player would repeat
+        # about 1,378 times. Colleges and the y1970 profile may still validate.
+        self.assertLess(
+            len(executed),
+            4000,
+            f'opening write ran {len(executed)} queries; top {top}',
         )
+        self.assertLess(
+            max(repeats.values(), default=0),
+            400,
+            f'a statement repeated once per opening player; top {top}',
+        )
+        self.assertLess(max(relation_repeats.values(), default=0), 400)
         self.assertEqual(created.getvalue().strip(), 'created')
         again = StringIO()
         call_command(
@@ -354,6 +405,254 @@ class OpeningWriterTests(TestCase):
         self.assertEqual(other.name, build_opening_cohort(SEED, RELEASE_SLUG)[-1].name)
         self.assertEqual(UniversePlayer.objects.count(), 1378)
         self.assertEqual(OpeningAssignment.objects.count(), 1378)
+
+        extra = UniversePlayer.objects.filter(cohort='opening').order_by('pk').first()
+        extra.pk = None
+        extra.universe_key = 'a' * 64
+        extra.name = 'Extra Opening'
+        UniversePlayer.objects.bulk_create([extra])
+        with self.assertRaisesRegex(OpeningGenerationError, 'will not delete or replace'):
+            generate_opening_players(self.league.id, SEED)
+        self.assertEqual(UniversePlayer.objects.filter(cohort='opening').count(), 1379)
+        self.assertEqual(UniversePlayer.objects.get(universe_key='a' * 64).name, 'Extra Opening')
+        self.assertEqual(OpeningAssignment.objects.count(), 1378)
+
+    def test_field_validation_fails_before_player_insertion(self):
+        seen = {'players': False, 'queries': None}
+        real_clean = UniversePlayer.full_clean
+
+        def spy_clean(self, *args, **kwargs):
+            seen['flags'] = (
+                kwargs.get('validate_unique', True),
+                kwargs.get('validate_constraints', True),
+            )
+            seen['exclude'] = kwargs.get('exclude')
+            queries = []
+
+            def wrap(execute, sql, params, many, context):
+                queries.append(sql)
+                return execute(sql, params, many, context)
+
+            connection.execute_wrappers.append(wrap)
+            try:
+                return real_clean(self, *args, **kwargs)
+            finally:
+                connection.execute_wrappers.remove(wrap)
+                seen['queries'] = queries
+
+        def bad_cohort(seed, slug):
+            rows = list(build_opening_cohort(seed, slug))
+            rows[0] = rows[0]._replace(position='NOPE')
+            return tuple(rows)
+
+        def reject_insert(*args, **kwargs):
+            seen['players'] = True
+            raise AssertionError('Player bulk insertion ran after invalid field data.')
+
+        with patch(
+            'universe.generation.opening_players.build_opening_cohort',
+            bad_cohort,
+        ), patch(
+            'universe.generation.opening_players.UniversePlayer.full_clean',
+            spy_clean,
+        ), patch(
+            'universe.generation.opening_players.UniversePlayer.objects.bulk_create',
+            reject_insert,
+        ):
+            with self.assertRaisesRegex(OpeningGenerationError, 'failed validation'):
+                generate_opening_players(self.league.id, SEED)
+        self.assertEqual(seen['flags'], (False, False))
+        self.assertEqual(set(seen['exclude']), {
+            'release',
+            'college',
+            'origin_franchise',
+            'draft_class',
+            'origin_profile',
+        })
+        self.assertEqual(seen['queries'], [])
+        self.assertFalse(seen['players'])
+        self.assertEqual(UniversePlayer.objects.count(), 0)
+        self.assertEqual(College.objects.filter(release=self.release).count(), 0)
+
+    def test_extra_clean_rejects_an_opening_player_before_insert(self):
+        profile = EraRuleProfile(release=self.release, **y1970_values())
+        profile.save()
+        _name, slug, _kind = COLLEGES[0]
+        college = College.objects.create(release=self.release, slug=slug, name=_name)
+        player = UniversePlayer(
+            release=self.release,
+            college=college,
+            origin_franchise=None,
+            draft_class=None,
+            origin_profile=profile,
+            universe_key='b' * 64,
+            name='Bad Opening',
+            birth_year=1950,
+            birth_day=1,
+            position='QB',
+            handedness='right',
+            height_in=72,
+            weight_lb=200,
+            cohort=UniversePlayer.Cohort.OPENING,
+            draft_pool=None,
+            first_pro_year=None,
+            origin_draft_year=None,
+            peak_age=28,
+            development_rate=40,
+            decline_rate=40,
+        )
+        calls = {'extra': 0}
+        real_extra = UniversePlayer.extra_clean
+
+        def spy_extra(self, errors):
+            calls['extra'] += 1
+            return real_extra(self, errors)
+
+        before = UniversePlayer.objects.count()
+        with patch.object(UniversePlayer, 'extra_clean', spy_extra):
+            with self.assertRaisesRegex(OpeningGenerationError, 'archive') as caught:
+                _validate_opening_players([player])
+        self.assertEqual(calls['extra'], 1)
+        self.assertIn('failed validation', str(caught.exception))
+        self.assertEqual(UniversePlayer.objects.count(), before)
+
+    def test_untrusted_relations_are_rejected_before_insertion(self):
+        built = build_opening_cohort(SEED, RELEASE_SLUG)[0]
+        profile = EraRuleProfile(release=self.release, **y1970_values())
+        profile.save()
+        college = College.objects.create(
+            release=self.release,
+            slug=built.college_slug,
+            name=built.college_name,
+        )
+        colleges = {college.slug: college}
+        peak_age, development_rate, decline_rate = growth_draws(SEED, built.universe_key)
+        player = UniversePlayer(
+            release=self.release,
+            college=college,
+            origin_franchise=None,
+            draft_class=None,
+            origin_profile=profile,
+            universe_key=built.universe_key,
+            name=built.name,
+            birth_year=built.birth_year,
+            birth_day=built.birth_day,
+            position=built.position,
+            handedness=built.handedness,
+            height_in=built.height_in,
+            weight_lb=built.weight_lb,
+            cohort=UniversePlayer.Cohort.OPENING,
+            draft_pool=None,
+            first_pro_year=built.debut_year,
+            peak_age=peak_age,
+            development_rate=development_rate,
+            decline_rate=decline_rate,
+        )
+        foreign_college = College(release=self.release, slug='not-approved', name='Not Approved')
+        foreign_college.pk = college.pk + 1
+        foreign_profile = EraRuleProfile(release=self.release, first_year=1970, last_year=1973)
+        foreign_profile.pk = profile.pk + 1
+        foreign_release = UniverseRelease(slug='other-release')
+        foreign_release.pk = self.release.pk + 1
+        franchise = self.release.franchises.filter(origin=UniverseFranchise.Origin.FOUNDING).order_by('pk').first()
+        cases = (
+            ('college', lambda row: setattr(row, 'college', foreign_college), 'stored colleges'),
+            ('profile', lambda row: setattr(row, 'origin_profile', foreign_profile), 'y1970 profile'),
+            ('release', lambda row: setattr(row, 'release', foreign_release), 'locked release'),
+            ('franchise', lambda row: setattr(row, 'origin_franchise', franchise), 'origin franchise'),
+        )
+        for name, mutate, pattern in cases:
+            with self.subTest(name=name):
+                row = UniversePlayer(
+                    release=player.release,
+                    college=player.college,
+                    origin_franchise=None,
+                    draft_class=None,
+                    origin_profile=player.origin_profile,
+                    universe_key=player.universe_key,
+                    name=player.name,
+                    birth_year=player.birth_year,
+                    birth_day=player.birth_day,
+                    position=player.position,
+                    handedness=player.handedness,
+                    height_in=player.height_in,
+                    weight_lb=player.weight_lb,
+                    cohort=player.cohort,
+                    first_pro_year=player.first_pro_year,
+                    peak_age=player.peak_age,
+                    development_rate=player.development_rate,
+                    decline_rate=player.decline_rate,
+                )
+                mutate(row)
+                with self.assertRaisesRegex(OpeningGenerationError, pattern):
+                    _require_trusted_opening_player(
+                        row, built, self.release, colleges, profile,
+                    )
+        player.pk = 10 ** 9
+        other_franchise = self.release.franchises.filter(
+            origin=UniverseFranchise.Origin.FOUNDING,
+        ).exclude(placeholder_slug=built.club_slug).order_by('pk').first()
+        assignment = OpeningAssignment(
+            release=self.release,
+            player=player,
+            franchise=other_franchise,
+            role=built.slot_kind,
+            depth=built.depth,
+        )
+        franchises = {
+            row.placeholder_slug: row
+            for row in self.release.franchises.filter(origin=UniverseFranchise.Origin.FOUNDING)
+        }
+        with self.assertRaisesRegex(OpeningGenerationError, 'founding club'):
+            _require_trusted_opening_assignment(
+                assignment, built, self.release, player, franchises,
+            )
+        inserted = {'called': False}
+
+        def reject_insert(*args, **kwargs):
+            inserted['called'] = True
+            raise AssertionError('Assignment bulk insertion ran after an untrusted franchise.')
+
+        def sabotage(assignment, built_row, release, owner, stored_franchises):
+            assignment.franchise = other_franchise
+            return _require_trusted_opening_assignment(
+                assignment, built_row, release, owner, stored_franchises,
+            )
+
+        with patch(
+            'universe.generation.opening_players._require_trusted_opening_assignment',
+            sabotage,
+        ), patch(
+            'universe.generation.opening_players.OpeningAssignment.objects.bulk_create',
+            reject_insert,
+        ):
+            with self.assertRaisesRegex(OpeningGenerationError, 'founding club'):
+                generate_opening_players(self.league.id, SEED)
+        self.assertFalse(inserted['called'])
+        self.assertEqual(UniversePlayer.objects.filter(release=self.release).count(), 0)
+        self.assertEqual(OpeningAssignment.objects.filter(release=self.release).count(), 0)
+        self.assertEqual(College.objects.filter(release=self.release).count(), 1)
+
+    def test_a_player_constraint_failure_rolls_back_the_opening_write(self):
+        seen = {}
+
+        def reject_insert(*args, **kwargs):
+            seen['colleges'] = College.objects.filter(release=self.release).count()
+            seen['profiles'] = EraRuleProfile.objects.filter(release=self.release).count()
+            raise IntegrityError('FOREIGN KEY constraint failed')
+
+        with patch(
+            'universe.generation.opening_players.UniversePlayer.objects.bulk_create',
+            reject_insert,
+        ):
+            with self.assertRaisesRegex(OpeningGenerationError, 'rolled back'):
+                generate_opening_players(self.league.id, SEED)
+        self.assertEqual(seen['colleges'], 64)
+        self.assertEqual(seen['profiles'], 1)
+        self.assertEqual(College.objects.filter(release=self.release).count(), 0)
+        self.assertEqual(EraRuleProfile.objects.filter(release=self.release).count(), 0)
+        self.assertEqual(UniversePlayer.objects.filter(release=self.release).count(), 0)
+        self.assertEqual(OpeningAssignment.objects.filter(release=self.release).count(), 0)
 
     def test_published_and_pinned_releases_are_refused(self):
         with self.assertRaisesRegex(OpeningGenerationError, 'published'):
