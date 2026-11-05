@@ -277,11 +277,11 @@ Player movement uses three markets. Roster size and schedule length still change
 | Salary cap | Off. | Off. | On. The amount is not set in this document. | The on/off switch is the working design. The amount needs approval. |
 | Minimum salary | A ledger-unit floor. The number is not set. | Same | Once a cap exists, the recommended shape is a small percent of that cap. The percent is not set. | Needs approval. |
 | Franchise tag | Not used. | Not used. | One per club. Recommended salary: the average of the five highest charges at that position from the prior season. | The formula needs approval. It does not set the cap. |
-| Playoff field | 1970–1975: 8 teams, 3 division winners and 1 wild card per conference. 1976–1994: 8 teams, 2 division winners and 2 wild cards per conference. | 1976–1994 continues: 8 teams, 2 division winners and 2 wild cards per conference. | 1995–1998: 8 teams, 3 division winners and 1 wild card per conference. From 1999: 12 teams, 6 per conference, every division winner, wild cards fill that conference to 6, top two seeds bye. Conference-1 is 4 winners and 2 wild cards from 1999 on. Conference-2 is 3 winners and 3 wild cards in 1999–2001, then 4 winners and 2 wild cards from 2002. | Confirmed with the alignment. Order among division winners, and among wild cards, is still open. |
+| Playoff field | 1970–1975: 8 teams, 3 division winners and 1 wild card per conference. 1976–1994: 8 teams, 2 division winners and 2 wild cards per conference. | 1976–1994 continues: 8 teams, 2 division winners and 2 wild cards per conference. | 1995–1998: 8 teams, 3 division winners and 1 wild card per conference. 1999–2001 uses the approved `twelve_team_fill_to_six` value: 12 teams, 6 per conference, every division winner, wild cards fill that conference to 6, top two seeds bye, first round 3 vs 6 and 4 vs 5. Conference-1 supplies 4 winners and 2 wild cards. Conference-2 supplies 3 and 3. From 2002 the documented field is 4 winners and 2 wild cards in each conference. | The 1999–2001 stored value is approved. Later playoff card fields remain unresolved. Order inside either group is still open. |
 | Schedule length | 14 games through 1977, then 16. | 16 | 16 through 2020, then 17. | Working design |
 | Overtime | 1970–1973: regular season may end tied. 1974–1986: one 15-minute sudden-death period, then a tie. Playoffs continue until there is a winner. | Sudden death, same as 1974. | 1995–2011: sudden death. 2012–2029: each team may possess the ball once unless the first team scores a touchdown. One period in the regular season. Playoffs continue. | The 1974 and 2012 changes need approval. |
 | Statistics | Sacks are recorded in every year. Leaderboards treat them as unofficial through 1986. | Sacks are an official statistic. | Same | Working design |
-| Style of play | `run-first` through 1977, then `passing-rules`. Higher injury cost early. Fullbacks are common. | `timing-specialists`. Pass rush and nickel coverage become ordinary. | `cap-and-size` through 2003, `spread-influence` through 2013, then `modern-passing`. | Working design for generation emphasis. Numeric sim weights need approval. |
+| Style of play | `run-first` through 1977, then `passing-rules`. Higher injury cost early. Fullbacks are common. | `timing-specialists`. Pass rush and nickel coverage become ordinary. | `cap-and-size` through 2003, `spread-influence` through 2013, then `modern-passing`. | The style keys on the 12 spans are approved. Numeric sim weights need approval. |
 
 Trades of players and of draft picks are legal in every market, before that year's deadline, and only as far into the future as that market allows. A trade is a timeline transaction. It does not create a person.
 
@@ -316,31 +316,33 @@ Before 1995 the cap is off, so units are a negotiation scale only. From 1995 the
 | `cap_limit` | Null while the cap is off, and null until approved while the cap is on. |
 | `minimum_salary` | Ledger units. Null until approved. |
 | `franchise_tag` | `off`, or `top_five_position_average`. |
-| `playoff_format` | `eight_team_3_and_1`, `eight_team_2_and_2`, `twelve_team_fill_to_six`, or `twelve_team_4_and_2`. `twelve_team_fill_to_six` is 12 teams and 6 per conference: every division winner qualifies, and wild cards fill that conference to 6. In 1999–2001 that is 4 and 2 in conference-1 and 3 and 3 in conference-2. `twelve_team_4_and_2` is the same 12-team bracket once both conferences have four divisions. |
+| `playoff_format` | `eight_team_3_and_1`, `eight_team_2_and_2`, `twelve_team_fill_to_six`, or `twelve_team_4_and_2`. `twelve_team_fill_to_six` is the approved stored value for 1999–2001: 12 teams, 6 qualifiers per conference, every division winner, wild cards filling that conference to 6, byes for the top two seeds in each conference, and a first round of 3 vs 6 and 4 vs 5. Conference-1 supplies 4 division winners and 2 wild cards. Conference-2 supplies 3 division winners and 3 wild cards. Order inside either group is outside the value. `twelve_team_4_and_2` is the documented field from 2002, once both conferences have four divisions. |
 | `schedule_length` | Regular-season games each franchise plays, such as 14, 16, or 17. This is not the highest calendar week. A 17-game season can span 18 weeks when one of them is a bye. |
 | `overtime_rule` | `tie`, `sudden_death`, or `both_teams_possess`. |
 | `sack_leaderboard` | `unofficial` or `official`. |
 
 ### Profile calendar
 
-These rows are the working calendar. Market rules change on the boundaries in the table above. Roster, playoff, overtime, and schedule rows split where those values change.
+The profile key, the season span, and the style key on each row are approved. `y1970` is the approved card. On every later row, market, roster limits, rounds, games, overtime, cap status, and the playoff description other than the approved `twelve_team_fill_to_six` value for 1999–2001 stay documented and unresolved. Cap amounts stay unset. No seeding order is stored on these rows.
 
-| Profile | Years | Market | Active | Taxi | Rounds | Games | Playoff | Overtime | Cap |
-|---------|-------|--------|--------|------|--------|-------|---------|----------|-----|
-| `y1970` | 1970–1973 | controlled | 40 | 8 | 17 | 14 | 8, three winners and one wild card | Tie allowed | Off |
-| `y1974` | 1974–1975 | controlled | 40 | 8 | 17 | 14 | 8, three winners and one wild card | Sudden death | Off |
-| `y1976` | 1976–1977 | controlled | 40 | 8 | 17 | 14 | 8, two winners and two wild cards | Sudden death | Off |
-| `y1978` | 1978–1986 | controlled | 45 | 8 | 12 | 16 | 8, two winners and two wild cards | Sudden death | Off |
-| `y1987` | 1987–1994 | transitional | 47 | 8 | 8 | 16 | 8, two winners and two wild cards | Sudden death | Off |
-| `y1995` | 1995–1998 | modern | 53 | 8 | 7 | 16 | 8, three winners and one wild card | Sudden death | On, amount unset |
-| `y1999` | 1999–2001 | modern | 53 | 8 | 7 | 16 | 12, fill to six; conference-2 is 3 winners and 3 wild cards | Sudden death | On, amount unset |
-| `y2002` | 2002–2011 | modern | 53 | 8 | 7 | 16 | 12, four winners and two wild cards | Sudden death | On, amount unset |
-| `y2012` | 2012–2020 | modern | 53 | 8 | 7 | 16 | 12, four winners and two wild cards | Both teams may possess | On, amount unset |
-| `y2021` | 2021–2029 | modern | 53 | 8 | 7 | 17 | 12, four winners and two wild cards | Both teams may possess | On, amount unset |
+| Profile | Years | Style | Market | Active | Taxi | Rounds | Games | Playoff | Overtime | Cap | Status |
+|---------|-------|-------|--------|--------|------|--------|-------|---------|----------|-----|--------|
+| `y1970` | 1970–1973 | `run-first` | controlled | 40 | 8 | 17 | 14 | 8, three winners and one wild card | Tie allowed | Off | Approved card |
+| `y1974` | 1974–1975 | `run-first` | controlled | 40 | 8 | 17 | 14 | 8, three winners and one wild card | Sudden death | Off | Span and style approved. Other fields unresolved |
+| `y1976` | 1976–1977 | `run-first` | controlled | 40 | 8 | 17 | 14 | 8, two winners and two wild cards | Sudden death | Off | Span and style approved. Other fields unresolved |
+| `y1978` | 1978–1986 | `passing-rules` | controlled | 45 | 8 | 12 | 16 | 8, two winners and two wild cards | Sudden death | Off | Span and style approved. Other fields unresolved |
+| `y1987` | 1987–1994 | `timing-specialists` | transitional | 47 | 8 | 8 | 16 | 8, two winners and two wild cards | Sudden death | Off | Span and style approved. Other fields unresolved |
+| `y1995` | 1995–1998 | `cap-and-size` | modern | 53 | 8 | 7 | 16 | 8, three winners and one wild card | Sudden death | On, amount unset | Span and style approved. Other fields unresolved |
+| `y1999` | 1999–2001 | `cap-and-size` | modern | 53 | 8 | 7 | 16 | `twelve_team_fill_to_six` | Sudden death | On, amount unset | Span, style, and playoff format approved. Other fields unresolved |
+| `y2002` | 2002–2003 | `cap-and-size` | modern | 53 | 8 | 7 | 16 | 12, four winners and two wild cards | Sudden death | On, amount unset | Span and style approved. Other fields unresolved |
+| `y2004` | 2004–2011 | `spread-influence` | modern | 53 | 8 | 7 | 16 | 12, four winners and two wild cards | Sudden death | On, amount unset | Span and style approved. Other fields unresolved |
+| `y2012` | 2012–2013 | `spread-influence` | modern | 53 | 8 | 7 | 16 | 12, four winners and two wild cards | Both teams may possess | On, amount unset | Span and style approved. Other fields unresolved |
+| `y2014` | 2014–2020 | `modern-passing` | modern | 53 | 8 | 7 | 16 | 12, four winners and two wild cards | Both teams may possess | On, amount unset | Span and style approved. Other fields unresolved |
+| `y2021` | 2021–2029 | `modern-passing` | modern | 53 | 8 | 7 | 17 | 12, four winners and two wild cards | Both teams may possess | On, amount unset | Span and style approved. Other fields unresolved |
 
-Style keys on those rows: `run-first` for 1970–1977, `passing-rules` for 1978–1986, `timing-specialists` for 1987–1994, `cap-and-size` for 1995–2003, `spread-influence` for 2004–2013, and `modern-passing` for 2014–2029. A season with more franchises uses the same per-team quota and the same round count, multiplied by `N(year)`.
+The approved style keys are `run-first` for 1970–1977, `passing-rules` for 1978–1986, `timing-specialists` for 1987–1994, `cap-and-size` for 1995–2003, `spread-influence` for 2004–2013, and `modern-passing` for 2014–2029. Each span holds one of those keys. A season with more franchises uses the same per-team quota and the same round count, multiplied by `N(year)`.
 
-From 1999 through 2029 the postseason is 12 teams, 6 from each conference. Every division winner qualifies, and wild cards fill that conference to 6. Division winners take the seeds ahead of wild cards. The top two seeds in each conference bye, so the first round is seed 3 against seed 6 and seed 4 against seed 5. In 1999–2001 conference-1 has four divisions, so it sends 4 winners and 2 wild cards. Conference-2 has three divisions, so it sends 3 winners and 3 wild cards. In 2002 conference-2 gains its fourth division. Its qualifier changes from 3 winners and 3 wild cards to 4 winners and 2 wild cards. Conference-1 is already on that mix. The field size, the byes, and the first-round pairings stay. Order among the division winners, and order among the wild cards, is not chosen here. 1995–1998 have three divisions in each conference, so they use the 8-team field of 3 winners and 1 wild card. 1976–1994 keep 2 winners and 2 wild cards. 1970–1975 keep 3 winners and 1 wild card.
+`twelve_team_fill_to_six` is the approved stored value for 1999–2001: 12 teams, 6 from each conference, every division winner, wild cards filling that conference to 6, byes for the top two seeds in each conference, and a first round of 3 vs 6 and 4 vs 5. Conference-1 supplies 4 division winners and 2 wild cards. Conference-2 supplies 3 division winners and 3 wild cards. Order inside either group is outside that value. From 2002 the documented field is `twelve_team_4_and_2`: conference-2 gains its fourth division, so both conferences supply 4 winners and 2 wild cards. The field size, the byes, and the first-round pairings stay. 1995–1998 have three divisions in each conference, so they use the 8-team field of 3 winners and 1 wild card. 1976–1994 keep 2 winners and 2 wild cards. 1970–1975 keep 3 winners and 1 wild card. Those later playoff descriptions, other than the approved 1999–2001 value, remain unresolved card fields.
 
 ### Positions
 
