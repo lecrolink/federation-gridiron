@@ -110,7 +110,7 @@ The draft class year equals the season year that follows the draft. The first ac
 
 2030 would be `season_index` 61 (`2030 − 1970 + 1 = 61`). It is not a playable season. Class size for each of the 60 years is `rounds(year) × N(year)` plus that year's undrafted pool. `N(year)` comes from the shared schedule, so the 60 classes stay identical across timelines even when some years have more than 26 teams.
 
-Pre-1970 history for the confirmed release uses years **1960–1969**, the ten seasons immediately before 1970. Those years are outside the 60. Timeline stat tables for that release use `season_year` 1970–2029. A historical standing is validated as one of the ten seasons before its release's first playable season, so the 1970 release still stores 1960–1969, and draft order is allowed only in 1969. The table does not hardcode those calendar years.
+Pre-1970 history for the confirmed release uses years **1960–1969**, the ten seasons immediately before 1970. Those years are outside the 60. Timeline stat tables for that release use `season_year` 1970–2029. `fg-founding-2` stores no shared `HistoricalStanding` rows and does not invent 1960–1969 wins, losses, ties, or a schedule. The 1970 opening draft order is the deterministic neutral order from the release seed, the release slug, and founding franchise slugs `founding-01` through `founding-26`. A historical standing, when a later release stores one, is still validated as one of the ten seasons before that release's first playable season. The table does not hardcode those calendar years, and it does not supply the 1970 board.
 
 The football clock is this integer year plus a phase. `TIME_ZONE` does not define it.
 
@@ -123,7 +123,7 @@ A new timeline is pinned to a published release and starts **before** the 1970 s
 1. **Choose a franchise.** One of the 26 founding clubs. Stored as an open `TimelineFranchiseControl` for the timeline's one human participant. The other franchises are bots and have no participant row. A normal timeline starts in the release's first season, 1970 for the confirmed release. In 1976, 1995, 1999, and 2002 the owner may stay or apply for an expansion club, as described in [Owner access to expansion](#owner-access-to-expansion). A later multiplayer timeline can add participants. Phase 4 does not add invitations or a commissioner.
 2. **Keep or replace the GM, then the head coach.** The shared snapshot already employs one of each on every founding franchise. The other 76 in each role are the only legal opening hires. The default is to keep both. Replacing writes timeline staff stints only.
 3. **Set team direction, retention priorities, and trade preference.** These are the broad instructions in [Owner experience](#owner-experience). They replace a screen full of separate toggles.
-4. **Rookie draft.** Materialize the shared 1970 class. Draft order comes from the shared 1969 standings, worst record first. The owner may make the owned club's picks or hand the draft to the GM. AI GMs draft for the other clubs from their shared tendencies. Picks are timeline rows. The class list is not modified.
+4. **Rookie draft.** Materialize the shared 1970 class. The 1970 opening order is the approved neutral order. Its HMAC-SHA256 key is the UTF-8 decimal release seed. The message for each founding franchise is `opening-draft-order:{release_slug}:{franchise_slug}`. The full digest sorts the 26 clubs, and the franchise slug is the equal-digest tie breaker. That same order is picks 1 through 26 in every round of the 17-round 1970 draft. Every timeline on the release receives it. Later draft orders come from that timeline's own standings. The owner may make the owned club's picks or hand the draft to the GM. AI GMs draft for the other clubs from their shared tendencies. Picks are timeline rows. The class list is not modified.
 5. **Confirm the last instructions** and let the GMs cut each roster to 40 active and 8 taxi. The shared opening roster remains the pre-draft roster.
 6. **Simulate the 1970 season** (14 games under profile `y1970`). Later offseasons use the same seven-step flow, then the next shared class, through 2029. An expansion offseason runs the expansion event before that year's draft. After 2029 the phase is `complete`. No 2030 draft is generated.
 
@@ -479,7 +479,7 @@ That 1970 arithmetic is fixed, because the league starts with 26 clubs. It is no
 
 Every opening player has at least one prior pro season. Age is drawn first (starters mostly 24–30, backups 22–32, taxi 21–24, free agents slightly older). `birth_year = 1970 − age` at the 1970 offseason. Rookies born around 1948 are in the draft class, not on these rosters.
 
-`OpeningAssignment`: one per opening player. `team` is null for free agents. `position` is stored on the assignment and must match the player. `depth` is the depth-chart index for that position on that team, starting at 1, across starter, backup, and taxi. Unique `(release, team, position, depth)`. MySQL unique indexes treat NULL `team` as distinct per row, so the free-agent pool does not need a partial index.
+`OpeningAssignment`: one per opening player. A free agent has a null franchise and a null depth. Position comes from `UniversePlayer`, not from the assignment. Starters and backups share the active depth chart for each franchise and position. Taxi players use a separate taxi depth chart. Each chart may begin at depth 1. The publication key is release, franchise, player position, bucket, and depth. Starter and backup map to the active bucket. Taxi maps to the taxi bucket. Free agents are outside that key. There is no stored bucket column.
 
 `OpeningContract`: one shared template per rostered veteran (1,248). Free agents have none. Copied into the timeline at start.
 
@@ -563,9 +563,9 @@ A timeline creates overlay rows for the initial 200 at `start_timeline`, because
 
 Initial staff draw schemes that exist in 1970: `power_run`, `option`, `pro_style` on offense, and `stop_run` or `balanced` on defense. A coach who debuts in a later class may draw that era's schemes (`west_coast` from 1987, `air_raid` from the spread era).
 
-### Shared 1969 standings
+### 1970 opening draft order
 
-`UniverseFranchiseSeason` for each founding franchise for each year 1960–1969 (26 × 10 = 260 rows). Expansion clubs have no 1960–1969 record. The 1969 wins, losses, and ties set the 1970 draft order. Later draft orders come from that timeline's own standings. Expansion clubs follow the rookie-draft slot rule on their expansion event; that rule changes order only, not the shared class.
+`fg-founding-2` has no shared pre-1970 standings and no `HistoricalStanding` rows. The 1970 order is the approved deterministic neutral order: HMAC-SHA256 of the UTF-8 decimal release seed and `opening-draft-order:{release_slug}:{franchise_slug}`, sorted by the full digest and then the franchise slug. That same 26-club sequence is used in every round. Later draft orders come from each timeline's actual standings. Expansion clubs follow the rookie-draft slot rule on their expansion event; that rule changes order only, not the shared class.
 
 ---
 
@@ -988,10 +988,10 @@ Injury susceptibility is `durability`, not a second tag. Scheme fit is not store
 
 | Field | Layer | Type | Range / units | Origin | Use |
 |-------|-------|------|---------------|--------|-----|
-| `team` | Shared | FK, null for free agents | one of 26, or null | Generator | Both |
-| `role` | Shared | enum | `starter` `backup` `taxi` `free_agent` | Generator | Both |
-| `depth` | Shared | smallint | ≥ 1 on a team; null if free agent | Generator | Both |
-| `position` | Shared | enum | same as the player | Generator | Both |
+| `franchise` | Shared | FK on `OpeningAssignment`, null for free agents | one of 26, or null | Generator | Both |
+| `role` | Shared | enum on `OpeningAssignment` | `starter` `backup` `taxi` `free_agent` | Generator | Both |
+| `depth` | Shared | smallint on `OpeningAssignment` | ≥ 1 on a team; null if free agent | Generator | Both |
+| `position` | Shared | enum on `UniversePlayer` | the player's primary position; not a column on `OpeningAssignment` | Generator | Both |
 | `years` | Shared template | smallint | 1–5 remaining entering 1970 | Generator | Both |
 | `salary_per_year` | Shared template | int | ledger units. The scale is unset until approved. | Generator | Display before 1995; Both from the cap era on the timeline copy |
 | `guaranteed` | Shared template | int | ledger units, 0–salary × years | Generator | Display before 1995; Both once the cap exists, on the timeline copy |
@@ -1555,7 +1555,7 @@ These values are generated once and never diverge:
 | Identity | `universe_key`, name, birth year, birth day, college, height, weight, handedness, primary position, secondary positions |
 | Original talent | `initial` and `potential` on every rating component, `peak_age`, `development_rate`, `decline_rate`, trait tags |
 | Entry facts that are biography | cohort, origin era, `board_rank`, class membership, `origin_draft_year`. For opening and archive players, also `origin_draft_round`, `origin_draft_pick`, and `origin_draft_franchise`. For a 1970–2029 prospect those three stay null, because the destination is a timeline result. |
-| Life before the timeline starts | College seasons, 1960–1969 pro seasons, 1960–1969 awards, 1960–1969 staff posts, the 1970 opening roster and opening contract templates, opening staff assignments, 1969 standings |
+| Life before the timeline starts | College seasons, 1960–1969 pro seasons, 1960–1969 awards, 1960–1969 staff posts, the 1970 opening roster and opening contract templates, opening staff assignments. `fg-founding-2` has no 1969 standings. The 1970 draft order is the shared neutral order. |
 | League structure | Franchise placeholders, `N(year)`, conference, division, `slot_order`, expansion years |
 
 `first_pro_year` on a draftable prospect is the class year he is eligible. It is the same in every timeline. Whether he is actually drafted, and the year he takes a snap, are timeline facts.

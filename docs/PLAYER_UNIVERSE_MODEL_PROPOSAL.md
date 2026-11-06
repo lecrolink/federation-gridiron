@@ -220,17 +220,17 @@ Which new franchises belong to an expansion event.
 
 ### HistoricalStanding
 
-Shared 1960–1969 record book used for display and for the 1970 draft order. Not a timeline standing.
+Shared table available for a pre-playable record book. Not a timeline standing, and not the 1970 draft board. `fg-founding-2` stores no rows here.
 
 - Ownership: shared.
 - Primary key: `BigAutoField`.
 - Foreign keys: `franchise` `CASCADE`.
-- Fields: `season_year`; `wins`, `losses`, `ties` `PositiveSmallIntegerField`; `draft_order` `PositiveSmallIntegerField`, null except where the 1970 order needs it.
+- Fields: `season_year`; `wins`, `losses`, `ties` `PositiveSmallIntegerField`; `draft_order` `PositiveSmallIntegerField`, null on every `fg-founding-2` row because that release does not store a 1970 order here.
 - Unique: `(franchise, season_year)`.
-- Checks: wins, losses, and ties are nonnegative. A database check requires `draft_order` to be null or at least 1. Model validation places the year in the ten seasons immediately before the release's first playable season, allows `draft_order` only in the last of those seasons, and limits the rows to founding franchises. For the confirmed 1970 release that window is 1960–1969, and draft order is allowed only in 1969. Phase 1 does not check that wins + losses + ties equal a schedule length, because the approved design does not fix the 1960–1969 game count. That equality can be added when a length is approved, without a new table.
+- Checks: wins, losses, and ties are nonnegative. A database check requires `draft_order` to be null or at least 1. Model validation places the year in the ten seasons immediately before the release's first playable season, allows `draft_order` only in the last of those seasons, and limits the rows to founding franchises. Those checks describe a future record book. `fg-founding-2` stores no `HistoricalStanding` rows, and its 1970 order is derived from the release seed, release slug, and founding slugs. It is not stored in `draft_order`. Phase 1 does not check that wins + losses + ties equal a schedule length, because the approved design does not fix a pre-1970 game count. That equality can be added when a length is approved, without a new table.
 - Indexes: `(season_year, draft_order)`.
 - Application guard after publish. Not a database trigger.
-- Rows: 260 if 26 clubs played each of those ten years. The generator fills this from the same seed. It does not replay the seasons. `fg-founding-1` does not write these rows.
+- Rows: zero for `fg-founding-2`. The old 260-row phase-1 fill is not a publication requirement. `fg-founding-1` does not write these rows either. The 1970 order is the deterministic neutral order from the release seed, the release slug, and `founding-01` through `founding-26`, repeated for all 17 rounds. Later drafts use that timeline's standings.
 - Created at release publication.
 
 ### DraftClass
@@ -419,7 +419,7 @@ The 1970 pre-draft roster and free-agent pool. A template. `start_timeline` copi
 - Primary key: `BigAutoField`.
 - Foreign keys: `release` `CASCADE`; `player` `CASCADE`; `franchise` `PROTECT`, null for a free agent.
 - Fields: `role` choices `starter`, `backup`, `taxi`, `free_agent`; `depth` `PositiveSmallIntegerField`, null for a free agent.
-- Unique: `(release, player)`. Not unique on `(release, franchise, position, depth)` when franchise is null, because MySQL would not collapse those nulls anyway. The publication service checks depth uniqueness on a club.
+- Unique: `(release, player)`. Position comes from `UniversePlayer`. Starters and backups share the active depth chart. Taxi uses a separate chart. Each chart may begin at 1. Free agents have a null franchise and a null depth. The publication key is release, franchise, player position, bucket, and depth. There is no stored bucket column and no migration for one. The database does not enforce that key, because position and bucket are not columns on this row.
 - Checks: free agents have null franchise, null depth, and role `free_agent`; rostered players have a founding franchise; the player is in the opening cohort.
 - Indexes: `(franchise, role)`.
 - Immutable after publish.
@@ -802,7 +802,7 @@ The right to pick, including a pick that was traded. Created before the draft. `
 - Indexes: `(timeline, season_year, current_franchise)`.
 - Immutable: year, round, slot, original franchise, overall pick. Mutable: `current_franchise`, until the pick is used.
 - Rows: 16,183 per completed timeline, equal to the draftable prospects.
-- Created at season entry from the previous standings and the shared order rule. The 1970 board is created during the opening draft from `HistoricalStanding`.
+- Created at season entry from the previous standings and the shared order rule. The 1970 board is created during the opening draft from the release's deterministic neutral order, the same 26-club sequence in every one of the 17 rounds. It is not created from `HistoricalStanding`. Later drafts use that timeline's standings.
 
 ### TimelineDraftPick
 
@@ -1033,7 +1033,7 @@ Existing `League`, `Conference`, `Division`, `Team`, and `MovementPath` rows rem
 - Depends on: `leagues.League` existing. `catalog_team` stays null.
 - Validation in this phase: generic structure only. A founding franchise begins in its release's first season, an expansion franchise begins later, membership and history years stay inside the franchise and the release, and historical years are the ten seasons before the release starts. The confirmed schedule is not a database check.
 - Confirmed release, checked at publication in phase 8 and not by this migration: 26 founding franchises; playable seasons 1970–2029; expansion to 28 franchises in 1976, 30 in 1995, 31 in 1999, and 32 in 2002; the accepted conference and division alignment; 1,797 franchise-season memberships; `owner_selectable` true on every one of those active memberships; no bot-only franchise-season; no history events. `fg-founding-1` is not this generator.
-- Rows: 1 release, 32 franchises, 1,797 memberships, 0 history events, 260 historical standings.
+- Rows: 1 release, 32 franchises, 1,797 memberships, 0 history events, 0 historical standings for `fg-founding-2`.
 - League data: untouched.
 - Rollback: drop these tables. The catalog is unchanged.
 
@@ -1142,7 +1142,7 @@ Phase 1 adds only these five models:
 - `FranchiseHistoryEvent`
 - `HistoricalStanding`
 
-The migration creates the tables and leaves them empty. A later generator, not `fg-founding-1`, fills the confirmed release with `founding-01` through `founding-26`, `expansion-1976-01` and `expansion-1976-02`, `expansion-1995-01` and `expansion-1995-02`, `expansion-1999-01`, and `expansion-2002-01`. `catalog_team` stays null until a catalog link is chosen. `display_name` can hold the placeholder slug. `FranchiseHistoryEvent` has no scheduled rows. `HistoricalStanding` for that release is one row per founding franchise per year from 1960 through 1969, 260 rows. `seed` is a `BigIntegerField`. Conference and division membership are slug strings plus `slot_order` and `owner_selectable`. Every active membership in that release has `owner_selectable` true. The 1970, 1976, 1995, and 1999 shapes are not the live 32-team generator tree, and they are not check constraints on the membership table.
+The migration creates the tables and leaves them empty. A later generator, not `fg-founding-1`, fills the confirmed release with `founding-01` through `founding-26`, `expansion-1976-01` and `expansion-1976-02`, `expansion-1995-01` and `expansion-1995-02`, `expansion-1999-01`, and `expansion-2002-01`. `catalog_team` stays null until a catalog link is chosen. `display_name` can hold the placeholder slug. `FranchiseHistoryEvent` has no scheduled rows. `HistoricalStanding` stays empty for `fg-founding-2`; the 1970 opening order is not a standing row. `seed` is a `BigIntegerField`. Conference and division membership are slug strings plus `slot_order` and `owner_selectable`. Every active membership in that release has `owner_selectable` true. The 1970, 1976, 1995, and 1999 shapes are not the live 32-team generator tree, and they are not check constraints on the membership table.
 
 The database does not require 26 founding clubs, a 1970–2029 horizon, debut years of 1970, 1976, 1995, 1999, or 2002, two named conferences, divisions `d1`–`d4`, or the era slot limits. Those rules remain the confirmed release. Phase 8 is the publication gate that refuses any other shape for that release. Phase 1 does not implement that gate.
 

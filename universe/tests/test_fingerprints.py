@@ -552,6 +552,17 @@ class GeneratedReleaseTests(TestCase):
             ))
             return result
 
+        assignment_rows = list(
+            self.release.opening_assignments.order_by('id').values_list(
+                'id', 'player_id', 'franchise_id', 'role', 'depth',
+            )
+        )
+        self.assertEqual(len(assignment_rows), 1378)
+        _assert_two_chart_assignments(self, self.release)
+        self.assertEqual(
+            HistoricalStanding.objects.filter(franchise__release=self.release).count(),
+            0,
+        )
         report = _writes_during(
             lambda: evaluate_release_publication(self.release),
         )
@@ -567,14 +578,13 @@ class GeneratedReleaseTests(TestCase):
         self.assertEqual(report.population_status, 'pass')
         self.assertEqual(report.staff_signature_status, 'pass')
         self.assertEqual(report.history_events_status, 'pass')
-        self.assertEqual(report.draft_order_status, 'unresolved')
-        self.assertEqual(report.opening_depth_status, 'unresolved')
-        self.assertEqual(report.required_unresolved, ('draft_order', 'opening_depth'))
-        self.assertIn('cannot pass', report.draft_order_failures[0])
-        self.assertIn('260 empty or arbitrary rows', report.draft_order_failures[0])
-        self.assertIn('taxi depth at 1', report.opening_depth_failures[0])
-        self.assertFalse(report.publishable)
-        self.assertIn('The release is not publishable.', report.messages)
+        self.assertEqual(report.draft_order_status, 'pass')
+        self.assertEqual(report.draft_order_failures, ())
+        self.assertEqual(report.opening_depth_status, 'pass')
+        self.assertEqual(report.opening_depth_failures, ())
+        self.assertEqual(report.required_unresolved, ())
+        self.assertTrue(report.publishable)
+        self.assertIn('The release is publishable.', report.messages)
         self.assertEqual(report.catalog_digest, catalog)
         self.assertEqual(report.validation_digest, validation)
         franchise = self.release.franchises.get(placeholder_slug='founding-01')
@@ -602,8 +612,8 @@ class GeneratedReleaseTests(TestCase):
         self.assertEqual(with_event.quota_status, 'pass')
         self.assertEqual(with_event.population_status, 'pass')
         self.assertEqual(with_event.staff_signature_status, 'pass')
-        self.assertEqual(with_event.draft_order_status, 'unresolved')
-        self.assertEqual(with_event.opening_depth_status, 'unresolved')
+        self.assertEqual(with_event.draft_order_status, 'pass')
+        self.assertEqual(with_event.opening_depth_status, 'pass')
         self.assertTrue(with_event.catalog_digest_match)
         self.assertFalse(with_event.publishable)
         self.assertEqual(
@@ -628,6 +638,47 @@ class GeneratedReleaseTests(TestCase):
         self.release.refresh_from_db()
         self.assertEqual(self.release.catalog_fingerprint, 'smoke-catalog-fingerprint')
         self.assertEqual(self.release.status, UniverseRelease.Status.DRAFT)
+        self.assertEqual(
+            list(self.release.opening_assignments.order_by('id').values_list(
+                'id', 'player_id', 'franchise_id', 'role', 'depth',
+            )),
+            assignment_rows,
+        )
+
+
+def _assert_two_chart_assignments(test, release):
+    """The stored opening rows already satisfy the two-chart rule."""
+    rows = list(release.opening_assignments.values(
+        'role',
+        'depth',
+        'franchise_id',
+        'player__position',
+    ))
+    test.assertEqual(len(rows), 1378)
+    active = set()
+    taxi = set()
+    free_agents = 0
+    for row in rows:
+        if row['role'] == 'free_agent':
+            test.assertIsNone(row['franchise_id'])
+            test.assertIsNone(row['depth'])
+            free_agents += 1
+            continue
+        test.assertIsNotNone(row['franchise_id'])
+        test.assertGreaterEqual(row['depth'], 1)
+        key = (row['franchise_id'], row['player__position'], row['depth'])
+        if row['role'] in ('starter', 'backup'):
+            test.assertNotIn(key, active)
+            active.add(key)
+        else:
+            test.assertEqual(row['role'], 'taxi')
+            test.assertNotIn(key, taxi)
+            taxi.add(key)
+    test.assertEqual(free_agents, 130)
+    test.assertEqual(len(active) + len(taxi), 1248)
+    shared_depth = active & taxi
+    test.assertEqual(len(shared_depth), 208)
+    test.assertTrue(all(depth == 1 for _franchise, _position, depth in shared_depth))
 
 
 def _discard(world):
