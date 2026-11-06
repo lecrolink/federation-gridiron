@@ -2,14 +2,16 @@
 
 Cap-on profiles and the two v1 fingerprints are separate checks. The
 confirmed fg-founding-2 release also has to match the documented horizon,
-membership alignment, expansion rows, quota sums, population totals, and
-staff-signature uniqueness. ``publishable`` is true only when every
-required gate is implemented and passes.
+membership alignment, expansion rows, quota sums, population totals,
+staff-signature uniqueness, and zero franchise-history events.
+
+``publishable`` is true only when every required gate is implemented and
+passes. The 1969 draft-order rule and opening depth uniqueness are required
+and unresolved, so they fail closed. Informational notes are reported apart
+from those gates and are not treated as passed requirements.
 
 This module does not save a digest, change status or published_at, create
-a timeline, or modify release children. Rules that do not have one
-documented expected value are listed on ``ambiguous_requirements`` and are
-not treated as passed.
+a timeline, or modify release children.
 """
 
 from typing import NamedTuple
@@ -40,7 +42,12 @@ from universe.generation.player_counts import (
     quota_total,
     taxi_quota,
 )
-from universe.models import FranchiseSeasonMembership, UniverseFranchise
+from universe.models import (
+    FranchiseHistoryEvent,
+    FranchiseSeasonMembership,
+    HistoricalStanding,
+    UniverseFranchise,
+)
 from universe.people import POSITIONS as MODEL_POSITIONS
 from universe.people import UniversePlayer
 from universe.rules import (
@@ -93,19 +100,31 @@ SMOKE_FINGERPRINT_PLACEHOLDERS = frozenset((
 ))
 FINGERPRINT_FIELDS = ('catalog_fingerprint', 'validation_fingerprint')
 
-# These are reported on every evaluation. They do not have one enforceable
-# expected value, so they are not required gates and do not flip publishable.
-AMBIGUOUS_REQUIREMENTS = (
-    'historical_standing_count: the model narrative says 260 rows and the approved fg-founding-2 writer stores none',
+# Reported on every confirmed-release evaluation. These are not checks, and
+# the report must not describe them as passed.
+INFORMATIONAL_REQUIREMENTS = (
     'archive_player_count: 1,118 uses a 5-year mean that the count module calls an assumption',
     'staff_pool_size: the staff proposal says 100 is not a hardcoded publication count',
     'expansion_schedule_version: no documented required integer',
-    'opening_contracts: the design counts 1,248 and the approved opening writer does not write them',
-    'coordinator_seats: the model sketch counts 104 seats and the approved schedule writer refuses coordinators',
+    'opening_contracts: the design counts 1,248, the approved opening writer does not write them, and the lifecycle service does not copy them',
+    'coordinator_seats: employing a coordinator is optional in the first playable version',
     'college_count: the design says about 48 to 80 schools',
-    'minimum_salary and rookie_slot_scale: both documents leave them null until a later number is chosen',
-    'staff_career_posts: publication uniqueness uses the generator signature of strengths, weakness, and traits; post rows are not a separate documented key',
-    'opening_depth_uniqueness: the design uses one depth index per club and position across starter, backup, and taxi, and the approved opening writer restarts taxi depth at 1',
+    'minimum_salary and rookie_slot_scale: both documents leave them null; they are not publication blockers',
+    'staff_career_posts: the enforced signature is strengths, weakness, and traits; post rows are not a separate documented key',
+)
+
+DRAFT_ORDER_REASON = (
+    'The 1970 draft order depends on 1969 HistoricalStanding rows. '
+    'Wins, losses, ties, the archive schedule length, and the ordering rule '
+    'are not approved. Zero rows do not pass. 260 empty or arbitrary rows '
+    'do not pass either. This gate cannot pass until that record and '
+    'ordering rule is approved and implemented.'
+)
+OPENING_DEPTH_REASON = (
+    'Opening depth uniqueness is unresolved. The documented rule is one '
+    '(franchise, position, depth) value across starter, backup, and taxi. '
+    'The approved opening writer restarts taxi depth at 1. This gate cannot '
+    'pass until that conflict is resolved.'
 )
 
 
@@ -114,8 +133,9 @@ class PublicationEvaluation(NamedTuple):
 
     ``cap_and_fingerprint_checks_pass`` covers only cap-on profiles and the
     two stored v1 fingerprints. ``publishable`` is true only when that pair
-    and every required structural gate pass. An unsupported generator
-    version fails closed.
+    and every required gate pass. Unresolved required gates and an
+    unsupported generator version fail closed. ``informational_requirements``
+    are not publication results.
     """
 
     cap_blockers: tuple
@@ -139,7 +159,14 @@ class PublicationEvaluation(NamedTuple):
     population_failures: tuple
     staff_signature_status: str
     staff_signature_failures: tuple
-    ambiguous_requirements: tuple
+    history_events_status: str
+    history_events_failures: tuple
+    draft_order_status: str
+    draft_order_failures: tuple
+    opening_depth_status: str
+    opening_depth_failures: tuple
+    required_unresolved: tuple
+    informational_requirements: tuple
     publishable: bool
     messages: tuple
 
@@ -597,6 +624,28 @@ def _staff_signature_gate(release):
     return ('fail' if failures else 'pass', tuple(failures))
 
 
+def _history_events_gate(release):
+    count = FranchiseHistoryEvent.objects.filter(franchise__release=release).count()
+    if count != 0:
+        return (
+            'fail',
+            (f'Franchise history events are {count}, not zero.',),
+        )
+    return ('pass', ())
+
+
+def _draft_order_gate(release):
+    count = HistoricalStanding.objects.filter(franchise__release=release).count()
+    return (
+        'unresolved',
+        (f'The release has {count} historical standings. {DRAFT_ORDER_REASON}',),
+    )
+
+
+def _opening_depth_gate(_release):
+    return ('unresolved', (OPENING_DEPTH_REASON,))
+
+
 def _structural_gates(release):
     if release.generator_version != CONFIRMED_GENERATOR:
         unsupported = _unsupported(release.generator_version)
@@ -607,6 +656,9 @@ def _structural_gates(release):
             'quota': unsupported,
             'population': unsupported,
             'staff_signature': _staff_signature_gate(release),
+            'history_events': unsupported,
+            'draft_order': unsupported,
+            'opening_depth': unsupported,
         }
     return {
         'horizon': _horizon_gate(release),
@@ -615,6 +667,9 @@ def _structural_gates(release):
         'quota': _quota_gate(release),
         'population': _population_gate(release),
         'staff_signature': _staff_signature_gate(release),
+        'history_events': _history_events_gate(release),
+        'draft_order': _draft_order_gate(release),
+        'opening_depth': _opening_depth_gate(release),
     }
 
 
@@ -636,22 +691,32 @@ def _report(
         and catalog_digest_match is True
         and validation_digest_match is True
     )
-    required = (
-        gates['horizon'],
-        gates['expansion'],
-        gates['membership'],
-        gates['quota'],
-        gates['population'],
-        gates['staff_signature'],
+    required_names = (
+        'horizon',
+        'expansion',
+        'membership',
+        'quota',
+        'population',
+        'staff_signature',
+        'history_events',
+        'draft_order',
+        'opening_depth',
     )
-    for name, (status, failures) in gates.items():
+    for name in required_names:
+        status, failures = gates[name]
         if status == 'pass':
             messages.append(f'{name} passes.')
         else:
             messages.append(f'{name} is {status}.')
             messages.extend(failures)
+    for item in INFORMATIONAL_REQUIREMENTS:
+        messages.append(f'Not a publication requirement: {item}')
+    required_unresolved = tuple(
+        name for name in ('draft_order', 'opening_depth')
+        if gates[name][0] == 'unresolved'
+    )
     publishable = cap_and_fingerprint_checks_pass and all(
-        status == 'pass' for status, _failures in required
+        gates[name][0] == 'pass' for name in required_names
     )
     messages.append(
         'The release is publishable.'
@@ -680,7 +745,14 @@ def _report(
         population_failures=gates['population'][1],
         staff_signature_status=gates['staff_signature'][0],
         staff_signature_failures=gates['staff_signature'][1],
-        ambiguous_requirements=AMBIGUOUS_REQUIREMENTS,
+        history_events_status=gates['history_events'][0],
+        history_events_failures=gates['history_events'][1],
+        draft_order_status=gates['draft_order'][0],
+        draft_order_failures=gates['draft_order'][1],
+        opening_depth_status=gates['opening_depth'][0],
+        opening_depth_failures=gates['opening_depth'][1],
+        required_unresolved=required_unresolved,
+        informational_requirements=INFORMATIONAL_REQUIREMENTS,
         publishable=publishable,
         messages=tuple(messages),
     )

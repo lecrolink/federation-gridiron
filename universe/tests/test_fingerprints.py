@@ -531,7 +531,30 @@ class GeneratedReleaseTests(TestCase):
         self.release.catalog_fingerprint = catalog
         self.release.validation_fingerprint = validation
         self.release.save()
-        report = evaluate_release_publication(self.release)
+
+        def _writes_during(callback):
+            statements = []
+
+            def wrap(execute, sql, params, many, context):
+                statements.append(sql)
+                return execute(sql, params, many, context)
+
+            connection.execute_wrappers.append(wrap)
+            try:
+                result = callback()
+            finally:
+                connection.execute_wrappers.remove(wrap)
+            self.assertFalse(any(
+                sql.lstrip().split(None, 1)[0].upper() in (
+                    'INSERT', 'UPDATE', 'DELETE', 'REPLACE',
+                )
+                for sql in statements
+            ))
+            return result
+
+        report = _writes_during(
+            lambda: evaluate_release_publication(self.release),
+        )
         self.assertEqual(report.cap_blockers, ())
         self.assertEqual(report.fingerprint_verification, 'match')
         self.assertTrue(report.catalog_digest_match)
@@ -543,16 +566,59 @@ class GeneratedReleaseTests(TestCase):
         self.assertEqual(report.quota_status, 'pass')
         self.assertEqual(report.population_status, 'pass')
         self.assertEqual(report.staff_signature_status, 'pass')
-        self.assertTrue(report.publishable)
+        self.assertEqual(report.history_events_status, 'pass')
+        self.assertEqual(report.draft_order_status, 'unresolved')
+        self.assertEqual(report.opening_depth_status, 'unresolved')
+        self.assertEqual(report.required_unresolved, ('draft_order', 'opening_depth'))
+        self.assertIn('cannot pass', report.draft_order_failures[0])
+        self.assertIn('260 empty or arbitrary rows', report.draft_order_failures[0])
+        self.assertIn('taxi depth at 1', report.opening_depth_failures[0])
+        self.assertFalse(report.publishable)
+        self.assertIn('The release is not publishable.', report.messages)
         self.assertEqual(report.catalog_digest, catalog)
         self.assertEqual(report.validation_digest, validation)
+        franchise = self.release.franchises.get(placeholder_slug='founding-01')
+        event = FranchiseHistoryEvent.objects.create(
+            franchise=franchise,
+            season_year=1970,
+            kind=FranchiseHistoryEvent.Kind.RENAME,
+            previous_name='Founding franchise 01',
+            new_name='Renamed franchise 01',
+        )
+        try:
+            with_event = _writes_during(
+                lambda: evaluate_release_publication(self.release),
+            )
+        finally:
+            event.delete()
+        self.assertEqual(with_event.history_events_status, 'fail')
+        self.assertEqual(
+            with_event.history_events_failures,
+            ('Franchise history events are 1, not zero.',),
+        )
+        self.assertEqual(with_event.horizon_status, 'pass')
+        self.assertEqual(with_event.expansion_status, 'pass')
+        self.assertEqual(with_event.membership_status, 'pass')
+        self.assertEqual(with_event.quota_status, 'pass')
+        self.assertEqual(with_event.population_status, 'pass')
+        self.assertEqual(with_event.staff_signature_status, 'pass')
+        self.assertEqual(with_event.draft_order_status, 'unresolved')
+        self.assertEqual(with_event.opening_depth_status, 'unresolved')
+        self.assertTrue(with_event.catalog_digest_match)
+        self.assertFalse(with_event.publishable)
+        self.assertEqual(
+            FranchiseHistoryEvent.objects.filter(franchise__release=self.release).count(),
+            0,
+        )
         self.release.refresh_from_db()
         self.assertEqual(self.release.status, UniverseRelease.Status.DRAFT)
         self.assertIsNone(self.release.published_at)
         self.assertEqual(self.release.catalog_fingerprint, catalog)
         self.release.catalog_fingerprint = 'smoke-catalog-fingerprint'
         self.release.save(update_fields=['catalog_fingerprint'])
-        mismatched = evaluate_release_publication(self.release)
+        mismatched = _writes_during(
+            lambda: evaluate_release_publication(self.release),
+        )
         self.assertEqual(mismatched.fingerprint_verification, 'mismatch')
         self.assertFalse(mismatched.publishable)
         self.assertEqual(
