@@ -1,15 +1,25 @@
 """Shared franchise history for one universe release.
 
 ``clean()``, ``save()``, and instance ``delete()`` refuse changes to a
-published release. Those are application guards. Queryset updates, bulk
-operations, and direct SQL bypass them. Constraints on these models cover
+published release. Ordinary saves and deletes lock the parent
+``UniverseRelease`` and read ``status`` from that locked row. Queryset
+updates, bulk operations, and direct SQL bypass them. Sanctioned bulk
+writers hold the same release lock. Constraints on these models cover
 single-table structure only. The confirmed 1970–2029 schedule is release
-data, checked when that release is generated and published.
+data, checked when that release is generated and published. This module
+adds no database trigger.
 """
 
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_slug
 from django.db import models
+
+from universe.release_guard import (
+    child_delete,
+    holding_release_lock,
+    locks_parent_release,
+    save_release_child,
+)
 
 
 ARCHIVE_SEASON_COUNT = 10
@@ -140,14 +150,25 @@ class UniverseRelease(models.Model):
         if errors:
             raise ValidationError(errors)
 
+    @locks_parent_release
     def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
+        if self.pk is None:
+            self.full_clean()
+            return super().save(*args, **kwargs)
+        with holding_release_lock(self.pk):
+            self.full_clean()
+            return super().save(*args, **kwargs)
 
+    @locks_parent_release
     def delete(self, *args, **kwargs):
-        if self.status == self.Status.PUBLISHED:
-            raise ValidationError('A published release cannot be deleted.')
-        return super().delete(*args, **kwargs)
+        if self.pk is None:
+            if self.status == self.Status.PUBLISHED:
+                raise ValidationError('A published release cannot be deleted.')
+            return super().delete(*args, **kwargs)
+        with holding_release_lock(self.pk) as locked:
+            if locked.status == self.Status.PUBLISHED:
+                raise ValidationError('A published release cannot be deleted.')
+            return super().delete(*args, **kwargs)
 
 
 class UniverseFranchise(models.Model):
@@ -306,16 +327,8 @@ class UniverseFranchise(models.Model):
         if errors:
             raise ValidationError(errors)
 
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
-
-    def delete(self, *args, **kwargs):
-        if self.release.status == UniverseRelease.Status.PUBLISHED:
-            raise ValidationError(
-                'A franchise on a published release cannot be deleted.'
-            )
-        return super().delete(*args, **kwargs)
+    save = save_release_child
+    delete = child_delete('A franchise on a published release cannot be deleted.')
 
 
 class ProvisionalFranchiseName(models.Model):
@@ -407,16 +420,10 @@ class ProvisionalFranchiseName(models.Model):
         if errors:
             raise ValidationError(errors)
 
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
-
-    def delete(self, *args, **kwargs):
-        if self.release.status == UniverseRelease.Status.PUBLISHED:
-            raise ValidationError(
-                'A provisional name on a published release cannot be deleted.'
-            )
-        return super().delete(*args, **kwargs)
+    save = save_release_child
+    delete = child_delete(
+        'A provisional name on a published release cannot be deleted.'
+    )
 
 
 class FranchiseSeasonMembership(models.Model):
@@ -506,16 +513,8 @@ class FranchiseSeasonMembership(models.Model):
         if errors:
             raise ValidationError(errors)
 
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
-
-    def delete(self, *args, **kwargs):
-        if self.franchise.release.status == UniverseRelease.Status.PUBLISHED:
-            raise ValidationError(
-                'A membership on a published release cannot be deleted.'
-            )
-        return super().delete(*args, **kwargs)
+    save = save_release_child
+    delete = child_delete('A membership on a published release cannot be deleted.')
 
 
 class FranchiseHistoryEvent(models.Model):
@@ -579,16 +578,10 @@ class FranchiseHistoryEvent(models.Model):
         if errors:
             raise ValidationError(errors)
 
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
-
-    def delete(self, *args, **kwargs):
-        if self.franchise.release.status == UniverseRelease.Status.PUBLISHED:
-            raise ValidationError(
-                'A history event on a published release cannot be deleted.'
-            )
-        return super().delete(*args, **kwargs)
+    save = save_release_child
+    delete = child_delete(
+        'A history event on a published release cannot be deleted.'
+    )
 
 
 class HistoricalStanding(models.Model):
@@ -665,16 +658,10 @@ class HistoricalStanding(models.Model):
         if errors:
             raise ValidationError(errors)
 
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
-
-    def delete(self, *args, **kwargs):
-        if self.franchise.release.status == UniverseRelease.Status.PUBLISHED:
-            raise ValidationError(
-                'A historical standing on a published release cannot be deleted.'
-            )
-        return super().delete(*args, **kwargs)
+    save = save_release_child
+    delete = child_delete(
+        'A historical standing on a published release cannot be deleted.'
+    )
 
 
 def _reject_published_child(instance, release, errors, new_row_field='franchise'):

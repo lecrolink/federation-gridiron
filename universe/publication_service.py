@@ -1,14 +1,14 @@
 """Publish one exact universe release.
 
 The read-only evaluator reports gates and does not write. This service is
-the only publication writer. It locks the release, evaluates candidate
-digests, and saves publication fields only after every required gate passes.
-It does not modify a release child, create a timeline, or unpublish.
+the only publication writer. It locks the release through the shared release
+lock, evaluates candidate digests, and saves publication fields only after
+every required gate passes. It does not modify a release child, create a
+timeline, or unpublish. Ordinary child saves use the same lock.
 """
 
 import re
 
-from django.db import transaction
 from django.utils import timezone
 
 from timelines.models import Timeline
@@ -20,6 +20,7 @@ from universe.fingerprints import (
 )
 from universe.models import UniverseRelease
 from universe.publication import evaluate_release_publication
+from universe.release_guard import holding_release_lock
 
 
 _DIGEST = re.compile(r'^[0-9a-f]{64}$')
@@ -65,21 +66,23 @@ class PublicationResult:
 def publish_universe_release(*, slug, seed, generator_version, league_id):
     """Publish one locked release, or return unchanged for an exact rerun."""
     _require_arguments(slug, seed, generator_version, league_id)
-    with transaction.atomic():
-        release = _locked_release(slug)
-        _require_identity(release, seed, generator_version, league_id)
-        _require_status_pair(release)
-        if release.generator_version not in SCHEME_BY_GENERATOR:
-            raise PublicationRefused(
-                'Publication refused: fingerprint_scheme. '
-                'The generator version has no approved fingerprint scheme.',
-                failed_gates=('fingerprint_scheme',),
-            )
-        if release.status == UniverseRelease.Status.PUBLISHED:
-            return _unchanged_published(release)
-        if Timeline.objects.filter(release=release).exists():
-            raise PublicationRefused('A timeline already references this release.')
-        return _publish_draft(release)
+    try:
+        with holding_release_lock(slug=slug) as release:
+            _require_identity(release, seed, generator_version, league_id)
+            _require_status_pair(release)
+            if release.generator_version not in SCHEME_BY_GENERATOR:
+                raise PublicationRefused(
+                    'Publication refused: fingerprint_scheme. '
+                    'The generator version has no approved fingerprint scheme.',
+                    failed_gates=('fingerprint_scheme',),
+                )
+            if release.status == UniverseRelease.Status.PUBLISHED:
+                return _unchanged_published(release)
+            if Timeline.objects.filter(release=release).exists():
+                raise PublicationRefused('A timeline already references this release.')
+            return _publish_draft(release)
+    except UniverseRelease.DoesNotExist as exc:
+        raise PublicationRefused('The release does not exist.') from exc
 
 
 def failed_gate_names(report):
@@ -106,13 +109,6 @@ def _require_arguments(slug, seed, generator_version, league_id):
         raise PublicationRefused('The release generator version does not match.')
     if isinstance(league_id, bool) or not isinstance(league_id, int):
         raise PublicationRefused('The release league does not match.')
-
-
-def _locked_release(slug):
-    try:
-        return UniverseRelease.objects.select_for_update().get(slug=slug)
-    except UniverseRelease.DoesNotExist as exc:
-        raise PublicationRefused('The release does not exist.') from exc
 
 
 def _require_identity(release, seed, generator_version, league_id):

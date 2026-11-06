@@ -1,7 +1,9 @@
 """Shared player, coach, and GM identities for one universe release.
 
 Published-release guards in ``clean()``, ``save()``, and instance
-``delete()`` are application checks. They are not database triggers.
+``delete()`` are application checks. Ordinary saves and deletes lock the
+parent ``UniverseRelease`` and read ``status`` from that locked row.
+They are not database triggers.
 """
 
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
@@ -14,6 +16,7 @@ from universe.models import (
     _previous,
     _reject_published_child,
 )
+from universe.release_guard import child_delete, save_release_child
 
 
 PLAYER_COMPONENTS = (
@@ -305,17 +308,10 @@ class ReleaseChild(models.Model):
         if errors:
             raise ValidationError(errors)
 
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
-
-    def delete(self, *args, **kwargs):
-        release = self.bound_release()
-        if release is not None and release.status == UniverseRelease.Status.PUBLISHED:
-            raise ValidationError(
-                'A published release cannot lose shared rows through model delete.'
-            )
-        return super().delete(*args, **kwargs)
+    save = save_release_child
+    delete = child_delete(
+        'A published release cannot lose shared rows through model delete.'
+    )
 
 
 class SeasonStatColumns(models.Model):

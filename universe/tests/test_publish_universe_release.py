@@ -1,8 +1,10 @@
 import socket
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
@@ -16,16 +18,18 @@ from universe.fingerprints import FingerprintSchemaError, release_digests
 from universe.generation.opening_players import generate_opening_players
 from universe.generation.player_rating_profiles import generate_player_ratings
 from universe.generation.prospects import generate_prospects
+from universe.generation.provisional_names import replace_provisional_value
 from universe.generation.schedule import generate_schedule_release
 from universe.management.commands.publish_universe_release import Command
 from universe.models import (
     FranchiseHistoryEvent,
     FranchiseSeasonMembership,
     HistoricalStanding,
+    ProvisionalFranchiseName,
     UniverseFranchise,
     UniverseRelease,
 )
-from universe.people import UniverseGM, UniversePlayer
+from universe.people import College, UniverseGM, UniversePlayer
 from universe.publication_service import (
     REQUIRED_GATES,
     PublicationRefused,
@@ -215,13 +219,21 @@ class PublicationServiceTests(TestCase):
 
         with patch.object(QuerySet, 'select_for_update', spy):
             result, writes = _writes_during(self._publish)
-        self.assertEqual(calls, [UniverseRelease])
+        self.assertEqual(calls, [UniverseRelease, UniverseRelease])
         self.assertTrue(writes)
         self.assertTrue(all(
             sql.lstrip().upper().startswith('UPDATE')
             and 'universe_universerelease' in sql
             for sql in writes
         ))
+        joined = '\n'.join(writes).lower()
+        for column in (
+            'catalog_fingerprint',
+            'validation_fingerprint',
+            'status',
+            'published_at',
+        ):
+            self.assertIn(column, joined)
         self.release.refresh_from_db()
         recomputed = release_digests(self.release)
         self.assertEqual(result.outcome, 'published')
@@ -578,3 +590,308 @@ class PublicationServiceTests(TestCase):
             )
         self.assertIn('quota', str(caught.exception))
         self._assert_draft_preserved('', '')
+
+    def _lock_events(self, callback):
+        events = []
+        real_lock = QuerySet.select_for_update
+
+        def spy(qs, *args, **kwargs):
+            events.append(('lock', qs.model.__name__))
+            return real_lock(qs, *args, **kwargs)
+
+        def wrap(execute, sql, params, many, context):
+            verb = sql.lstrip().split(None, 1)[0].upper()
+            if verb in WRITE_WORDS or verb == 'SELECT':
+                events.append((verb, sql))
+            return execute(sql, params, many, context)
+
+        connection.execute_wrappers.append(wrap)
+        try:
+            with patch.object(QuerySet, 'select_for_update', spy):
+                result = callback()
+        finally:
+            connection.execute_wrappers.remove(wrap)
+        return result, events
+
+    def _mark_published_in_database(self):
+        UniverseRelease.objects.filter(pk=self.release.pk).update(
+            status=UniverseRelease.Status.PUBLISHED,
+            catalog_fingerprint='a' * 64,
+            validation_fingerprint='b' * 64,
+            published_at=timezone.now(),
+        )
+
+    def test_ordinary_child_save_locks_the_parent_release_before_writing(self):
+        """SQLite omits FOR UPDATE, so this records call order only.
+
+        A disposable MariaDB smoke test still has to show that a second
+        connection waits. This test does not open one.
+        """
+        college = College.objects.filter(release=self.release).order_by('pk').first()
+        original = college.name
+        college.name = f'{original} Locked'
+
+        def save():
+            college.save()
+
+        _, events = self._lock_events(save)
+        self.assertFalse(connection.features.has_select_for_update)
+        lock_at = events.index(('lock', 'UniverseRelease'))
+        update_at = next(
+            index for index, event in enumerate(events)
+            if event[0] == 'UPDATE' and 'universe_college' in event[1]
+        )
+        self.assertLess(lock_at, update_at)
+        self.assertTrue(all(
+            event[1] == 'UniverseRelease'
+            for event in events if event[0] == 'lock'
+        ))
+        self.assertFalse(any(
+            'FOR UPDATE' in event[1].upper()
+            for event in events if event[0] != 'lock'
+        ))
+        college.refresh_from_db()
+        self.assertEqual(college.name, f'{original} Locked')
+
+    def test_ordinary_child_delete_locks_the_parent_release_before_writing(self):
+        college = College.objects.create(
+            release=self.release,
+            slug='lock-probe-college',
+            name='Lock Probe College',
+        )
+
+        def remove():
+            college.delete()
+
+        _, events = self._lock_events(remove)
+        lock_at = events.index(('lock', 'UniverseRelease'))
+        delete_at = next(
+            index for index, event in enumerate(events)
+            if event[0] == 'DELETE' and 'universe_college' in event[1]
+        )
+        self.assertLess(lock_at, delete_at)
+        self.assertFalse(College.objects.filter(pk=college.pk).exists())
+
+    def test_cached_draft_release_cannot_save_after_the_row_is_published(self):
+        college = College.objects.filter(release=self.release).order_by('pk').first()
+        cached = college.release
+        original = college.name
+        self.assertEqual(cached.status, UniverseRelease.Status.DRAFT)
+        self._mark_published_in_database()
+        college.name = f'{original} stale'
+        with self.assertRaises(ValidationError):
+            college.save()
+        self.assertEqual(cached.status, UniverseRelease.Status.DRAFT)
+        college.refresh_from_db()
+        self.assertEqual(college.name, original)
+        with self.assertRaises(ValidationError):
+            college.delete()
+        self.assertTrue(College.objects.filter(pk=college.pk).exists())
+
+    def test_custom_save_models_read_status_from_the_locked_release(self):
+        franchise = UniverseFranchise.objects.filter(
+            release=self.release,
+            origin=UniverseFranchise.Origin.FOUNDING,
+            first_active_season=1970,
+        ).order_by('pk').first()
+        membership = FranchiseSeasonMembership.objects.filter(
+            franchise=franchise,
+        ).order_by('pk').first()
+        provisional = ProvisionalFranchiseName.objects.filter(
+            release=self.release,
+        ).order_by('pk').first()
+        event = FranchiseHistoryEvent(
+            franchise=franchise,
+            season_year=1970,
+            kind=FranchiseHistoryEvent.Kind.RENAME,
+            previous_name='Before',
+            new_name='After',
+            notes='original',
+        )
+        event.save()
+        standing = HistoricalStanding(
+            franchise=franchise,
+            season_year=1965,
+            wins=4,
+            losses=6,
+            ties=0,
+        )
+        standing.save()
+        samples = (
+            (franchise, 'display_name', f'{franchise.display_name} X', franchise.release),
+            (
+                membership,
+                'owner_selectable',
+                not membership.owner_selectable,
+                membership.franchise.release,
+            ),
+            (provisional, 'city', 'Lockport', provisional.release),
+            (event, 'notes', 'changed', event.franchise.release),
+            (standing, 'wins', 5, standing.franchise.release),
+        )
+        for _instance, _field, _value, cached in samples:
+            self.assertEqual(cached.status, UniverseRelease.Status.DRAFT)
+        self._mark_published_in_database()
+        for instance, field, value, cached in samples:
+            self.assertEqual(cached.status, UniverseRelease.Status.DRAFT)
+            original = getattr(instance, field)
+            calls = []
+            real_lock = QuerySet.select_for_update
+
+            def spy(qs, *args, **kwargs):
+                calls.append(qs.model)
+                return real_lock(qs, *args, **kwargs)
+
+            setattr(instance, field, value)
+            with patch.object(QuerySet, 'select_for_update', spy):
+                with self.assertRaises(ValidationError):
+                    instance.save()
+                self.assertIn(UniverseRelease, calls)
+                calls.clear()
+                with self.assertRaises(ValidationError):
+                    instance.delete()
+                self.assertIn(UniverseRelease, calls)
+            instance.refresh_from_db()
+            self.assertEqual(getattr(instance, field), original)
+            self.assertTrue(type(instance).objects.filter(pk=instance.pk).exists())
+
+    def test_child_write_between_snapshot_and_publication_save_rolls_back(self):
+        """A child save in that window takes the release lock and does not remain.
+
+        SQLite does not block the nested ``select_for_update``. The child
+        statement runs inside the publication transaction, the digests
+        diverge, and both the child write and the publication roll back.
+        A disposable MariaDB smoke test has to show the second connection
+        waiting instead. This test does not open one.
+        """
+        college = College.objects.filter(release=self.release).order_by('pk').first()
+        original = college.name
+        order = []
+        real_lock = QuerySet.select_for_update
+        real_digests = release_digests
+
+        def spy(qs, *args, **kwargs):
+            order.append(('lock', qs.model.__name__))
+            return real_lock(qs, *args, **kwargs)
+
+        def digests(release):
+            result = real_digests(release)
+            order.append('snapshot')
+            college.name = f'{original} race'
+            college.save()
+            order.append('child-returned')
+            return result
+
+        with patch.object(QuerySet, 'select_for_update', spy):
+            with patch('universe.publication_service.release_digests', digests):
+                with self.assertRaises(PublicationRefused) as caught:
+                    self._publish()
+        self.assertIn('fingerprint', caught.exception.failed_gates)
+        self.assertEqual(order[0], ('lock', 'UniverseRelease'))
+        snapshot_at = order.index('snapshot')
+        child_lock_at = order.index(('lock', 'UniverseRelease'), snapshot_at)
+        self.assertLess(snapshot_at, child_lock_at)
+        self.assertLess(child_lock_at, order.index('child-returned'))
+        self.assertTrue(all(item[1] == 'UniverseRelease' for item in order if item[0] == 'lock'))
+        college.refresh_from_db()
+        self.assertEqual(college.name, original)
+        self._assert_draft_preserved('', '')
+
+    def test_a_failed_child_write_rolls_back(self):
+        college = College.objects.filter(release=self.release).order_by('pk').first()
+        original = college.name
+        college.name = f'{original} rollback'
+        real_save = __import__(
+            'universe.release_guard',
+            fromlist=['models'],
+        ).models.Model.save
+
+        def explode(instance, *args, **kwargs):
+            real_save(instance, *args, **kwargs)
+            raise RuntimeError('child write failed')
+
+        with patch('universe.release_guard.models.Model.save', explode):
+            with self.assertRaises(RuntimeError):
+                college.save()
+        college.refresh_from_db()
+        self.assertEqual(college.name, original)
+
+
+class ReleaseLockInventoryTests(SimpleTestCase):
+    def test_every_fingerprint_model_locks_the_parent_release(self):
+        from universe.fingerprints import _coverage
+
+        for model, _included, _excluded in _coverage():
+            self.assertTrue(
+                getattr(model.save, 'locks_parent_release', False),
+                model.__name__,
+            )
+            self.assertTrue(
+                getattr(model.delete, 'locks_parent_release', False),
+                model.__name__,
+            )
+
+    def test_product_bulk_bypasses_are_inside_the_release_lock(self):
+        universe = Path(__file__).resolve().parents[1]
+        found = []
+        for path in universe.rglob('*.py'):
+            if {'tests', 'migrations', '__pycache__'} & set(path.parts):
+                continue
+            text = path.read_text()
+            queryset_delete = any(
+                '.delete()' in line and 'super().delete' not in line
+                for line in text.splitlines()
+            )
+            if (
+                'bulk_create(' in text
+                or 'bulk_update(' in text
+                or '.all().delete()' in text
+                or queryset_delete
+            ):
+                found.append(path.relative_to(universe).as_posix())
+        self.assertEqual(
+            sorted(found),
+            [
+                'generation/founding.py',
+                'generation/opening_players.py',
+                'generation/player_rating_profiles.py',
+                'generation/prospects.py',
+                'generation/schedule.py',
+            ],
+        )
+        for name in found:
+            text = (universe / name).read_text()
+            self.assertIn('holding_release_lock', text)
+            self.assertIn('assert_release_lock_held', text)
+        for name in (
+            'publication_service.py',
+            'generation/provisional_names.py',
+            'release_guard.py',
+        ):
+            self.assertIn('holding_release_lock', (universe / name).read_text())
+        self.assertIn(
+            'holding_release_lock',
+            replace_provisional_value.__doc__ + '\n' + Path(
+                replace_provisional_value.__code__.co_filename,
+            ).read_text(),
+        )
+
+    def test_release_content_locks_universe_release_before_any_child(self):
+        universe = Path(__file__).resolve().parents[1]
+        root = universe.parent
+        product_hits = []
+        for path in universe.rglob('*.py'):
+            if {'tests', 'migrations', '__pycache__'} & set(path.parts):
+                continue
+            if path.name == 'release_guard.py':
+                continue
+            if 'select_for_update' in path.read_text():
+                product_hits.append(path.relative_to(universe).as_posix())
+        self.assertEqual(product_hits, [])
+        for path in (root / 'timelines').rglob('*.py'):
+            if 'tests' in path.parts or 'migrations' in path.parts:
+                continue
+            self.assertNotIn(
+                'UniverseRelease.objects.select_for_update',
+                path.read_text(),
+            )

@@ -12,7 +12,7 @@ written. The founding generators are not called and are not modified.
 """
 
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError
 
 from timelines.models import Timeline
 from universe.generation.founding import (
@@ -20,6 +20,7 @@ from universe.generation.founding import (
     _resolve_release_id,
     _validate_seed,
 )
+from universe.release_guard import assert_release_lock_held, holding_release_lock, parent_release_id
 from universe.generation.player_counts import (
     FIRST_SEASON_YEAR,
     LAST_SEASON_YEAR,
@@ -158,8 +159,7 @@ def generate_opening_players(league_id, seed):
     except FoundingGenerationError as exc:
         raise OpeningGenerationError(str(exc)) from exc
     try:
-        with transaction.atomic():
-            release = UniverseRelease.objects.select_for_update().get(pk=release_id)
+        with holding_release_lock(release_id) as release:
             _refuse_closed(release)
             franchises = _require_schedule(release)
             if release.seed != seed:
@@ -472,6 +472,10 @@ def _save_all(rows):
                 f'A generated row failed validation: {exc}'
             ) from exc
     if rows:
+        release_id = parent_release_id(rows[0])
+        if release_id is None:
+            raise OpeningGenerationError('A generated row has no parent release.')
+        assert_release_lock_held(release_id)
         type(rows[0]).objects.bulk_create(rows, batch_size=PLAYER_BATCH_SIZE)
 
 
@@ -649,6 +653,10 @@ def _validate_opening_players(rows):
 
 def _insert_opening_players(rows):
     _validate_opening_players(rows)
+    release_id = parent_release_id(rows[0])
+    if release_id is None:
+        raise OpeningGenerationError('A generated row has no parent release.')
+    assert_release_lock_held(release_id)
     try:
         UniversePlayer.objects.bulk_create(rows, batch_size=PLAYER_BATCH_SIZE)
     except IntegrityError as exc:
@@ -672,6 +680,10 @@ def _save_assignments(rows):
             raise OpeningGenerationError(
                 f'A generated row failed validation: {exc}'
             ) from exc
+    release_id = parent_release_id(rows[0])
+    if release_id is None:
+        raise OpeningGenerationError('A generated row has no parent release.')
+    assert_release_lock_held(release_id)
     try:
         OpeningAssignment.objects.bulk_create(rows, batch_size=PLAYER_BATCH_SIZE)
     except IntegrityError as exc:

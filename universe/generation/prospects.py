@@ -14,7 +14,7 @@ A different seed or a different stored row is refused, and nothing is deleted.
 """
 
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError
 
 from timelines.models import Timeline
 from universe.generation.founding import (
@@ -22,6 +22,7 @@ from universe.generation.founding import (
     _resolve_release_id,
     _validate_seed,
 )
+from universe.release_guard import assert_release_lock_held, holding_release_lock, parent_release_id
 from universe.generation.opening_players import y1970_values
 from universe.generation.player_counts import (
     FIRST_SEASON_YEAR,
@@ -265,8 +266,7 @@ def generate_prospects(league_id, seed):
     except FoundingGenerationError as exc:
         raise ProspectGenerationError(str(exc)) from exc
     try:
-        with transaction.atomic():
-            release = UniverseRelease.objects.select_for_update().get(pk=release_id)
+        with holding_release_lock(release_id) as release:
             metadata = _release_metadata(release)
             _refuse_closed(release)
             _require_schedule(release)
@@ -793,6 +793,10 @@ def _save_all(rows):
                 f'A generated row failed validation: {exc}'
             ) from exc
     if rows:
+        release_id = parent_release_id(rows[0])
+        if release_id is None:
+            raise ProspectGenerationError('A generated row has no parent release.')
+        assert_release_lock_held(release_id)
         type(rows[0]).objects.bulk_create(rows, batch_size=PLAYER_BATCH_SIZE)
 
 
@@ -961,6 +965,7 @@ def _insert_players(rows, release, college_ids, classes_by_year):
             classes_by_year,
         )
     _validate_generated_players(rows)
+    assert_release_lock_held(release.pk)
     try:
         UniversePlayer.objects.bulk_create(rows, batch_size=PLAYER_BATCH_SIZE)
     except IntegrityError as exc:
