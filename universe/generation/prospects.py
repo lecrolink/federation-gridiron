@@ -6,10 +6,11 @@ This module adds the 11 later era profiles, the 60 draft classes, and the
 19,777 prospect rows. It does not publish, and it does not change the
 release seed, fingerprints, schedule version, founding rows, or opening rows.
 
-Cap amounts stay null. A cap-off profile stores that null as its approved
-state. A cap-on profile is a draft row and cannot be published while
-cap_limit is empty. An identical rerun changes nothing. A different seed
-or a different stored row is refused, and nothing is deleted.
+Cap-off profiles store a null cap_limit. Cap-on profiles store the approved
+flat cap of 10000 ledger units. minimum_salary and rookie_slot_scale stay
+null. An identical rerun changes nothing. A stored cap that differs from
+those values fails closed: the writer does not update or replace the row.
+A different seed or a different stored row is refused, and nothing is deleted.
 """
 
 from django.core.exceptions import ValidationError
@@ -185,12 +186,15 @@ class ProspectGenerationError(Exception):
     """The prospect cohort cannot be written."""
 
 
+# Approved fictional ledger units for every cap-on profile. Not a dollar amount.
+APPROVED_CAP_LIMIT = 10000
+
+
 def later_profile_values():
     """The 11 approved cards from y1974 through y2021.
 
-    cap_limit, minimum_salary, and rookie_slot_scale stay null. Cap-off
-    cards store that null as their approved state. Cap-on cards stay
-    draft-only while cap_limit is empty.
+    Cap-off cards keep a null cap_limit. Cap-on cards store
+    ``APPROVED_CAP_LIMIT``. minimum_salary and rookie_slot_scale stay null.
     """
     rows = []
     previous_last = 1973
@@ -232,11 +236,14 @@ def later_profile_values():
             'playoff_format': playoff_format,
             'schedule_length': games,
             'overtime_rule': overtime_rule,
-            'cap_limit': None,
             'minimum_salary': None,
             'rookie_slot_scale': None,
         }
         values.update(movement)
+        if values['cap_status'] == 'on':
+            values['cap_limit'] = APPROVED_CAP_LIMIT
+        else:
+            values['cap_limit'] = None
         for position, count in active_quota(first_year).items():
             values[f'quota_active_{position.lower()}'] = count
         for position, count in taxi_quota(first_year).items():
