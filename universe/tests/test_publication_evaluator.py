@@ -5,11 +5,14 @@ from django.core.exceptions import ValidationError
 from django.db import connection
 from django.test import SimpleTestCase, TestCase
 
+from universe.fingerprints import release_digests
 from universe.generation.opening_players import y1970_values
 from universe.generation.prospects import later_profile_values
-from universe.models import UniverseRelease
+from universe.models import FranchiseHistoryEvent, UniverseFranchise, UniverseRelease
+from universe.people import UniverseGM, UniverseStaffIdentity
 from timelines.models import Timeline
 from universe.publication import (
+    INFORMATIONAL_REQUIREMENTS,
     SMOKE_FINGERPRINT_PLACEHOLDERS,
     evaluate_release_publication,
 )
@@ -164,6 +167,12 @@ class PublicationEvaluatorTests(TestCase):
             ('catalog_fingerprint', 'validation_fingerprint'),
         )
         self.assertFalse(report.cap_and_fingerprint_checks_pass)
+        self.assertFalse(report.publishable)
+        self.assertEqual(report.required_unresolved, ('draft_order', 'opening_depth'))
+        self.assertEqual(report.informational_requirements, INFORMATIONAL_REQUIREMENTS)
+        self.assertEqual(report.draft_order_status, 'unresolved')
+        self.assertEqual(report.opening_depth_status, 'unresolved')
+        self.assertEqual(report.history_events_status, 'pass')
         text = '\n'.join(report.messages)
         self.assertIn('unverified placeholder', text)
         self.assertIn('does not match the stored catalog fingerprint', text)
@@ -171,8 +180,12 @@ class PublicationEvaluatorTests(TestCase):
             release.catalog_fingerprint,
             release.validation_fingerprint,
         ))
-        self.assertNotIn('minimum_salary', text)
-        self.assertNotIn('rookie_slot_scale', text)
+        self.assertIn(
+            'Not a publication requirement: minimum_salary and rookie_slot_scale:',
+            text,
+        )
+        self.assertNotIn('minimum_salary blocks', text)
+        self.assertNotIn('rookie_slot_scale blocks', text)
         for key in CAP_OFF_KEYS:
             self.assertNotIn(key, report.cap_blockers)
         self.assertFalse(any(
@@ -222,6 +235,7 @@ class PublicationEvaluatorTests(TestCase):
         report = evaluate_release_publication(release)
         self.assertEqual(report.cap_blockers, CAP_ON_KEYS)
         self.assertFalse(report.cap_and_fingerprint_checks_pass)
+        self.assertFalse(report.publishable)
         release.refresh_from_db()
         self.assertEqual(release.catalog_fingerprint, CATALOG_PLACEHOLDER)
         self.assertEqual(release.status, UniverseRelease.Status.DRAFT)
@@ -248,6 +262,16 @@ class PublicationEvaluatorTests(TestCase):
         self.assertIsNone(report.catalog_digest)
         self.assertIsNone(report.validation_digest)
         self.assertFalse(report.cap_and_fingerprint_checks_pass)
+        self.assertFalse(report.publishable)
+        self.assertEqual(report.horizon_status, 'unsupported')
+        self.assertEqual(report.expansion_status, 'unsupported')
+        self.assertEqual(report.membership_status, 'unsupported')
+        self.assertEqual(report.quota_status, 'unsupported')
+        self.assertEqual(report.population_status, 'unsupported')
+        self.assertEqual(report.history_events_status, 'unsupported')
+        self.assertEqual(report.draft_order_status, 'unsupported')
+        self.assertEqual(report.opening_depth_status, 'unsupported')
+        self.assertEqual(report.required_unresolved, ())
         release.refresh_from_db()
         self.assertEqual(release.catalog_fingerprint, before)
         self.assertEqual(release.generator_version, 'fg-founding-1')
@@ -274,6 +298,7 @@ class PublicationEvaluatorTests(TestCase):
         self.assertIsNotNone(report.catalog_digest)
         self.assertFalse(report.catalog_digest_match)
         self.assertFalse(report.cap_and_fingerprint_checks_pass)
+        self.assertFalse(report.publishable)
         self.assertEqual(_snapshot(release), before)
         self.assertEqual(release.status, UniverseRelease.Status.DRAFT)
         self.assertIsNone(release.published_at)
@@ -316,3 +341,156 @@ class PublicationEvaluatorTests(TestCase):
         release.refresh_from_db()
         self.assertEqual(release.status, UniverseRelease.Status.DRAFT)
         self.assertIsNone(release.published_at)
+
+    def test_valid_fingerprints_do_not_publish_an_incomplete_release(self):
+        league = League.objects.create(
+            name='Incomplete League',
+            slug='incomplete-league',
+            tier=1,
+            active=True,
+        )
+        release = _release(league, 'fg-incomplete', '', '')
+        _store_cards(release)
+        catalog, validation = release_digests(release)
+        UniverseRelease.objects.filter(pk=release.pk).update(
+            catalog_fingerprint=catalog,
+            validation_fingerprint=validation,
+        )
+        release.refresh_from_db()
+        before = _snapshot(release)
+        report = evaluate_release_publication(release)
+        self.assertEqual(report.cap_blockers, ())
+        self.assertEqual(report.fingerprint_verification, 'match')
+        self.assertTrue(report.catalog_digest_match)
+        self.assertTrue(report.validation_digest_match)
+        self.assertTrue(report.cap_and_fingerprint_checks_pass)
+        self.assertEqual(report.quota_status, 'pass')
+        self.assertEqual(report.staff_signature_status, 'pass')
+        self.assertEqual(report.horizon_status, 'fail')
+        self.assertEqual(report.expansion_status, 'fail')
+        self.assertEqual(report.membership_status, 'fail')
+        self.assertEqual(report.population_status, 'fail')
+        self.assertEqual(report.history_events_status, 'pass')
+        self.assertEqual(report.draft_order_status, 'unresolved')
+        self.assertEqual(report.opening_depth_status, 'unresolved')
+        self.assertEqual(report.required_unresolved, ('draft_order', 'opening_depth'))
+        self.assertFalse(any('passes.' in item for item in report.informational_requirements))
+        self.assertFalse(report.publishable)
+        self.assertIn('The release is not publishable.', report.messages)
+        self.assertEqual(_snapshot(release), before)
+        self.assertEqual(release.status, UniverseRelease.Status.DRAFT)
+        self.assertIsNone(release.published_at)
+        self.assertEqual(Timeline.objects.count(), 0)
+
+    def test_a_quota_outside_the_documented_limits_fails(self):
+        league = League.objects.create(
+            name='Quota League',
+            slug='quota-league',
+            tier=1,
+            active=True,
+        )
+        release = _release(league, 'fg-quota', '', '')
+        _store_cards(release)
+        EraRuleProfile.objects.filter(
+            release=release,
+            profile_key='y1970',
+        ).update(quota_active_qb=3, active_limit=41)
+        report = evaluate_release_publication(release)
+        self.assertEqual(report.quota_status, 'fail')
+        self.assertFalse(report.publishable)
+        self.assertTrue(any('y1970' in failure for failure in report.quota_failures))
+        self.assertEqual(
+            EraRuleProfile.objects.get(release=release, profile_key='y1970').active_limit,
+            41,
+        )
+
+    def test_a_repeated_gm_signature_fails(self):
+        league = League.objects.create(
+            name='Signature League',
+            slug='signature-league',
+            tier=1,
+            active=True,
+        )
+        release = _release(league, 'fg-signature', '', '')
+        signature = {
+            'strength_1': 'quarterback_eye',
+            'strength_2': 'lineman_eye',
+            'weakness': 'finds_speed',
+            'trait_1': 'patient',
+            'trait_2': 'secretive',
+        }
+        for index in (1, 2):
+            identity = UniverseStaffIdentity.objects.create(
+                release=release,
+                universe_key=f'g-fg-signature-1970-00{index}',
+                name=f'GM {index}',
+                birth_year=1940,
+            )
+            UniverseGM.objects.create(
+                release=release,
+                identity=identity,
+                universe_key=identity.universe_key,
+                name=identity.name,
+                birth_year=1940,
+                debut_year=1970,
+                former_role='scout',
+                positional_priority_1='quarterback',
+                positional_priority_2='skill',
+                **signature,
+            )
+        report = evaluate_release_publication(release)
+        self.assertEqual(report.staff_signature_status, 'fail')
+        self.assertTrue(report.staff_signature_failures)
+        self.assertFalse(report.publishable)
+        self.assertEqual(release.gms.count(), 2)
+
+    def test_one_history_event_fails_the_zero_event_gate(self):
+        league = League.objects.create(
+            name='History League',
+            slug='history-league',
+            tier=1,
+            active=True,
+        )
+        release = _release(league, 'fg-history', '', '')
+        franchise = UniverseFranchise.objects.create(
+            release=release,
+            placeholder_slug='founding-01',
+            display_name='Founding franchise 01',
+            origin=UniverseFranchise.Origin.FOUNDING,
+            first_active_season=1970,
+        )
+        before = _snapshot(release)
+        FranchiseHistoryEvent.objects.create(
+            franchise=franchise,
+            season_year=1970,
+            kind=FranchiseHistoryEvent.Kind.RENAME,
+            previous_name='Founding franchise 01',
+            new_name='Renamed franchise 01',
+        )
+        statements = []
+
+        def wrap(execute, sql, params, many, context):
+            statements.append(sql)
+            return execute(sql, params, many, context)
+
+        connection.execute_wrappers.append(wrap)
+        try:
+            report = evaluate_release_publication(release)
+        finally:
+            connection.execute_wrappers.remove(wrap)
+        self.assertEqual(report.history_events_status, 'fail')
+        self.assertEqual(
+            report.history_events_failures,
+            ('Franchise history events are 1, not zero.',),
+        )
+        self.assertEqual(report.draft_order_status, 'unresolved')
+        self.assertEqual(report.opening_depth_status, 'unresolved')
+        self.assertFalse(report.publishable)
+        self.assertFalse(any(
+            sql.lstrip().split(None, 1)[0].upper() in ('INSERT', 'UPDATE', 'DELETE', 'REPLACE')
+            for sql in statements
+        ))
+        self.assertEqual(_snapshot(release), before)
+        self.assertEqual(release.status, UniverseRelease.Status.DRAFT)
+        self.assertIsNone(release.published_at)
+        self.assertEqual(FranchiseHistoryEvent.objects.filter(franchise=franchise).count(), 1)
