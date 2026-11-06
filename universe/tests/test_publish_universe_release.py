@@ -29,13 +29,38 @@ from universe.models import (
     UniverseFranchise,
     UniverseRelease,
 )
-from universe.people import College, UniverseGM, UniversePlayer
+from universe.people import (
+    DEFENSE_SCHEMES,
+    OFFENSE_SCHEMES,
+    College,
+    CoachRatingProfile,
+    GMRatingProfile,
+    PlayerRatingProfile,
+    UniverseCoach,
+    UniverseGM,
+    UniversePlayer,
+    UniverseStaffPost,
+)
 from universe.publication_service import (
     REQUIRED_GATES,
     PublicationRefused,
     publish_universe_release,
 )
-from universe.rules import DraftClass, EraRuleProfile, ExpansionEvent, OpeningAssignment
+from universe.release_guard import (
+    OWNERSHIP_MESSAGE,
+    assert_release_lock_held,
+    holding_release_lock,
+    persisted_release_id,
+)
+from universe.rules import (
+    DraftClass,
+    EraAllowedScheme,
+    EraRuleProfile,
+    ExpansionClub,
+    ExpansionEvent,
+    OpeningAssignment,
+    OpeningContract,
+)
 
 
 SEED = 1970
@@ -816,8 +841,530 @@ class PublicationServiceTests(TestCase):
         college.refresh_from_db()
         self.assertEqual(college.name, original)
 
+    def _other_release(self):
+        league = League.objects.create(
+            name='Lock Probe League',
+            slug='lock-probe-league',
+            tier=1,
+            active=False,
+        )
+        return UniverseRelease.objects.create(
+            slug='fg-lock-other',
+            root_league=league,
+            generator_version=self.release.generator_version,
+            seed=self.release.seed,
+            founding_franchise_count=self.release.founding_franchise_count,
+            expansion_schedule_version=self.release.expansion_schedule_version,
+            first_season_year=self.release.first_season_year,
+            season_count=self.release.season_count,
+            last_season_year=self.release.last_season_year,
+            status=UniverseRelease.Status.DRAFT,
+        )
+
+    def _stored_release(self, release):
+        release.refresh_from_db()
+        return (
+            release.status,
+            release.catalog_fingerprint,
+            release.validation_fingerprint,
+            release.published_at,
+            release.slug,
+        )
+
+    def _row_values(self, instance):
+        instance.refresh_from_db()
+        return {
+            field.attname: getattr(instance, field.attname)
+            for field in instance._meta.concrete_fields
+        }
+
+    def _patched_gets(self):
+        seen = []
+        real_get = QuerySet.get
+
+        def get(queryset, *args, **kwargs):
+            if queryset.query.select_for_update:
+                seen.append((queryset.db, kwargs.get('pk')))
+            return real_get(queryset, *args, **kwargs)
+
+        return seen, patch.object(QuerySet, 'get', get)
+
+    def _assert_lock_context_clear(self):
+        with self.assertRaises(RuntimeError):
+            assert_release_lock_held(self.release.pk, using='default')
+        with self.assertRaises(RuntimeError):
+            assert_release_lock_held(self.release.pk, using='other')
+
+    def _assert_refused(self, instance, persisted_pk, other_pk, before):
+        seen, patched = self._patched_gets()
+        with patched:
+            with patch.object(instance, 'full_clean', side_effect=AssertionError('full_clean')):
+                with self.assertRaises(ValidationError) as caught:
+                    instance.save()
+        self.assertEqual(caught.exception.messages, [OWNERSHIP_MESSAGE])
+        self.assertEqual(seen, [('default', persisted_pk)])
+        self.assertNotIn(other_pk, [pk for _alias, pk in seen])
+        self.assertEqual(self._row_values(instance), before)
+        self._assert_lock_context_clear()
+        return seen
+
+    def test_reassigning_a_direct_child_locks_the_persisted_release(self):
+        other = self._other_release()
+        self.assertNotEqual(other.pk, self.release.pk)
+        draft_college = College.objects.create(
+            release=other,
+            slug='lock-draft-college',
+            name='Draft College',
+        )
+        before_draft = self._row_values(draft_college)
+        draft_college.release = self.release
+        draft_college.name = 'Draft Moved'
+        self._assert_refused(draft_college, other.pk, self.release.pk, before_draft)
+        self.assertEqual(self._stored_release(other)[0], UniverseRelease.Status.DRAFT)
+        self.assertEqual(self._stored_release(self.release)[0], UniverseRelease.Status.DRAFT)
+
+        self._mark_published_in_database()
+        published = self._stored_release(self.release)
+        draft = self._stored_release(other)
+        college = College.objects.filter(release=self.release).exclude(
+            pk=draft_college.pk,
+        ).order_by('pk').first()
+        before = self._row_values(college)
+        cached = college.release
+        college.release_id = other.pk
+        type(college)._meta.get_field('release').set_cached_value(college, cached)
+        college.name = 'Published Moved'
+        self._assert_refused(college, self.release.pk, other.pk, before)
+        self.assertEqual(self._stored_release(self.release), published)
+        self.assertEqual(self._stored_release(other), draft)
+        self.assertFalse(College.objects.filter(release=other, name='Published Moved').exists())
+
+    def _rating_values(self, model):
+        values = {}
+        for field in model._meta.concrete_fields:
+            if field.name.startswith('initial_') or field.name.startswith('potential_'):
+                values[field.name] = 40
+        return values
+
+    def _copy_to_release(self, instance, release, **changes):
+        clone = type(instance).objects.get(pk=instance.pk)
+        clone.pk = None
+        clone._state.adding = True
+        clone.release = release
+        for name, value in changes.items():
+            setattr(clone, name, value)
+        clone.save()
+        return clone
+
+    def _prepare_indirect_children(self):
+        rating = PlayerRatingProfile.objects.filter(
+            player__release=self.release,
+            player__cohort=UniversePlayer.Cohort.OPENING,
+        ).order_by('pk').first()
+        gm = UniverseGM.objects.filter(release=self.release).order_by('pk').first()
+        coach = UniverseCoach.objects.filter(release=self.release).order_by('pk').first()
+        gm_rating = GMRatingProfile(gm=gm, **self._rating_values(GMRatingProfile))
+        gm_rating.save()
+        coach_rating = CoachRatingProfile(
+            coach=coach,
+            **self._rating_values(CoachRatingProfile),
+        )
+        coach_rating.save()
+        profile = EraRuleProfile.objects.get(release=self.release, profile_key='y1970')
+        taken = set(
+            EraAllowedScheme.objects.filter(profile=profile).values_list('side', 'scheme')
+        )
+        choice = next(
+            ('offense', scheme) for scheme in OFFENSE_SCHEMES
+            if ('offense', scheme) not in taken
+        ) if any(('offense', scheme) not in taken for scheme in OFFENSE_SCHEMES) else next(
+            ('defense', scheme) for scheme in DEFENSE_SCHEMES
+            if ('defense', scheme) not in taken
+        )
+        allowed = EraAllowedScheme(profile=profile, side=choice[0], scheme=choice[1])
+        allowed.save()
+        club = ExpansionClub.objects.filter(event__release=self.release).order_by('pk').first()
+        assignment = OpeningAssignment.objects.filter(
+            release=self.release,
+        ).exclude(role='free_agent').exclude(franchise=None).order_by('pk').first()
+        years = profile.veteran_contract_years_min
+        contract = OpeningContract(
+            assignment=assignment,
+            years=years,
+            salary_per_year=100,
+            guaranteed=100,
+            signing_bonus=0,
+            start_year=self.release.first_season_year,
+            end_year=self.release.first_season_year + years - 1,
+        )
+        contract.save()
+        membership = FranchiseSeasonMembership.objects.filter(
+            franchise__release=self.release,
+        ).order_by('pk').first()
+        post = UniverseStaffPost(
+            gm=gm,
+            role='gm',
+            start_year=gm.debut_year - 2,
+            end_year=gm.debut_year - 1,
+            organization_name='Lock Probe Club',
+            ended_by=UniverseStaffPost.EndedBy.RESIGNED,
+        )
+        post.save()
+        return {
+            'player': rating,
+            'gm': gm_rating,
+            'coach': coach_rating,
+            'profile': allowed,
+            'event': club,
+            'assignment': contract,
+            'franchise': membership,
+            'staff': post,
+        }
+
+    def test_a_dirty_or_replaced_parent_cannot_redirect_the_lock(self):
+        other = self._other_release()
+        self.assertNotEqual(other.pk, self.release.pk)
+        children = self._prepare_indirect_children()
+        self._mark_published_in_database()
+        published = self._stored_release(self.release)
+        draft = self._stored_release(other)
+        parent_fields = {
+            'player': 'player',
+            'gm': 'gm',
+            'coach': 'coach',
+            'profile': 'profile',
+            'event': 'event',
+            'assignment': 'assignment',
+            'franchise': 'franchise',
+            'staff': 'gm',
+        }
+        for label, field_name in parent_fields.items():
+            row = children[label]
+            before = self._row_values(row)
+            parent_id = getattr(row, f'{field_name}_id')
+            parent = getattr(row, field_name)
+            stored_release = type(parent).objects.values_list(
+                'release_id', flat=True,
+            ).get(pk=parent_id)
+            parent.release = other
+            self._assert_refused(row, self.release.pk, other.pk, before)
+            self.assertEqual(
+                type(parent).objects.values_list('release_id', flat=True).get(pk=parent_id),
+                stored_release,
+            )
+        self.assertEqual(self._stored_release(self.release), published)
+        self.assertEqual(self._stored_release(other), draft)
+
+        rating = children['player']
+        source = UniversePlayer.objects.get(pk=rating.player_id)
+        college = self._copy_to_release(source.college, other)
+        profile = self._copy_to_release(source.origin_profile, other)
+        franchise = None
+        if source.origin_franchise_id:
+            franchise = self._copy_to_release(
+                source.origin_franchise,
+                other,
+                placeholder_slug='lock-probe-origin',
+                catalog_team=None,
+                history_predecessor=None,
+            )
+        replacement = self._copy_to_release(
+            source,
+            other,
+            universe_key='lock-probe-player',
+            college=college,
+            origin_profile=profile,
+            origin_franchise=franchise,
+        )
+        before = self._row_values(rating)
+        rating.player = replacement
+        self._assert_refused(rating, self.release.pk, other.pk, before)
+        self.assertEqual(
+            UniversePlayer.objects.values_list('release_id', flat=True).get(pk=source.pk),
+            self.release.pk,
+        )
+        self.assertEqual(replacement.release_id, other.pk)
+
+        membership = children['franchise']
+        before = self._row_values(membership)
+        stored_franchise_id = membership.franchise_id
+        replacement_franchise = self._copy_to_release(
+            UniverseFranchise.objects.get(pk=stored_franchise_id),
+            other,
+            placeholder_slug='lock-probe-franchise',
+            catalog_team=None,
+            history_predecessor=None,
+        )
+        membership.franchise_id = replacement_franchise.pk
+        type(membership)._meta.get_field('franchise').set_cached_value(
+            membership,
+            UniverseFranchise.objects.get(pk=stored_franchise_id),
+        )
+        self._assert_refused(membership, self.release.pk, other.pk, before)
+
+        post = UniverseStaffPost.objects.get(pk=children['staff'].pk)
+        before = self._row_values(post)
+        post.franchise = replacement_franchise
+        seen, patched = self._patched_gets()
+        with patched:
+            with self.assertRaises(ValidationError):
+                post.save()
+        self.assertEqual(seen, [('default', self.release.pk)])
+        self.assertEqual(self._row_values(post), before)
+        self.assertEqual(self._stored_release(self.release), published)
+        self.assertEqual(replacement_franchise.release_id, other.pk)
+
+    def test_delete_uses_the_persisted_owner(self):
+        other = self._other_release()
+        self.assertNotEqual(other.pk, self.release.pk)
+        self._mark_published_in_database()
+        college = College.objects.filter(release=self.release).order_by('pk').first()
+        college.release = other
+        seen, patched = self._patched_gets()
+        with patched:
+            with self.assertRaises(ValidationError):
+                college.delete()
+        self.assertEqual(seen, [('default', self.release.pk)])
+        self.assertTrue(College.objects.filter(pk=college.pk, release_id=self.release.pk).exists())
+
+        rating = PlayerRatingProfile.objects.filter(
+            player__release=self.release,
+        ).order_by('pk').first()
+        player_id = rating.player_id
+        rating.player.release = other
+        seen, patched = self._patched_gets()
+        with patched:
+            with self.assertRaises(ValidationError):
+                rating.delete()
+        self.assertEqual(seen, [('default', self.release.pk)])
+        self.assertTrue(PlayerRatingProfile.objects.filter(pk=rating.pk).exists())
+        self.assertEqual(
+            UniversePlayer.objects.values_list('release_id', flat=True).get(pk=player_id),
+            self.release.pk,
+        )
+
+        draft_college = College.objects.create(
+            release=other,
+            slug='lock-delete-draft',
+            name='Delete Draft',
+        )
+        draft_pk = draft_college.pk
+        draft_college.release = self.release
+        seen, patched = self._patched_gets()
+        with patched:
+            draft_college.delete()
+        self.assertEqual(seen, [('default', other.pk)])
+        self.assertFalse(College.objects.filter(pk=draft_pk).exists())
+        self._assert_lock_context_clear()
+
+    def test_a_draft_child_saves_and_deletes_and_a_new_child_locks_its_release(self):
+        other = self._other_release()
+        self.assertNotEqual(other.pk, self.release.pk)
+        college = College.objects.create(
+            release=other,
+            slug='lock-live-college',
+            name='Live',
+        )
+        college.name = 'Live Updated'
+        seen, patched = self._patched_gets()
+        with patched:
+            college.save(using='default')
+        self.assertEqual(seen, [('default', other.pk)])
+        college.refresh_from_db()
+        self.assertEqual(college.name, 'Live Updated')
+        self.assertEqual(college.release_id, other.pk)
+
+        rating = PlayerRatingProfile.objects.filter(
+            player__release=self.release,
+            player__cohort=UniversePlayer.Cohort.OPENING,
+        ).order_by('pk').first()
+        player = rating.player
+        original_name = player.name
+        player.name = f'{original_name} unsaved'
+        target = 0 if rating.initial_speed else min(1, rating.potential_speed)
+        replacement = self._copy_to_release(
+            player,
+            other,
+            universe_key='lock-live-player',
+            college=self._copy_to_release(player.college, other),
+            origin_profile=self._copy_to_release(player.origin_profile, other),
+            origin_franchise=self._copy_to_release(
+                player.origin_franchise,
+                other,
+                placeholder_slug='lock-live-origin',
+                catalog_team=None,
+                history_predecessor=None,
+            ) if player.origin_franchise_id else None,
+        )
+        type(rating)._meta.get_field('player').set_cached_value(rating, replacement)
+        rating.initial_speed = target
+        seen, patched = self._patched_gets()
+        with patched:
+            rating.save()
+        self.assertEqual(seen, [('default', self.release.pk)])
+        rating.refresh_from_db()
+        player.refresh_from_db()
+        self.assertEqual(rating.initial_speed, target)
+        self.assertEqual(rating.player_id, player.pk)
+        self.assertEqual(player.name, original_name)
+        self.assertEqual(player.release_id, self.release.pk)
+        self.assertEqual(replacement.release_id, other.pk)
+
+        extra = College.objects.create(
+            release=self.release,
+            slug='lock-live-delete',
+            name='Delete Me',
+        )
+        extra_pk = extra.pk
+        seen, patched = self._patched_gets()
+        with patched:
+            extra.delete()
+        self.assertEqual(seen, [('default', self.release.pk)])
+        self.assertFalse(College.objects.filter(pk=extra_pk).exists())
+
+        created = College(release=other, slug='lock-new-college', name='New College')
+        seen, patched = self._patched_gets()
+        with patched:
+            created.save()
+        self.assertEqual(seen, [('default', other.pk)])
+        self.assertTrue(College.objects.filter(
+            pk=created.pk,
+            release_id=other.pk,
+            name='New College',
+        ).exists())
+        self._assert_lock_context_clear()
+
+    def test_force_insert_and_force_update_follow_persisted_ownership(self):
+        other = self._other_release()
+        self.assertNotEqual(other.pk, self.release.pk)
+        college = College.objects.create(
+            release=other,
+            slug='lock-force-college',
+            name='Force',
+        )
+        college.name = 'Force Updated'
+        seen, patched = self._patched_gets()
+        with patched:
+            college.save(force_update=True)
+        self.assertEqual(seen, [('default', other.pk)])
+        college.refresh_from_db()
+        self.assertEqual(college.name, 'Force Updated')
+        self.assertEqual(college.release_id, other.pk)
+
+        inserted = College(release=other, slug='lock-force-insert', name='Inserted')
+        seen, patched = self._patched_gets()
+        with patched:
+            inserted.save(force_insert=True)
+        self.assertEqual(seen, [('default', other.pk)])
+        self.assertTrue(College.objects.filter(pk=inserted.pk, release_id=other.pk).exists())
+
+        self._mark_published_in_database()
+        published = College.objects.filter(release=self.release).order_by('pk').first()
+        before = self._row_values(published)
+        published.release = other
+        published.name = 'Force Moved'
+        seen, patched = self._patched_gets()
+        with patched:
+            with self.assertRaises(ValidationError) as caught:
+                published.save(force_update=True)
+        self.assertEqual(caught.exception.messages, [OWNERSHIP_MESSAGE])
+        self.assertEqual(seen, [('default', self.release.pk)])
+        seen, patched = self._patched_gets()
+        with patched:
+            with self.assertRaises(ValidationError) as caught:
+                published.save(force_insert=True)
+        self.assertEqual(caught.exception.messages, [OWNERSHIP_MESSAGE])
+        self.assertEqual(seen, [('default', self.release.pk)])
+        self.assertEqual(self._row_values(published), before)
+        self._assert_lock_context_clear()
+
+    def test_nested_locks_and_alias_assertions(self):
+        other = self._other_release()
+        self.assertNotEqual(other.pk, self.release.pk)
+        with holding_release_lock(self.release.pk, using='default'):
+            assert_release_lock_held(self.release.pk, using='default')
+            with holding_release_lock(self.release.pk, using='default'):
+                assert_release_lock_held(self.release.pk, using='default')
+            assert_release_lock_held(self.release.pk, using='default')
+            with self.assertRaises(RuntimeError):
+                assert_release_lock_held(self.release.pk, using='other')
+            with self.assertRaises(RuntimeError):
+                with holding_release_lock(other.pk, using='default'):
+                    pass
+            assert_release_lock_held(self.release.pk, using='default')
+            with self.assertRaises(RuntimeError):
+                assert_release_lock_held(other.pk, using='default')
+        self._assert_lock_context_clear()
+
+        with self.assertRaises(RuntimeError):
+            with holding_release_lock(self.release.pk, using='default'):
+                assert_release_lock_held(self.release.pk, using='default')
+                raise RuntimeError('probe')
+        self._assert_lock_context_clear()
+
+    def test_full_clean_cannot_retarget_or_skip_the_locked_owner(self):
+        other = self._other_release()
+        college = College.objects.filter(release=self.release).order_by('pk').first()
+        before = self._row_values(college)
+        published = self._stored_release(self.release)
+        draft = self._stored_release(other)
+        original_clean = college.full_clean
+
+        def retarget(*args, **kwargs):
+            original_clean(*args, **kwargs)
+            college.release = other
+
+        seen, patched = self._patched_gets()
+        with patched:
+            with patch.object(college, 'full_clean', retarget):
+                with patch(
+                    'universe.release_guard.models.Model.save',
+                    side_effect=AssertionError('wrote'),
+                ):
+                    with self.assertRaises(ValidationError) as caught:
+                        college.save()
+        self.assertEqual(caught.exception.messages, [OWNERSHIP_MESSAGE])
+        self.assertEqual(seen, [('default', self.release.pk)])
+        self.assertEqual(self._row_values(college), before)
+        self.assertEqual(self._stored_release(self.release), published)
+        self.assertEqual(self._stored_release(other), draft)
+
+        self._mark_published_in_database()
+        college = College.objects.filter(release=self.release).order_by('pk').first()
+        before = self._row_values(college)
+        real = persisted_release_id
+        state = {'calls': 0}
+
+        def flip(instance, using):
+            state['calls'] += 1
+            value = real(instance, using)
+            if state['calls'] == 2:
+                return other.pk
+            return value
+
+        seen, patched = self._patched_gets()
+        with patched:
+            with patch('universe.release_guard.persisted_release_id', flip):
+                with self.assertRaises(ValidationError) as caught:
+                    college.name = 'Changed Under Lock'
+                    college.save()
+        self.assertEqual(caught.exception.messages, [OWNERSHIP_MESSAGE])
+        self.assertEqual(seen, [('default', self.release.pk)])
+        self.assertGreaterEqual(state['calls'], 2)
+        self.assertEqual(self._row_values(college), before)
+        self._assert_lock_context_clear()
+
 
 class ReleaseLockInventoryTests(SimpleTestCase):
+    def _assert_lock_calls_pass_using(self, text, name):
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith('def '):
+                continue
+            for call in ('assert_release_lock_held(', 'holding_release_lock('):
+                if call in stripped:
+                    self.assertIn('using=', stripped, f'{name}: {stripped}')
+
     def test_every_fingerprint_model_locks_the_parent_release(self):
         from universe.fingerprints import _coverage
 
@@ -869,6 +1416,13 @@ class ReleaseLockInventoryTests(SimpleTestCase):
             'release_guard.py',
         ):
             self.assertIn('holding_release_lock', (universe / name).read_text())
+        for name in list(found) + [
+            'publication_service.py',
+            'generation/provisional_names.py',
+            'release_guard.py',
+            'models.py',
+        ]:
+            self._assert_lock_calls_pass_using((universe / name).read_text(), name)
         self.assertIn(
             'holding_release_lock',
             replace_provisional_value.__doc__ + '\n' + Path(

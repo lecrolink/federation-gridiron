@@ -1,10 +1,11 @@
 """Shared franchise history for one universe release.
 
 ``clean()``, ``save()``, and instance ``delete()`` refuse changes to a
-published release. Ordinary saves and deletes lock the parent
-``UniverseRelease`` and read ``status`` from that locked row. Queryset
-updates, bulk operations, and direct SQL bypass them. Sanctioned bulk
-writers hold the same release lock. Constraints on these models cover
+published release. Ordinary saves and deletes lock the release stored for
+that row and read ``status`` from that locked row. An in-memory reassignment
+does not choose the lock or move the row. Queryset updates, bulk operations,
+and direct SQL bypass them. Sanctioned bulk writers hold the same release
+lock. Constraints on these models cover
 single-table structure only. The confirmed 1970–2029 schedule is release
 data, checked when that release is generated and published. This module
 adds no database trigger.
@@ -19,6 +20,7 @@ from universe.release_guard import (
     holding_release_lock,
     locks_parent_release,
     save_release_child,
+    write_alias,
 )
 
 
@@ -28,7 +30,10 @@ ARCHIVE_SEASON_COUNT = 10
 def _previous(instance):
     if not instance.pk:
         return None
-    return type(instance).objects.filter(pk=instance.pk).first()
+    queryset = type(instance).objects
+    if instance._state.db:
+        queryset = queryset.using(instance._state.db)
+    return queryset.filter(pk=instance.pk).first()
 
 
 def _changed_fields(previous, current, field_names):
@@ -152,22 +157,26 @@ class UniverseRelease(models.Model):
 
     @locks_parent_release
     def save(self, *args, **kwargs):
+        alias = write_alias(self, args, kwargs, 2)
+        self._state.db = alias
         if self.pk is None:
             self.full_clean()
             return super().save(*args, **kwargs)
-        with holding_release_lock(self.pk):
+        with holding_release_lock(self.pk, using=alias):
             self.full_clean()
             return super().save(*args, **kwargs)
 
     @locks_parent_release
     def delete(self, *args, **kwargs):
+        alias = write_alias(self, args, kwargs, 0)
         if self.pk is None:
             if self.status == self.Status.PUBLISHED:
                 raise ValidationError('A published release cannot be deleted.')
             return super().delete(*args, **kwargs)
-        with holding_release_lock(self.pk) as locked:
+        with holding_release_lock(self.pk, using=alias) as locked:
             if locked.status == self.Status.PUBLISHED:
                 raise ValidationError('A published release cannot be deleted.')
+            self._state.db = alias
             return super().delete(*args, **kwargs)
 
 

@@ -12,14 +12,18 @@ builder are not modified.
 """
 
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError
+from django.db import DEFAULT_DB_ALIAS, IntegrityError
 
 # universe.models must load before timelines. Importing Timeline first enters
 # universe.people while universe.models is unfinished, and models then imports
 # universe.rules, which needs names people has not defined yet.
 from universe.models import UniverseRelease
 from timelines.models import Timeline
-from universe.release_guard import assert_release_lock_held, holding_release_lock
+from universe.release_guard import (
+    assert_release_lock_held,
+    database_alias,
+    holding_release_lock,
+)
 from universe.generation.founding import (
     FoundingGenerationError,
     _resolve_release_id,
@@ -87,7 +91,7 @@ def generate_player_ratings(league_id, seed):
     except FoundingGenerationError as exc:
         raise PlayerRatingGenerationError(str(exc)) from exc
     try:
-        with holding_release_lock(release_id) as release:
+        with holding_release_lock(release_id, using=DEFAULT_DB_ALIAS) as release:
             metadata = _release_metadata(release)
             _refuse_closed(release)
             _translate_schedule(release)
@@ -392,7 +396,7 @@ def _insert_profiles(rows, release):
                 getattr(row, f'potential_{component}'),
             )
     _validate_profiles(rows)
-    assert_release_lock_held(release.pk)
+    assert_release_lock_held(release.pk, using=database_alias(release))
     try:
         PlayerRatingProfile.objects.bulk_create(rows, batch_size=PLAYER_BATCH_SIZE)
     except IntegrityError as exc:

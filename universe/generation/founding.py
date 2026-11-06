@@ -24,7 +24,7 @@ import hashlib
 import hmac
 
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
-from django.db import IntegrityError
+from django.db import DEFAULT_DB_ALIAS, IntegrityError
 from django.db.models import Q
 from django.db.models.deletion import ProtectedError
 
@@ -38,7 +38,12 @@ from universe.models import (
     UniverseFranchise,
     UniverseRelease,
 )
-from universe.release_guard import assert_release_lock_held, holding_release_lock, parent_release_id
+from universe.release_guard import (
+    assert_release_lock_held,
+    database_alias,
+    holding_release_lock,
+    parent_release_id,
+)
 from universe.people import (
     COACH_TAGS,
     COACH_TRAITS,
@@ -618,7 +623,7 @@ def _refuse_blockers(release, franchises, old_keys):
 
 
 def _delete_slice(release, franchises, old_keys):
-    assert_release_lock_held(release.pk)
+    assert_release_lock_held(release.pk, using=database_alias(release))
     franchise_ids = [franchise.pk for franchise in franchises]
     if old_keys:
         OpeningStaffAssignment.objects.filter(
@@ -642,10 +647,11 @@ def _save_all(rows):
                 f'A generated row failed validation: {exc}'
             ) from exc
     if rows:
-        release_id = parent_release_id(rows[0])
+        alias = database_alias(rows[0])
+        release_id = parent_release_id(rows[0], using=alias)
         if release_id is None:
             raise FoundingGenerationError('A generated row has no parent release.')
-        assert_release_lock_held(release_id)
+        assert_release_lock_held(release_id, using=alias)
         type(rows[0]).objects.bulk_create(rows)
 
 
@@ -799,7 +805,7 @@ def generate_founding_release(league_id, seed):
     _validate_seed(seed)
     release_id = _resolve_release_id(league_id)
     try:
-        with holding_release_lock(release_id) as release:
+        with holding_release_lock(release_id, using=DEFAULT_DB_ALIAS) as release:
             if release.status != UniverseRelease.Status.DRAFT:
                 raise FoundingGenerationError('A published release cannot be changed.')
             _require_horizon(release)

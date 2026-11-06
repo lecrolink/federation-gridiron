@@ -9,6 +9,7 @@ timeline, or unpublish. Ordinary child saves use the same lock.
 
 import re
 
+from django.db import DEFAULT_DB_ALIAS
 from django.utils import timezone
 
 from timelines.models import Timeline
@@ -67,7 +68,7 @@ def publish_universe_release(*, slug, seed, generator_version, league_id):
     """Publish one locked release, or return unchanged for an exact rerun."""
     _require_arguments(slug, seed, generator_version, league_id)
     try:
-        with holding_release_lock(slug=slug) as release:
+        with holding_release_lock(slug=slug, using=DEFAULT_DB_ALIAS) as release:
             _require_identity(release, seed, generator_version, league_id)
             _require_status_pair(release)
             if release.generator_version not in SCHEME_BY_GENERATOR:

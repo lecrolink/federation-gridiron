@@ -7,7 +7,7 @@ These are fictional names. They are not NFL cities or NFL team nicknames.
 
 from universe.generation.founding import hmac_int
 from universe.models import ProvisionalFranchiseName, UniverseFranchise
-from universe.release_guard import holding_release_lock
+from universe.release_guard import database_alias, holding_release_lock
 
 CITIES = (
     'Aldermere',
@@ -222,7 +222,7 @@ def replace_provisional_value(name, field, value):
     if not isinstance(value, str) or value == '':
         raise ProvisionalNameError('A replacement needs a nonempty value.')
     status_field = _status_field(field)
-    with holding_release_lock(name.release_id):
+    with holding_release_lock(name.release_id, using=database_alias(name)):
         name.refresh_from_db()
         if getattr(name, status_field) != ProvisionalFranchiseName.Status.PROVISIONAL:
             raise ProvisionalNameError('A replaced city or nickname is kept.')
