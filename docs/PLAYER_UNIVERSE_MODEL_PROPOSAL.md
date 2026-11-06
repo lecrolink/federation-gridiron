@@ -78,6 +78,7 @@ One publication of the fictional universe.
 - Checks: `founding_franchise_count` is at least 1; `season_count` is at least 1; `last_season_year` is at least `first_season_year`; `first_season_year + season_count - 1 = last_season_year`; `status = published` implies both fingerprints and `published_at` are set.
 - Indexes: `status`.
 - Application guard after `published`: seed, generator version, years, fingerprints, founding count, expansion schedule version, slug, and root league. Mutable while `draft`: the generator may rebuild, including with bulk writes. A schedule change after publish is a new release. The guard is not a database trigger.
+- Publication service: `publish_universe_release` locks the row inside `transaction.atomic()` and publishes one exact release. The read-only evaluator does not write. Fingerprints are computed during publication and stored only when every required gate passes. `status` and `published_at` are written in that same save. Child rows are not modified. There is no unpublish. An exact rerun of a published release returns unchanged and keeps `published_at` and both fingerprints. A mismatch fails closed. Timeline creation still requires `status = published`.
 - Rows: one per release. This product expects one published release until a later release is authorized.
 - Created at release publication.
 
@@ -1095,12 +1096,12 @@ Existing `League`, `Conference`, `Division`, `Team`, and `MovementPath` rows rem
 
 ### 8. Deterministic generation and validation
 
-- Models: none. This phase fills `catalog_fingerprint` and `validation_fingerprint` and refuses `status = published` when a check fails.
+- Models: none. `publish_universe_release` fills `catalog_fingerprint` and `validation_fingerprint` and sets `status = published` only after every required gate passes. The read-only evaluator does not write those fields.
 - Depends on: phases 1–3. It does not need timeline tables to publish a release. Timeline season entry reuses the expansion inequality.
 - Validation: the confirmed first release must contain 26 founding franchises, playable seasons 1970–2029, expansion to 28 franchises in 1976, 30 in 1995, 31 in 1999, and 32 in 2002, the accepted conference and division alignment, and 1,797 franchise-season memberships with `owner_selectable` true on every active row. No bot-only franchise-season is scheduled. Expansion franchises in that release enter in 1976, 1995, 1999, or 2002. The same gate checks the franchise fingerprint, quota sums, staff signatures, expansion arithmetic with taxi excluded, prospect counts, the undrafted multiplier of 2 in every year, and the rule that no origin pick is baked onto a 1970–2029 prospect. HMAC construction for person keys uses the release seed and a named key. It does not use `random.Random`. Phase 1 does not implement this validator. The schema stays usable for a corrected or extended release without a migration that only changes the horizon. `fg-founding-1` remains the 24-club generator and does not satisfy this gate.
-- Rows: updates the one release row's fingerprint columns when a generator eventually runs. This document does not run it.
+- Rows: the publication service updates the one release row's fingerprints, `status`, and `published_at`. It does not modify child rows. This document does not run it.
 - League data: untouched.
-- Rollback: set the release back to `draft` and clear the fingerprints. No table is dropped.
+- Rollback: publication is irreversible. The service does not return a release to `draft` or clear fingerprints. There is no unpublish path. No table is dropped.
 
 ### 9. Administrative inspection tools
 
@@ -1113,10 +1114,10 @@ Existing `League`, `Conference`, `Division`, `Team`, and `MovementPath` rows rem
 
 ### 10. Release generation
 
-- Models: none. A management command, not written here, would build one `draft` release, write the shared rows, run phase 8, and publish.
+- Models: none. The generators build one `draft` release and write the shared rows. `publish_universe_release` is the separate command that runs phase 8. It does not generate rows.
 - Depends on: phases 1–3 and 8. Timeline phases are not required to publish.
 - Validation: the same publication gate. A failed gate leaves the release in `draft` and does not create timeline rows.
-- Rows: the shared counts in phases 1–3, only when that command is later run on purpose.
+- Rows: the shared counts in phases 1–3 are written by the generators while the release is draft. Publication does not create them.
 - League data: untouched. The command must not call the 32-team upsert as a substitute for the 24, 28, and 32 season memberships.
 - Rollback: if no timeline pins the release, delete shared children from the leaves inward and then delete the release. Sibling `PROTECT` links mean this is an ordered delete, not one `release.delete()` call. A published release pinned by a timeline cannot be deleted.
 
@@ -1155,4 +1156,4 @@ No open decision changes the columns of those five models. Permanent names and c
 - Stores the 33 components as explicit columns on `PlayerRatingProfile` and `PlayerCurrentRating`.
 - Uses the expansion arithmetic from the design: 16 + 17 + 7 = 40 in 1976, and 26 + 7 + 20 = 53 in 1995, 1999, and 2002. The undrafted multiplier is 2 in every year. Taxi capacity is optional. Timeline free agents are not part of the publication check. Veteran selections are not taken from the undrafted pool.
 - Uses stable draw coordinates. `GameKickoffState` plus `SimulationAuditRecord` are the MVP replay records. A draw can be recomputed from the coordinates. A snap outcome cannot, unless that kickoff state or a checkpoint is available.
-- Phase 1 stores `origin` and `owner_selectable`. Publication of the confirmed 1970–2029 release, including its 26, 28, 30, 31, and 32 franchise schedule and 1,797 memberships, waits for phase 8.
+- Phase 1 stores `origin` and `owner_selectable`. Publication of the confirmed 1970–2029 release, including its 26, 28, 30, 31, and 32 franchise schedule and 1,797 memberships, is the atomic `publish_universe_release` service. A release stays `draft` until that command succeeds.

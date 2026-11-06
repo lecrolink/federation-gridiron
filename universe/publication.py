@@ -11,7 +11,9 @@ unsupported generator version fails closed. Informational notes are
 reported apart from those gates and are not treated as passed requirements.
 
 This module does not save a digest, change status or published_at, create
-a timeline, or modify release children.
+a timeline, or modify release children. ``candidate_fingerprints`` compares
+those candidates with a fresh computation. It does not write them onto the
+release. The publishing service is separate and is the only writer.
 """
 
 from typing import NamedTuple
@@ -850,8 +852,23 @@ def _report(
     )
 
 
-def evaluate_release_publication(release):
-    """Report every required publication gate. Do not save the release or its children."""
+def evaluate_release_publication(release, *, candidate_fingerprints=None):
+    """Report every required publication gate. Do not save the release or its children.
+
+    The default compares the fingerprints stored on ``release``. Pass
+    ``candidate_fingerprints=(catalog, validation)`` to compare those
+    candidates with a fresh computation instead. Either path leaves the
+    release and its children unchanged.
+    """
+    if candidate_fingerprints is not None:
+        if (
+            not isinstance(candidate_fingerprints, tuple)
+            or len(candidate_fingerprints) != 2
+        ):
+            raise TypeError(
+                'candidate_fingerprints must be a tuple of the catalog and '
+                'validation digests.'
+            )
     cap_blockers = tuple(
         profile.profile_key
         for profile in release.era_profiles.order_by('first_year', 'profile_key')
@@ -905,15 +922,24 @@ def evaluate_release_publication(release):
             messages=messages,
             gates=gates,
         )
-    catalog_match = release.catalog_fingerprint == catalog_digest
-    validation_match = release.validation_fingerprint == validation_digest
+    if candidate_fingerprints is None:
+        compared_catalog = release.catalog_fingerprint
+        compared_validation = release.validation_fingerprint
+        compared_label = 'stored'
+    else:
+        compared_catalog, compared_validation = candidate_fingerprints
+        compared_label = 'candidate'
+    catalog_match = compared_catalog == catalog_digest
+    validation_match = compared_validation == validation_digest
     messages.append(
         f'catalog-sha256-v1 {catalog_digest} '
-        f'{"matches" if catalog_match else "does not match"} the stored catalog fingerprint.'
+        f'{"matches" if catalog_match else "does not match"} '
+        f'the {compared_label} catalog fingerprint.'
     )
     messages.append(
         f'validation-sha256-v1 {validation_digest} '
-        f'{"matches" if validation_match else "does not match"} the stored validation fingerprint.'
+        f'{"matches" if validation_match else "does not match"} '
+        f'the {compared_label} validation fingerprint.'
     )
     for field in placeholders:
         messages.append(
