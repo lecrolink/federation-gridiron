@@ -3,12 +3,12 @@
 Cap-on profiles and the two v1 fingerprints are separate checks. The
 confirmed fg-founding-2 release also has to match the documented horizon,
 membership alignment, expansion rows, quota sums, population totals,
-staff-signature uniqueness, and zero franchise-history events.
+staff-signature uniqueness, zero franchise-history events, the two-chart
+opening depth rule, and the deterministic 1970 opening draft order.
 
-``publishable`` is true only when every required gate is implemented and
-passes. The 1969 draft-order rule and opening depth uniqueness are required
-and unresolved, so they fail closed. Informational notes are reported apart
-from those gates and are not treated as passed requirements.
+``publishable`` is true only when every required gate passes. An
+unsupported generator version fails closed. Informational notes are
+reported apart from those gates and are not treated as passed requirements.
 
 This module does not save a digest, change status or published_at, create
 a timeline, or modify release children.
@@ -26,6 +26,11 @@ from universe.fingerprints import (
     release_digests,
 )
 from universe.generation import schedule as confirmed_schedule
+from universe.generation.opening_draft_order import (
+    FOUNDING_SLUGS as OPENING_DRAFT_SLUGS,
+    opening_draft_digest,
+    opening_draft_order,
+)
 from universe.generation.player_counts import (
     FIRST_SEASON_YEAR,
     LAST_SEASON_YEAR,
@@ -66,6 +71,8 @@ CONFIRMED_GENERATOR = confirmed_schedule.GENERATOR_VERSION
 FOUNDING_SLUGS = tuple(
     f'founding-{number:02d}' for number in range(1, confirmed_schedule.FOUNDING_FRANCHISE_COUNT + 1)
 )
+if FOUNDING_SLUGS != OPENING_DRAFT_SLUGS:
+    raise RuntimeError('The opening draft clubs and the publication clubs differ.')
 ROLE_GM = 'gm'
 ROLE_HEAD_COACH = 'head_coach'
 EXPANSION_NUMERIC_FIELDS = tuple(
@@ -113,19 +120,9 @@ INFORMATIONAL_REQUIREMENTS = (
     'staff_career_posts: the enforced signature is strengths, weakness, and traits; post rows are not a separate documented key',
 )
 
-DRAFT_ORDER_REASON = (
-    'The 1970 draft order depends on 1969 HistoricalStanding rows. '
-    'Wins, losses, ties, the archive schedule length, and the ordering rule '
-    'are not approved. Zero rows do not pass. 260 empty or arbitrary rows '
-    'do not pass either. This gate cannot pass until that record and '
-    'ordering rule is approved and implemented.'
-)
-OPENING_DEPTH_REASON = (
-    'Opening depth uniqueness is unresolved. The documented rule is one '
-    '(franchise, position, depth) value across starter, backup, and taxi. '
-    'The approved opening writer restarts taxi depth at 1. This gate cannot '
-    'pass until that conflict is resolved.'
-)
+ACTIVE_DEPTH_ROLES = frozenset(('starter', 'backup'))
+TAXI_DEPTH_ROLE = 'taxi'
+FREE_AGENT_ROLE = 'free_agent'
 
 
 class PublicationEvaluation(NamedTuple):
@@ -133,9 +130,8 @@ class PublicationEvaluation(NamedTuple):
 
     ``cap_and_fingerprint_checks_pass`` covers only cap-on profiles and the
     two stored v1 fingerprints. ``publishable`` is true only when that pair
-    and every required gate pass. Unresolved required gates and an
-    unsupported generator version fail closed. ``informational_requirements``
-    are not publication results.
+    and every required gate pass. An unsupported generator version fails
+    closed. ``informational_requirements`` are not publication results.
     """
 
     cap_blockers: tuple
@@ -634,16 +630,112 @@ def _history_events_gate(release):
     return ('pass', ())
 
 
-def _draft_order_gate(release):
-    count = HistoricalStanding.objects.filter(franchise__release=release).count()
-    return (
-        'unresolved',
-        (f'The release has {count} historical standings. {DRAFT_ORDER_REASON}',),
+def _opening_depth_from_rows(rows):
+    """Apply the approved two-chart rule to assignment rows.
+
+    ``rows`` use the keys ``role``, ``depth``, ``franchise_id``, and
+    ``player__position``. Starter and backup share the active chart. Taxi
+    has its own chart. Free agents stay outside both charts.
+    """
+    failures = []
+    seen = set()
+    for row in rows:
+        role = row['role']
+        if role == FREE_AGENT_ROLE:
+            if row['franchise_id'] is not None or row['depth'] is not None:
+                failures.append('A free agent has a franchise or depth.')
+            continue
+        if role in ACTIVE_DEPTH_ROLES:
+            bucket = 'active'
+        elif role == TAXI_DEPTH_ROLE:
+            bucket = 'taxi'
+        else:
+            failures.append(f'Opening role {role} has no depth bucket.')
+            continue
+        position = row['player__position']
+        depth = row['depth']
+        franchise_id = row['franchise_id']
+        if franchise_id is None:
+            failures.append('A rostered opening assignment is missing a franchise.')
+            continue
+        if depth is None:
+            failures.append('A rostered opening assignment has no depth.')
+            continue
+        if depth < 1:
+            failures.append('A rostered opening assignment depth is below 1.')
+            continue
+        if position not in POSITIONS:
+            failures.append('A rostered opening assignment has an invalid position.')
+            continue
+        key = (franchise_id, position, bucket, depth)
+        if key in seen:
+            failures.append(
+                f'{bucket.capitalize()} depth {depth} for {position} is duplicated.'
+            )
+        else:
+            seen.add(key)
+    return ('fail' if failures else 'pass', tuple(failures))
+
+
+def _opening_depth_gate(release):
+    rows = release.opening_assignments.values(
+        'role',
+        'depth',
+        'franchise_id',
+        'player__position',
     )
+    return _opening_depth_from_rows(rows)
 
 
-def _opening_depth_gate(_release):
-    return ('unresolved', (OPENING_DEPTH_REASON,))
+def _draft_order_gate(release):
+    failures = []
+    count = HistoricalStanding.objects.filter(franchise__release=release).count()
+    if count != 0:
+        failures.append(f'Historical standings are {count}, not zero.')
+    founding = list(
+        release.franchises.filter(
+            origin=UniverseFranchise.Origin.FOUNDING,
+        ).values_list('placeholder_slug', flat=True)
+    )
+    if len(founding) != len(FOUNDING_SLUGS) or set(founding) != set(FOUNDING_SLUGS):
+        failures.append(
+            'Founding franchise slugs are not founding-01 through founding-26.'
+        )
+    try:
+        order = opening_draft_order(release.seed, release.slug)
+    except ValueError as exc:
+        failures.append(str(exc))
+        order = ()
+    slugs = tuple(pick.franchise_slug for pick in order)
+    if len(slugs) != len(FOUNDING_SLUGS) or set(slugs) != set(FOUNDING_SLUGS):
+        failures.append(
+            'The opening draft order does not return each founding slug once.'
+        )
+    else:
+        previous = None
+        for pick in order:
+            digest = opening_draft_digest(
+                release.seed,
+                release.slug,
+                pick.franchise_slug,
+            )
+            if digest.hex() != pick.digest_hex or len(digest) != 32:
+                failures.append(
+                    'The stored release seed and slug do not reproduce '
+                    'the opening draft order.'
+                )
+                break
+            if previous is not None and (
+                previous[0] > digest
+                or (previous[0] == digest and previous[1] > pick.franchise_slug)
+            ):
+                failures.append(
+                    'The stored release seed and slug do not reproduce '
+                    'the opening draft order.'
+                )
+                break
+            previous = (digest, pick.franchise_slug)
+    return ('fail' if failures else 'pass', tuple(failures))
 
 
 def _structural_gates(release):

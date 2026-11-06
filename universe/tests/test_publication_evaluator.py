@@ -8,15 +8,21 @@ from django.test import SimpleTestCase, TestCase
 from universe.fingerprints import release_digests
 from universe.generation.opening_players import y1970_values
 from universe.generation.prospects import later_profile_values
-from universe.models import FranchiseHistoryEvent, UniverseFranchise, UniverseRelease
-from universe.people import UniverseGM, UniverseStaffIdentity
+from universe.models import (
+    FranchiseHistoryEvent,
+    HistoricalStanding,
+    UniverseFranchise,
+    UniverseRelease,
+)
+from universe.people import College, UniverseGM, UniversePlayer, UniverseStaffIdentity
 from timelines.models import Timeline
 from universe.publication import (
     INFORMATIONAL_REQUIREMENTS,
     SMOKE_FINGERPRINT_PLACEHOLDERS,
+    _opening_depth_from_rows,
     evaluate_release_publication,
 )
-from universe.rules import EraRuleProfile
+from universe.rules import EraRuleProfile, OpeningAssignment
 from leagues.models import League
 
 
@@ -168,10 +174,10 @@ class PublicationEvaluatorTests(TestCase):
         )
         self.assertFalse(report.cap_and_fingerprint_checks_pass)
         self.assertFalse(report.publishable)
-        self.assertEqual(report.required_unresolved, ('draft_order', 'opening_depth'))
+        self.assertEqual(report.required_unresolved, ())
         self.assertEqual(report.informational_requirements, INFORMATIONAL_REQUIREMENTS)
-        self.assertEqual(report.draft_order_status, 'unresolved')
-        self.assertEqual(report.opening_depth_status, 'unresolved')
+        self.assertEqual(report.draft_order_status, 'fail')
+        self.assertEqual(report.opening_depth_status, 'pass')
         self.assertEqual(report.history_events_status, 'pass')
         text = '\n'.join(report.messages)
         self.assertIn('unverified placeholder', text)
@@ -371,9 +377,9 @@ class PublicationEvaluatorTests(TestCase):
         self.assertEqual(report.membership_status, 'fail')
         self.assertEqual(report.population_status, 'fail')
         self.assertEqual(report.history_events_status, 'pass')
-        self.assertEqual(report.draft_order_status, 'unresolved')
-        self.assertEqual(report.opening_depth_status, 'unresolved')
-        self.assertEqual(report.required_unresolved, ('draft_order', 'opening_depth'))
+        self.assertEqual(report.draft_order_status, 'fail')
+        self.assertEqual(report.opening_depth_status, 'pass')
+        self.assertEqual(report.required_unresolved, ())
         self.assertFalse(any('passes.' in item for item in report.informational_requirements))
         self.assertFalse(report.publishable)
         self.assertIn('The release is not publishable.', report.messages)
@@ -483,8 +489,8 @@ class PublicationEvaluatorTests(TestCase):
             report.history_events_failures,
             ('Franchise history events are 1, not zero.',),
         )
-        self.assertEqual(report.draft_order_status, 'unresolved')
-        self.assertEqual(report.opening_depth_status, 'unresolved')
+        self.assertEqual(report.draft_order_status, 'fail')
+        self.assertEqual(report.opening_depth_status, 'pass')
         self.assertFalse(report.publishable)
         self.assertFalse(any(
             sql.lstrip().split(None, 1)[0].upper() in ('INSERT', 'UPDATE', 'DELETE', 'REPLACE')
@@ -494,3 +500,171 @@ class PublicationEvaluatorTests(TestCase):
         self.assertEqual(release.status, UniverseRelease.Status.DRAFT)
         self.assertIsNone(release.published_at)
         self.assertEqual(FranchiseHistoryEvent.objects.filter(franchise=franchise).count(), 1)
+
+    def test_active_depth_one_and_taxi_depth_one_are_legal(self):
+        release, profile, college, franchise = _depth_world('depth-legal')
+        _assignment(release, profile, college, franchise, 'depth-legal-starter', 'starter', 1)
+        _assignment(release, profile, college, franchise, 'depth-legal-taxi', 'taxi', 1)
+        before = _assignment_rows(release)
+        report = _read_only_report(self, release)
+        self.assertEqual(report.opening_depth_status, 'pass')
+        self.assertEqual(report.opening_depth_failures, ())
+        self.assertEqual(_assignment_rows(release), before)
+
+    def test_a_duplicate_within_the_active_bucket_fails(self):
+        release, profile, college, franchise = _depth_world('depth-active')
+        _assignment(release, profile, college, franchise, 'depth-active-starter', 'starter', 2)
+        _assignment(release, profile, college, franchise, 'depth-active-backup', 'backup', 2)
+        report = _read_only_report(self, release)
+        self.assertEqual(report.opening_depth_status, 'fail')
+        self.assertIn(
+            'Active depth 2 for QB is duplicated.',
+            report.opening_depth_failures,
+        )
+
+    def test_a_duplicate_within_the_taxi_bucket_fails(self):
+        release, profile, college, franchise = _depth_world('depth-taxi')
+        _assignment(release, profile, college, franchise, 'depth-taxi-a', 'taxi', 1)
+        _assignment(release, profile, college, franchise, 'depth-taxi-b', 'taxi', 1)
+        report = _read_only_report(self, release)
+        self.assertEqual(report.opening_depth_status, 'fail')
+        self.assertIn(
+            'Taxi depth 1 for QB is duplicated.',
+            report.opening_depth_failures,
+        )
+
+    def test_invalid_rostered_and_free_agent_rows_fail(self):
+        legal = (
+            {'role': 'starter', 'depth': 1, 'franchise_id': 1, 'player__position': 'QB'},
+            {'role': 'taxi', 'depth': 1, 'franchise_id': 1, 'player__position': 'QB'},
+            {'role': 'free_agent', 'depth': None, 'franchise_id': None, 'player__position': 'QB'},
+        )
+        self.assertEqual(_opening_depth_from_rows(legal), ('pass', ()))
+        cases = (
+            {'role': 'starter', 'depth': 1, 'franchise_id': None, 'player__position': 'QB'},
+            {'role': 'starter', 'depth': None, 'franchise_id': 1, 'player__position': 'QB'},
+            {'role': 'backup', 'depth': 0, 'franchise_id': 1, 'player__position': 'QB'},
+            {'role': 'taxi', 'depth': 1, 'franchise_id': 1, 'player__position': 'XX'},
+            {'role': 'free_agent', 'depth': 1, 'franchise_id': None, 'player__position': 'QB'},
+            {'role': 'free_agent', 'depth': None, 'franchise_id': 1, 'player__position': 'QB'},
+        )
+        for row in cases:
+            status, failures = _opening_depth_from_rows((row,))
+            self.assertEqual(status, 'fail', row)
+            self.assertTrue(failures, row)
+
+    def test_zero_standings_and_the_founding_slugs_pass_draft_order(self):
+        release = _founding_release('fg-draft-pass')
+        before = _snapshot(release)
+        report = _read_only_report(self, release)
+        self.assertEqual(report.draft_order_status, 'pass')
+        self.assertEqual(report.draft_order_failures, ())
+        self.assertEqual(HistoricalStanding.objects.filter(franchise__release=release).count(), 0)
+        self.assertEqual(_snapshot(release), before)
+        self.assertEqual(Timeline.objects.count(), 0)
+
+    def test_a_historical_standing_fails_the_draft_order_gate(self):
+        release = _founding_release('fg-draft-standing')
+        franchise = release.franchises.get(placeholder_slug='founding-01')
+        HistoricalStanding.objects.create(
+            franchise=franchise,
+            season_year=1969,
+            wins=0,
+            losses=0,
+            ties=0,
+        )
+        before = _snapshot(release)
+        report = _read_only_report(self, release)
+        self.assertEqual(report.draft_order_status, 'fail')
+        self.assertEqual(
+            report.draft_order_failures,
+            ('Historical standings are 1, not zero.',),
+        )
+        self.assertFalse(report.publishable)
+        self.assertEqual(HistoricalStanding.objects.filter(franchise__release=release).count(), 1)
+        self.assertEqual(_snapshot(release), before)
+        self.assertEqual(release.status, UniverseRelease.Status.DRAFT)
+        self.assertIsNone(release.published_at)
+
+
+def _depth_world(slug):
+    league = League.objects.create(name=slug, slug=slug, tier=1, active=True)
+    release = _release(league, slug, '', '')
+    profile = EraRuleProfile(release=release, **y1970_values())
+    profile.save()
+    college = College.objects.create(release=release, slug='test-college', name='Test College')
+    franchise = UniverseFranchise.objects.create(
+        release=release,
+        placeholder_slug='founding-01',
+        display_name='Founding franchise 01',
+        origin=UniverseFranchise.Origin.FOUNDING,
+        first_active_season=1970,
+    )
+    return release, profile, college, franchise
+
+
+def _assignment(release, profile, college, franchise, key, role, depth):
+    player = UniversePlayer.objects.create(
+        release=release,
+        college=college,
+        origin_profile=profile,
+        universe_key=key,
+        name=key,
+        birth_year=1945,
+        birth_day=10,
+        position='QB',
+        handedness=UniversePlayer.Handedness.RIGHT,
+        height_in=72,
+        weight_lb=210,
+        cohort=UniversePlayer.Cohort.OPENING,
+        first_pro_year=1969,
+        peak_age=28,
+        development_rate=40,
+        decline_rate=30,
+    )
+    return OpeningAssignment.objects.create(
+        release=release,
+        player=player,
+        franchise=franchise,
+        role=role,
+        depth=depth,
+    )
+
+
+def _assignment_rows(release):
+    return list(release.opening_assignments.order_by('id').values_list(
+        'id', 'player_id', 'franchise_id', 'role', 'depth',
+    ))
+
+
+def _founding_release(slug):
+    league = League.objects.create(name=slug, slug=slug, tier=1, active=True)
+    release = _release(league, slug, '', '')
+    for number in range(1, 27):
+        UniverseFranchise.objects.create(
+            release=release,
+            placeholder_slug=f'founding-{number:02d}',
+            display_name=f'Founding franchise {number:02d}',
+            origin=UniverseFranchise.Origin.FOUNDING,
+            first_active_season=1970,
+        )
+    return release
+
+
+def _read_only_report(test, release):
+    statements = []
+
+    def wrap(execute, sql, params, many, context):
+        statements.append(sql)
+        return execute(sql, params, many, context)
+
+    connection.execute_wrappers.append(wrap)
+    try:
+        report = evaluate_release_publication(release)
+    finally:
+        connection.execute_wrappers.remove(wrap)
+    test.assertFalse(any(
+        sql.lstrip().split(None, 1)[0].upper() in ('INSERT', 'UPDATE', 'DELETE', 'REPLACE')
+        for sql in statements
+    ))
+    return report
