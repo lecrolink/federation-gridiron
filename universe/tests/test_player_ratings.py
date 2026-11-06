@@ -6,16 +6,13 @@ No database. The builder does not create rows or open a connection.
 import socket
 from collections import Counter
 from pathlib import Path
+from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
-from universe.generation.player_identities import (
-    build_player_universe,
-    hmac_int,
-)
+import universe.generation.player_ratings as player_ratings
+from universe.generation.player_identities import build_player_universe
 from universe.generation.player_ratings import (
-    ATHLETIC_COMPONENTS,
-    COGNITIVE_COMPONENTS,
     COMPONENT_PAIR_COUNT,
     COHORTS,
     FAMILIES,
@@ -28,7 +25,6 @@ from universe.generation.player_ratings import (
     FAMILY_UNIVERSAL,
     MAXIMUM_POTENTIAL,
     MINIMUM_RATING,
-    PERSONALITY_COMPONENTS,
     PLAYABLE_RATING_COUNT,
     POSITION_FAMILIES,
     PRIMARY_RANGES,
@@ -44,6 +40,29 @@ from universe.generation.player_ratings import (
     rate_player,
 )
 from universe.people import PLAYER_COMPONENTS
+
+# Approved family membership. These names are independent of the builder sets.
+APPROVED_UNIVERSAL = frozenset((
+    'speed',
+    'acceleration',
+    'agility',
+    'strength',
+    'stamina',
+    'durability',
+))
+APPROVED_COGNITIVE = frozenset((
+    'awareness',
+    'discipline',
+    'processing',
+))
+APPROVED_PERSONALITY = frozenset((
+    'work_ethic',
+    'leadership',
+    'temperament',
+    'adaptability',
+    'clutch',
+    'consistency',
+))
 
 SEED = 1970
 OTHER_SEED = 1971
@@ -371,14 +390,15 @@ class RatingMapTests(SimpleTestCase):
         self.assertEqual(assigned, 627)
 
     def test_restricted_families_hold_only_their_components(self):
+        allowed = {
+            FAMILY_UNIVERSAL: APPROVED_UNIVERSAL,
+            FAMILY_COGNITIVE: APPROVED_COGNITIVE,
+            FAMILY_PERSONALITY: APPROVED_PERSONALITY,
+        }
         for position, families in POSITION_FAMILIES.items():
             for component, family in families.items():
-                if family == FAMILY_UNIVERSAL:
-                    self.assertIn(component, ATHLETIC_COMPONENTS)
-                if family == FAMILY_COGNITIVE:
-                    self.assertIn(component, COGNITIVE_COMPONENTS)
-                if family == FAMILY_PERSONALITY:
-                    self.assertIn(component, PERSONALITY_COMPONENTS)
+                if family in allowed:
+                    self.assertIn(component, allowed[family])
 
     def test_position_distinctions_are_locked(self):
         family = POSITION_FAMILIES
@@ -505,9 +525,11 @@ class RatingMapTests(SimpleTestCase):
             family_bounds('primary', 'archive')
 
     def test_module_has_no_database_or_rate_inputs(self):
-        source = Path(
-            '/workspace/universe/generation/player_ratings.py',
-        ).read_text(encoding='utf-8')
+        source_path = Path(player_ratings.__file__).resolve()
+        if source_path.suffix == '.pyc':
+            source_path = source_path.with_suffix('.py')
+        self.assertEqual(source_path.name, 'player_ratings.py')
+        source = source_path.read_text(encoding='utf-8')
         lowered = source.lower()
         self.assertNotIn('django', lowered)
         self.assertNotIn('development_rate', lowered)
@@ -691,14 +713,40 @@ class PlayableRatingTests(SimpleTestCase):
             self.assertEqual(_pairs(rating), expected)
         micah = found['Micah Lamont']
         rating = self.by_key[micah.universe_key]
-        work = rating.components[RATING_COMPONENTS.index('work_ethic')]
-        self.assertEqual(work.initial, work.potential)
-        self.assertEqual(
-            hmac_int(SEED, f'{micah.universe_key}:initial_work_ethic') % 1,
-            0,
-        )
         self.assertEqual(rating.peak_age, 31)
         self.assertEqual(micah.age, 24)
+        self.assertEqual(
+            POSITION_FAMILIES['QB']['work_ethic'],
+            FAMILY_PERSONALITY,
+        )
+        self.assertEqual(max(0, 24 - micah.age), 0)
+        message = f'{micah.universe_key}:initial_work_ethic'
+        calls = []
+        original = player_ratings.hmac_int
+
+        def spy(seed, coordinate):
+            calls.append((seed, coordinate))
+            return original(seed, coordinate)
+
+        with patch.object(player_ratings, 'hmac_int', spy):
+            rerated = rate_player(
+                SEED,
+                micah.universe_key,
+                micah.position,
+                micah.slot_kind,
+                micah.age,
+                rating.peak_age,
+            )
+        self.assertEqual(
+            [item for item in calls if item[1] == message],
+            [(SEED, message)],
+        )
+        work = rerated.components[RATING_COMPONENTS.index('work_ethic')]
+        self.assertEqual(
+            (work.component, work.initial, work.potential),
+            ('work_ethic', 39, 39),
+        )
+        self.assertEqual(work.initial, work.potential)
 
     def test_same_inputs_are_byte_for_byte_deterministic(self):
         again = build_playable_ratings(SEED, RELEASE_SLUG)
