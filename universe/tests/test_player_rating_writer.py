@@ -11,6 +11,9 @@ from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
 from leagues.models import League
+# Load universe.models before Timeline. The reverse order imports people
+# while models is unfinished and cycles through universe.rules.
+from universe.models import UniverseRelease
 from timelines.models import DevelopmentEvent, Timeline
 from universe.generation.opening_players import generate_opening_players
 from universe.generation.player_rating_profiles import (
@@ -21,7 +24,6 @@ from universe.generation.player_rating_profiles import (
 from universe.generation.player_ratings import build_playable_ratings
 from universe.generation.prospects import generate_prospects
 from universe.generation.schedule import generate_schedule_release
-from universe.models import UniverseRelease
 from universe.people import (
     PLAYER_COMPONENTS,
     College,

@@ -14,6 +14,10 @@ builder are not modified.
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 
+# universe.models must load before timelines. Importing Timeline first enters
+# universe.people while universe.models is unfinished, and models then imports
+# universe.rules, which needs names people has not defined yet.
+from universe.models import UniverseRelease
 from timelines.models import Timeline
 from universe.generation.founding import (
     FoundingGenerationError,
@@ -42,7 +46,6 @@ from universe.generation.prospects import (
     _prospect_state,
     _require_schedule,
 )
-from universe.models import UniverseRelease
 from universe.people import PLAYER_COMPONENTS, PlayerRatingProfile, UniversePlayer
 
 
