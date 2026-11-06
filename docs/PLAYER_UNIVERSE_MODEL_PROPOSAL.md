@@ -227,7 +227,7 @@ Shared table available for a pre-playable record book. Not a timeline standing, 
 - Foreign keys: `franchise` `CASCADE`.
 - Fields: `season_year`; `wins`, `losses`, `ties` `PositiveSmallIntegerField`; `draft_order` `PositiveSmallIntegerField`, null on every `fg-founding-2` row because that release does not store a 1970 order here.
 - Unique: `(franchise, season_year)`.
-- Checks: wins, losses, and ties are nonnegative. A database check requires `draft_order` to be null or at least 1. Model validation places the year in the ten seasons immediately before the release's first playable season, allows `draft_order` only in the last of those seasons, and limits the rows to founding franchises. For the confirmed 1970 release that window is 1960–1969, and draft order is allowed only in 1969. Phase 1 does not check that wins + losses + ties equal a schedule length, because the approved design does not fix the 1960–1969 game count. That equality can be added when a length is approved, without a new table.
+- Checks: wins, losses, and ties are nonnegative. A database check requires `draft_order` to be null or at least 1. Model validation places the year in the ten seasons immediately before the release's first playable season, allows `draft_order` only in the last of those seasons, and limits the rows to founding franchises. Those checks describe a future record book. `fg-founding-2` stores no `HistoricalStanding` rows, and its 1970 order is derived from the release seed, release slug, and founding slugs. It is not stored in `draft_order`. Phase 1 does not check that wins + losses + ties equal a schedule length, because the approved design does not fix a pre-1970 game count. That equality can be added when a length is approved, without a new table.
 - Indexes: `(season_year, draft_order)`.
 - Application guard after publish. Not a database trigger.
 - Rows: zero for `fg-founding-2`. The old 260-row phase-1 fill is not a publication requirement. `fg-founding-1` does not write these rows either. The 1970 order is the deterministic neutral order from the release seed, the release slug, and `founding-01` through `founding-26`, repeated for all 17 rounds. Later drafts use that timeline's standings.
@@ -1033,7 +1033,7 @@ Existing `League`, `Conference`, `Division`, `Team`, and `MovementPath` rows rem
 - Depends on: `leagues.League` existing. `catalog_team` stays null.
 - Validation in this phase: generic structure only. A founding franchise begins in its release's first season, an expansion franchise begins later, membership and history years stay inside the franchise and the release, and historical years are the ten seasons before the release starts. The confirmed schedule is not a database check.
 - Confirmed release, checked at publication in phase 8 and not by this migration: 26 founding franchises; playable seasons 1970–2029; expansion to 28 franchises in 1976, 30 in 1995, 31 in 1999, and 32 in 2002; the accepted conference and division alignment; 1,797 franchise-season memberships; `owner_selectable` true on every one of those active memberships; no bot-only franchise-season; no history events. `fg-founding-1` is not this generator.
-- Rows: 1 release, 32 franchises, 1,797 memberships, 0 history events, 260 historical standings.
+- Rows: 1 release, 32 franchises, 1,797 memberships, 0 history events, 0 historical standings for `fg-founding-2`.
 - League data: untouched.
 - Rollback: drop these tables. The catalog is unchanged.
 

@@ -563,9 +563,9 @@ A timeline creates overlay rows for the initial 200 at `start_timeline`, because
 
 Initial staff draw schemes that exist in 1970: `power_run`, `option`, `pro_style` on offense, and `stop_run` or `balanced` on defense. A coach who debuts in a later class may draw that era's schemes (`west_coast` from 1987, `air_raid` from the spread era).
 
-### Shared 1969 standings
+### 1970 opening draft order
 
-`fg-founding-2` has no shared 1960–1969 `HistoricalStanding` rows. It does not invent a 1969 record, and it does not fill 260 standing rows. The 1970 opening draft uses the deterministic neutral order above, repeated for all 17 rounds. Later draft orders come from that timeline's own standings. Expansion clubs follow the rookie-draft slot rule on their expansion event; that rule changes order only, not the shared class.
+`fg-founding-2` has no shared pre-1970 standings and no `HistoricalStanding` rows. The 1970 order is the approved deterministic neutral order: HMAC-SHA256 of the UTF-8 decimal release seed and `opening-draft-order:{release_slug}:{franchise_slug}`, sorted by the full digest and then the franchise slug. That same 26-club sequence is used in every round. Later draft orders come from each timeline's actual standings. Expansion clubs follow the rookie-draft slot rule on their expansion event; that rule changes order only, not the shared class.
 
 ---
 
@@ -988,10 +988,10 @@ Injury susceptibility is `durability`, not a second tag. Scheme fit is not store
 
 | Field | Layer | Type | Range / units | Origin | Use |
 |-------|-------|------|---------------|--------|-----|
-| `team` | Shared | FK, null for free agents | one of 26, or null | Generator | Both |
-| `role` | Shared | enum | `starter` `backup` `taxi` `free_agent` | Generator | Both |
-| `depth` | Shared | smallint | ≥ 1 on a team; null if free agent | Generator | Both |
-| `position` | Shared | enum | same as the player | Generator | Both |
+| `franchise` | Shared | FK on `OpeningAssignment`, null for free agents | one of 26, or null | Generator | Both |
+| `role` | Shared | enum on `OpeningAssignment` | `starter` `backup` `taxi` `free_agent` | Generator | Both |
+| `depth` | Shared | smallint on `OpeningAssignment` | ≥ 1 on a team; null if free agent | Generator | Both |
+| `position` | Shared | enum on `UniversePlayer` | the player's primary position; not a column on `OpeningAssignment` | Generator | Both |
 | `years` | Shared template | smallint | 1–5 remaining entering 1970 | Generator | Both |
 | `salary_per_year` | Shared template | int | ledger units. The scale is unset until approved. | Generator | Display before 1995; Both from the cap era on the timeline copy |
 | `guaranteed` | Shared template | int | ledger units, 0–salary × years | Generator | Display before 1995; Both once the cap exists, on the timeline copy |
