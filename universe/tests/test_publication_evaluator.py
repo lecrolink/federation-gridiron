@@ -5,11 +5,14 @@ from django.core.exceptions import ValidationError
 from django.db import connection
 from django.test import SimpleTestCase, TestCase
 
+from universe.fingerprints import release_digests
 from universe.generation.opening_players import y1970_values
 from universe.generation.prospects import later_profile_values
 from universe.models import UniverseRelease
+from universe.people import UniverseGM, UniverseStaffIdentity
 from timelines.models import Timeline
 from universe.publication import (
+    AMBIGUOUS_REQUIREMENTS,
     SMOKE_FINGERPRINT_PLACEHOLDERS,
     evaluate_release_publication,
 )
@@ -164,6 +167,8 @@ class PublicationEvaluatorTests(TestCase):
             ('catalog_fingerprint', 'validation_fingerprint'),
         )
         self.assertFalse(report.cap_and_fingerprint_checks_pass)
+        self.assertFalse(report.publishable)
+        self.assertEqual(report.ambiguous_requirements, AMBIGUOUS_REQUIREMENTS)
         text = '\n'.join(report.messages)
         self.assertIn('unverified placeholder', text)
         self.assertIn('does not match the stored catalog fingerprint', text)
@@ -222,6 +227,7 @@ class PublicationEvaluatorTests(TestCase):
         report = evaluate_release_publication(release)
         self.assertEqual(report.cap_blockers, CAP_ON_KEYS)
         self.assertFalse(report.cap_and_fingerprint_checks_pass)
+        self.assertFalse(report.publishable)
         release.refresh_from_db()
         self.assertEqual(release.catalog_fingerprint, CATALOG_PLACEHOLDER)
         self.assertEqual(release.status, UniverseRelease.Status.DRAFT)
@@ -248,6 +254,12 @@ class PublicationEvaluatorTests(TestCase):
         self.assertIsNone(report.catalog_digest)
         self.assertIsNone(report.validation_digest)
         self.assertFalse(report.cap_and_fingerprint_checks_pass)
+        self.assertFalse(report.publishable)
+        self.assertEqual(report.horizon_status, 'unsupported')
+        self.assertEqual(report.expansion_status, 'unsupported')
+        self.assertEqual(report.membership_status, 'unsupported')
+        self.assertEqual(report.quota_status, 'unsupported')
+        self.assertEqual(report.population_status, 'unsupported')
         release.refresh_from_db()
         self.assertEqual(release.catalog_fingerprint, before)
         self.assertEqual(release.generator_version, 'fg-founding-1')
@@ -274,6 +286,7 @@ class PublicationEvaluatorTests(TestCase):
         self.assertIsNotNone(report.catalog_digest)
         self.assertFalse(report.catalog_digest_match)
         self.assertFalse(report.cap_and_fingerprint_checks_pass)
+        self.assertFalse(report.publishable)
         self.assertEqual(_snapshot(release), before)
         self.assertEqual(release.status, UniverseRelease.Status.DRAFT)
         self.assertIsNone(release.published_at)
@@ -316,3 +329,100 @@ class PublicationEvaluatorTests(TestCase):
         release.refresh_from_db()
         self.assertEqual(release.status, UniverseRelease.Status.DRAFT)
         self.assertIsNone(release.published_at)
+
+    def test_valid_fingerprints_do_not_publish_an_incomplete_release(self):
+        league = League.objects.create(
+            name='Incomplete League',
+            slug='incomplete-league',
+            tier=1,
+            active=True,
+        )
+        release = _release(league, 'fg-incomplete', '', '')
+        _store_cards(release)
+        catalog, validation = release_digests(release)
+        UniverseRelease.objects.filter(pk=release.pk).update(
+            catalog_fingerprint=catalog,
+            validation_fingerprint=validation,
+        )
+        release.refresh_from_db()
+        before = _snapshot(release)
+        report = evaluate_release_publication(release)
+        self.assertEqual(report.cap_blockers, ())
+        self.assertEqual(report.fingerprint_verification, 'match')
+        self.assertTrue(report.catalog_digest_match)
+        self.assertTrue(report.validation_digest_match)
+        self.assertTrue(report.cap_and_fingerprint_checks_pass)
+        self.assertEqual(report.quota_status, 'pass')
+        self.assertEqual(report.staff_signature_status, 'pass')
+        self.assertEqual(report.horizon_status, 'fail')
+        self.assertEqual(report.expansion_status, 'fail')
+        self.assertEqual(report.membership_status, 'fail')
+        self.assertEqual(report.population_status, 'fail')
+        self.assertFalse(report.publishable)
+        self.assertIn('The release is not publishable.', report.messages)
+        self.assertEqual(_snapshot(release), before)
+        self.assertEqual(release.status, UniverseRelease.Status.DRAFT)
+        self.assertIsNone(release.published_at)
+        self.assertEqual(Timeline.objects.count(), 0)
+
+    def test_a_quota_outside_the_documented_limits_fails(self):
+        league = League.objects.create(
+            name='Quota League',
+            slug='quota-league',
+            tier=1,
+            active=True,
+        )
+        release = _release(league, 'fg-quota', '', '')
+        _store_cards(release)
+        EraRuleProfile.objects.filter(
+            release=release,
+            profile_key='y1970',
+        ).update(quota_active_qb=3, active_limit=41)
+        report = evaluate_release_publication(release)
+        self.assertEqual(report.quota_status, 'fail')
+        self.assertFalse(report.publishable)
+        self.assertTrue(any('y1970' in failure for failure in report.quota_failures))
+        self.assertEqual(
+            EraRuleProfile.objects.get(release=release, profile_key='y1970').active_limit,
+            41,
+        )
+
+    def test_a_repeated_gm_signature_fails(self):
+        league = League.objects.create(
+            name='Signature League',
+            slug='signature-league',
+            tier=1,
+            active=True,
+        )
+        release = _release(league, 'fg-signature', '', '')
+        signature = {
+            'strength_1': 'quarterback_eye',
+            'strength_2': 'lineman_eye',
+            'weakness': 'finds_speed',
+            'trait_1': 'patient',
+            'trait_2': 'secretive',
+        }
+        for index in (1, 2):
+            identity = UniverseStaffIdentity.objects.create(
+                release=release,
+                universe_key=f'g-fg-signature-1970-00{index}',
+                name=f'GM {index}',
+                birth_year=1940,
+            )
+            UniverseGM.objects.create(
+                release=release,
+                identity=identity,
+                universe_key=identity.universe_key,
+                name=identity.name,
+                birth_year=1940,
+                debut_year=1970,
+                former_role='scout',
+                positional_priority_1='quarterback',
+                positional_priority_2='skill',
+                **signature,
+            )
+        report = evaluate_release_publication(release)
+        self.assertEqual(report.staff_signature_status, 'fail')
+        self.assertTrue(report.staff_signature_failures)
+        self.assertFalse(report.publishable)
+        self.assertEqual(release.gms.count(), 2)

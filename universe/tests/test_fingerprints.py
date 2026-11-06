@@ -537,6 +537,13 @@ class GeneratedReleaseTests(TestCase):
         self.assertTrue(report.catalog_digest_match)
         self.assertTrue(report.validation_digest_match)
         self.assertTrue(report.cap_and_fingerprint_checks_pass)
+        self.assertEqual(report.horizon_status, 'pass')
+        self.assertEqual(report.expansion_status, 'pass')
+        self.assertEqual(report.membership_status, 'pass')
+        self.assertEqual(report.quota_status, 'pass')
+        self.assertEqual(report.population_status, 'pass')
+        self.assertEqual(report.staff_signature_status, 'pass')
+        self.assertTrue(report.publishable)
         self.assertEqual(report.catalog_digest, catalog)
         self.assertEqual(report.validation_digest, validation)
         self.release.refresh_from_db()
@@ -547,6 +554,7 @@ class GeneratedReleaseTests(TestCase):
         self.release.save(update_fields=['catalog_fingerprint'])
         mismatched = evaluate_release_publication(self.release)
         self.assertEqual(mismatched.fingerprint_verification, 'mismatch')
+        self.assertFalse(mismatched.publishable)
         self.assertEqual(
             mismatched.unverified_placeholder_fields,
             ('catalog_fingerprint',),
