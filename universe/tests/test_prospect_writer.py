@@ -208,7 +208,10 @@ class ProspectWriterTests(TestCase):
         for profile in profiles:
             self.assertEqual(profile.first_year, previous_last + 1)
             self.assertGreaterEqual(profile.last_year, profile.first_year)
-            self.assertIsNone(profile.cap_limit)
+            if profile.cap_status == 'on':
+                self.assertEqual(profile.cap_limit, 10000)
+            else:
+                self.assertIsNone(profile.cap_limit)
             self.assertIsNone(profile.minimum_salary)
             self.assertIsNone(profile.rookie_slot_scale)
             previous_last = profile.last_year
@@ -268,7 +271,7 @@ class ProspectWriterTests(TestCase):
             set(cap_on.values_list('profile_key', flat=True)),
             {'y1995', 'y1999', 'y2002', 'y2004', 'y2012', 'y2014', 'y2021'},
         )
-        self.assertFalse(cap_on.exclude(cap_limit=None).exists())
+        self.assertFalse(cap_on.exclude(cap_limit=10000).exists())
         self.assertEqual(EraRuleProfile.objects.filter(cap_status='off').count(), 5)
         controlled = stored_by_key['y1974']
         self.assertEqual(
@@ -539,6 +542,22 @@ class ProspectWriterTests(TestCase):
         profile.refresh_from_db()
         self.assertEqual(profile.playoff_format, 'twelve_team_4_and_2')
         self.assertEqual(EraRuleProfile.objects.get(profile_key='y1970').pk, self.y1970_id)
+
+    def test_a_different_cap_fails_closed(self):
+        profile = EraRuleProfile.objects.get(profile_key='y1995')
+        self.assertEqual(profile.cap_limit, 10000)
+        EraRuleProfile.objects.filter(pk=profile.pk).update(cap_limit=None)
+        with self.assertRaisesRegex(ProspectGenerationError, 'will not delete or replace'):
+            generate_prospects(self.league.id, SEED)
+        profile.refresh_from_db()
+        self.assertIsNone(profile.cap_limit)
+        self.assertIsNone(profile.minimum_salary)
+        self.assertIsNone(profile.rookie_slot_scale)
+        self.assertEqual(
+            EraRuleProfile.objects.get(profile_key='y1999').cap_limit,
+            10000,
+        )
+        self.assertIsNone(EraRuleProfile.objects.get(profile_key='y1970').cap_limit)
 
     def test_a_changed_draft_class_is_refused_on_rerun(self):
         profile_ids = set(EraRuleProfile.objects.values_list('pk', flat=True))

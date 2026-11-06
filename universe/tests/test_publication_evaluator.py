@@ -118,7 +118,7 @@ class SqliteSettingsTests(SimpleTestCase):
 
 
 class PublicationEvaluatorTests(TestCase):
-    def test_smoke_shaped_release_reports_seven_cap_blockers(self):
+    def test_generated_caps_are_not_blockers_and_smoke_fingerprints_mismatch(self):
         league = League.objects.create(
             name='Smoke League',
             slug='smoke-league',
@@ -149,16 +149,28 @@ class PublicationEvaluatorTests(TestCase):
         finally:
             connection.execute_wrappers.remove(wrap)
 
-        self.assertEqual(report.cap_blockers, CAP_ON_KEYS)
-        self.assertEqual(report.fingerprint_verification, 'unresolved')
+        self.assertEqual(report.cap_blockers, ())
+        self.assertEqual(report.fingerprint_scheme, (
+            'catalog-sha256-v1',
+            'validation-sha256-v1',
+        ))
+        self.assertEqual(len(report.catalog_digest), 64)
+        self.assertEqual(len(report.validation_digest), 64)
+        self.assertFalse(report.catalog_digest_match)
+        self.assertFalse(report.validation_digest_match)
+        self.assertEqual(report.fingerprint_verification, 'mismatch')
         self.assertEqual(
             report.unverified_placeholder_fields,
             ('catalog_fingerprint', 'validation_fingerprint'),
         )
-        self.assertFalse(report.meets_publication_requirements)
+        self.assertFalse(report.cap_and_fingerprint_checks_pass)
         text = '\n'.join(report.messages)
         self.assertIn('unverified placeholder', text)
-        self.assertIn('No fingerprint algorithm has been approved', text)
+        self.assertIn('does not match the stored catalog fingerprint', text)
+        self.assertNotIn(report.catalog_digest, (
+            release.catalog_fingerprint,
+            release.validation_fingerprint,
+        ))
         self.assertNotIn('minimum_salary', text)
         self.assertNotIn('rookie_slot_scale', text)
         for key in CAP_OFF_KEYS:
@@ -180,6 +192,65 @@ class PublicationEvaluatorTests(TestCase):
             ).count(),
             len(CAP_OFF_KEYS),
         )
+        self.assertEqual(
+            EraRuleProfile.objects.filter(
+                release=release,
+                profile_key__in=CAP_ON_KEYS,
+                cap_limit=10000,
+            ).count(),
+            len(CAP_ON_KEYS),
+        )
+
+    def test_null_cap_on_profiles_remain_blockers(self):
+        league = League.objects.create(
+            name='Null Cap League',
+            slug='null-cap-league',
+            tier=1,
+            active=True,
+        )
+        release = _release(
+            league,
+            'fg-null-cap',
+            CATALOG_PLACEHOLDER,
+            VALIDATION_PLACEHOLDER,
+        )
+        _store_cards(release)
+        EraRuleProfile.objects.filter(
+            release=release,
+            profile_key__in=CAP_ON_KEYS,
+        ).update(cap_limit=None)
+        report = evaluate_release_publication(release)
+        self.assertEqual(report.cap_blockers, CAP_ON_KEYS)
+        self.assertFalse(report.cap_and_fingerprint_checks_pass)
+        release.refresh_from_db()
+        self.assertEqual(release.catalog_fingerprint, CATALOG_PLACEHOLDER)
+        self.assertEqual(release.status, UniverseRelease.Status.DRAFT)
+
+    def test_another_generator_version_has_no_scheme(self):
+        league = League.objects.create(
+            name='Old Generator League',
+            slug='old-generator-league',
+            tier=1,
+            active=True,
+        )
+        release = _release(
+            league,
+            'fg-founding-1-release',
+            CATALOG_PLACEHOLDER,
+            VALIDATION_PLACEHOLDER,
+        )
+        release.generator_version = 'fg-founding-1'
+        release.save()
+        before = release.catalog_fingerprint
+        report = evaluate_release_publication(release)
+        self.assertEqual(report.fingerprint_verification, 'unsupported')
+        self.assertEqual(report.fingerprint_scheme, ())
+        self.assertIsNone(report.catalog_digest)
+        self.assertIsNone(report.validation_digest)
+        self.assertFalse(report.cap_and_fingerprint_checks_pass)
+        release.refresh_from_db()
+        self.assertEqual(release.catalog_fingerprint, before)
+        self.assertEqual(release.generator_version, 'fg-founding-1')
 
     def test_test_supplied_caps_are_not_blockers_and_do_not_publish(self):
         league = League.objects.create(
@@ -198,9 +269,11 @@ class PublicationEvaluatorTests(TestCase):
         before = _snapshot(release)
         report = evaluate_release_publication(release)
         self.assertEqual(report.cap_blockers, ())
-        self.assertEqual(report.fingerprint_verification, 'unresolved')
+        self.assertEqual(report.fingerprint_verification, 'mismatch')
         self.assertEqual(report.unverified_placeholder_fields, ())
-        self.assertFalse(report.meets_publication_requirements)
+        self.assertIsNotNone(report.catalog_digest)
+        self.assertFalse(report.catalog_digest_match)
+        self.assertFalse(report.cap_and_fingerprint_checks_pass)
         self.assertEqual(_snapshot(release), before)
         self.assertEqual(release.status, UniverseRelease.Status.DRAFT)
         self.assertIsNone(release.published_at)
