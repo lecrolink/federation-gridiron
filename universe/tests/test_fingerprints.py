@@ -17,6 +17,7 @@ from universe.fingerprints import (
     canonical_bytes,
     check_v1_model_coverage,
     release_digests,
+    release_documents,
     validate_record,
 )
 from universe.generation.opening_players import generate_opening_players, y1970_values
@@ -389,9 +390,6 @@ class ReleaseFingerprintTests(TestCase):
             ('validation', lambda: OpeningContract.objects.filter(
                 pk=world['contract'].pk,
             ).update(salary_per_year=250)),
-            ('validation', lambda: UniverseGM.objects.filter(
-                pk=world['gm'].pk,
-            ).update(universe_key='g-vector-temp')),
             ('validation', lambda: UniverseStaffIdentity.objects.filter(
                 pk=world['gm_identity'].pk,
             ).update(name='Other GM')),
@@ -430,7 +428,28 @@ class ReleaseFingerprintTests(TestCase):
             {side for side, _mutation in mutations},
             {'catalog', 'validation'},
         )
-        self.assertEqual(len(mutations), 4 + 25)
+        self.assertEqual(len(mutations), 4 + 24)
+        before_groups = _validation_groups(release)
+        OpeningStaffAssignment.objects.filter(pk=world['gm_seat'].pk).update(
+            gm_id=world['spare_gm'].pk,
+        )
+        catalog, validation = release_digests(release)
+        after_groups = _validation_groups(release)
+        self.assertEqual(catalog, baseline[0])
+        self.assertNotEqual(validation, baseline[1])
+        self.assertNotEqual(after_groups['opening_staff'], before_groups['opening_staff'])
+        for key, rows in before_groups.items():
+            if key == 'opening_staff':
+                continue
+            self.assertEqual(after_groups[key], rows)
+        self.assertEqual(world['gm'].universe_key, f'g-{release.slug}-1970-001')
+        world['gm'].refresh_from_db()
+        self.assertEqual(world['gm'].universe_key, f'g-{release.slug}-1970-001')
+        self.assertEqual(world['gm'].former_role, UniverseGM.FormerRole.PLAYER)
+        self.assertEqual(world['post'].wins, 0)
+        world['post'].refresh_from_db()
+        self.assertEqual(world['post'].wins, 0)
+        _restore(world)
         for side, mutate in mutations:
             mutate()
             catalog, validation = release_digests(release)
@@ -517,7 +536,7 @@ class GeneratedReleaseTests(TestCase):
         self.assertEqual(report.fingerprint_verification, 'match')
         self.assertTrue(report.catalog_digest_match)
         self.assertTrue(report.validation_digest_match)
-        self.assertTrue(report.meets_publication_requirements)
+        self.assertTrue(report.cap_and_fingerprint_checks_pass)
         self.assertEqual(report.catalog_digest, catalog)
         self.assertEqual(report.validation_digest, validation)
         self.release.refresh_from_db()
@@ -756,6 +775,27 @@ def _build_world(league_slug, release_slug):
     gm_rating = GMRatingProfile(gm=gm, initial_reputation=10)
     _ratings(gm_rating, GM_ABILITIES)
     gm_rating.save()
+    spare_identity = UniverseStaffIdentity.objects.create(
+        release=release,
+        universe_key=f'g-{release_slug}-1970-002',
+        name='Gale Spare',
+        birth_year=1941,
+    )
+    spare_gm = UniverseGM.objects.create(
+        release=release,
+        identity=spare_identity,
+        universe_key=spare_identity.universe_key,
+        name=spare_identity.name,
+        birth_year=1941,
+        debut_year=1970,
+        former_role=UniverseGM.FormerRole.SCOUT,
+        positional_priority_1='skill',
+        strength_1='finds_speed',
+        strength_2='finds_size',
+        weakness='character',
+        trait_1='secretive',
+        trait_2='public',
+    )
     coach = UniverseCoach.objects.create(
         release=release,
         identity=coach_identity,
@@ -827,6 +867,7 @@ def _build_world(league_slug, release_slug):
         'gm_seat': gm_seat,
         'gm_identity': gm_identity,
         'gm': gm,
+        'spare_gm': spare_gm,
         'gm_rating': gm_rating,
         'coach': coach,
         'coach_rating': coach_rating,
@@ -836,6 +877,11 @@ def _build_world(league_slug, release_slug):
         'pro_season': pro_season,
         'award': award,
     }
+
+
+def _validation_groups(release):
+    _catalog, validation = release_documents(release)
+    return json.loads(validation.decode())['records']
 
 
 def _restore(world):
@@ -868,9 +914,11 @@ def _restore(world):
     PlayerRatingProfile.objects.filter(pk=world['rating'].pk).update(initial_speed=10)
     OpeningAssignment.objects.filter(pk=world['assignment'].pk).update(depth=1)
     OpeningContract.objects.filter(pk=world['contract'].pk).update(salary_per_year=100)
+    OpeningStaffAssignment.objects.filter(pk=world['gm_seat'].pk).update(
+        gm_id=world['gm'].pk,
+    )
     UniverseStaffIdentity.objects.filter(pk=world['gm_identity'].pk).update(name='Gina Manager')
     UniverseGM.objects.filter(pk=world['gm'].pk).update(
-        universe_key=world['gm'].universe_key,
         former_role=UniverseGM.FormerRole.PLAYER,
     )
     GMRatingProfile.objects.filter(pk=world['gm_rating'].pk).update(initial_reputation=10)
