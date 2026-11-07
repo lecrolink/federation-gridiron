@@ -1,15 +1,17 @@
 import socket
 import subprocess
 import sys
+from collections import Counter
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
-from django.db import connection
+from django.db import IntegrityError, connection, transaction
 from django.db.models.query import QuerySet
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
@@ -31,6 +33,16 @@ from timelines.models import (
     TimelinePlayer,
     TimelineSeason,
 )
+from timelines.services.opening_copy import (
+    EXCLUDED_FOREIGN_KEYS,
+    FIELD_CHECKERS,
+    OPENING_BULK_BATCH,
+    PRE_INSERT_CHECKS,
+    RELATION_CHECKS,
+    bulk_insert_rows,
+    copy_fresh_opening,
+    validate_opening_batch,
+)
 from timelines.services.timeline_start import (
     BACKUP_COUNT,
     FREE_AGENT_COUNT,
@@ -45,10 +57,11 @@ from universe.generation.opening_players import generate_opening_players
 from universe.generation.player_rating_profiles import generate_player_ratings
 from universe.generation.prospects import generate_prospects
 from universe.generation.schedule import generate_schedule_release
+from universe.generation.opening_draft_order import opening_draft_order
 from universe.models import ProvisionalFranchiseName, UniverseFranchise, UniverseRelease
-from universe.people import PLAYER_COMPONENTS, PlayerRatingProfile
+from universe.people import PLAYER_COMPONENTS, PlayerRatingProfile, UniversePlayer
 from universe.publication_service import publish_universe_release
-from universe.rules import DraftClass, OpeningAssignment, OpeningStaffAssignment
+from universe.rules import DraftClass, EraRuleProfile, OpeningAssignment, OpeningStaffAssignment
 
 
 SEED = 1970
@@ -108,6 +121,23 @@ class StartTimelineSettingsTests(SimpleTestCase):
             'force', 'skip_validation', 'repair', 'publish', 'limit',
         })
         self.assertTrue(issubclass(Command, BaseCommand))
+
+    def test_every_excluded_foreign_key_has_an_in_memory_check(self):
+        pairs = {
+            (model_name, field_name)
+            for model_name, field_names in EXCLUDED_FOREIGN_KEYS.items()
+            for field_name in field_names
+        }
+        self.assertEqual(set(FIELD_CHECKERS), pairs)
+        for checker in FIELD_CHECKERS.values():
+            self.assertIn(checker, RELATION_CHECKS)
+        self.assertTrue(set(FIELD_CHECKERS.values()) - {'overlay'} <= set(PRE_INSERT_CHECKS))
+        for name in (
+            'timeline', 'season', 'player', 'rating_profile', 'franchise',
+            'overlay', 'release', 'role', 'status', 'position', 'availability',
+        ):
+            self.assertIn(name, RELATION_CHECKS)
+        self.assertEqual(OPENING_BULK_BATCH, 400)
 
     def test_cold_import_does_not_cycle_with_publication(self):
         script = (
@@ -407,6 +437,11 @@ class StartTimelineTests(TestCase):
             Timeline.objects.get(pk=second_mark.timeline_id).name,
             decomposed,
         )
+        spaced = self._start(name='Harbor ')
+        self.assertEqual(spaced.outcome, 'created')
+        self.assertNotEqual(spaced.timeline_id, created.timeline_id)
+        self.assertEqual(Timeline.objects.get(pk=spaced.timeline_id).name, 'Harbor ')
+        self.assertEqual(Timeline.objects.filter(name='Harbor').count(), 2)
 
     def test_ambiguous_and_partial_identities_fail_closed(self):
         first = self._shell('Twin')
@@ -577,6 +612,281 @@ class StartTimelineTests(TestCase):
                 franchise_slug='founding-01',
             )
         self.assertIn('release is missing', str(caught.exception))
+        again = StringIO()
+        call_command(
+            'start_timeline',
+            slug=self.release.slug,
+            seed=SEED,
+            generator='fg-founding-2',
+            user_id=self.user.pk,
+            name='Command Harbor',
+            franchise_slug='founding-01',
+            stdout=again,
+        )
+        rerun = again.getvalue().splitlines()
+        self.assertEqual(rerun[0], 'unchanged')
+        self.assertEqual(rerun[1:], text[1:])
+
+    def test_neutral_opening_order_is_requested_once(self):
+        with patch(
+            'timelines.services.timeline_start.opening_draft_order',
+            wraps=opening_draft_order,
+        ) as spy:
+            created = self._start(name='Neutral Order')
+            rerun = self._start(name='Neutral Order')
+        self.assertEqual(created.outcome, 'created')
+        self.assertEqual(rerun.outcome, 'unchanged')
+        self.assertEqual(spy.call_count, 1)
+        self.assertEqual(spy.call_args.args, (SEED, self.release.slug))
+
+    def test_every_founding_franchise_needs_both_staff_seats(self):
+        expansion = UniverseFranchise.objects.filter(
+            release=self.release,
+        ).exclude(origin=UniverseFranchise.Origin.FOUNDING).order_by(
+            'placeholder_slug',
+        ).first()
+        self.assertIsNotNone(expansion)
+        seat = OpeningStaffAssignment.objects.get(
+            release=self.release,
+            franchise__placeholder_slug='founding-26',
+            role='gm',
+        )
+        OpeningStaffAssignment.objects.filter(pk=seat.pk).update(franchise=expansion)
+        before = Timeline.objects.count()
+        with self.assertRaises(TimelineStartRefused) as caught:
+            self._start(name='Staff Gap')
+        self.assertIn('staff', str(caught.exception))
+        self.assertEqual(Timeline.objects.count(), before)
+        self.assertEqual(
+            OpeningStaffAssignment.objects.filter(
+                release=self.release,
+                role='gm',
+            ).count(),
+            26,
+        )
+        self.assertFalse(
+            OpeningStaffAssignment.objects.filter(
+                release=self.release,
+                franchise__placeholder_slug='founding-26',
+                role='gm',
+            ).exists()
+        )
+
+    def test_opening_copy_stays_under_the_sqlite_statement_bound(self):
+        """One start must not repeat a statement once per opening player.
+
+        SQLite's Django backend caps a bulk insert at 999 variables, so the
+        35-column rating insert is repeated in batches of 28. That shape stays
+        far below 1,378. This SQLite run measured 249 statements, 74 inserts,
+        175 lookups, and a repeated rating-insert shape of 49. MariaDB accepts
+        ``OPENING_BULK_BATCH`` of 400, so the same create is 4 player inserts,
+        4 rating inserts, and 4 membership inserts, plus the header inserts.
+        The earlier disposable MariaDB run measured 200,844 statements for
+        this create. The expected MariaDB shape after this change is a few
+        dozen statements, not one statement per opening player.
+        """
+        created, statements = _statements_during(lambda: self._start(name='Measured'))
+        self.assertEqual(created.outcome, 'created')
+        self.assertEqual(created.player_count, OPENING_COUNT)
+        inserts, lookups = _split_statements(statements)
+        counts = Counter(statements)
+        # Measured on this SQLite: 249 statements, 74 inserts, 175 lookups,
+        # and a repeated rating-insert shape of 49. One shape per player is 1,378.
+        self.assertLess(max(counts.values()), 100)
+        self.assertLess(max(counts.values()), OPENING_COUNT)
+        self.assertLess(len(statements), 400)
+        self.assertLess(len(inserts), 100)
+        self.assertLess(len(lookups), 300)
+        self.assertGreater(len(inserts), 3)
+        rerun, rerun_statements = _statements_during(
+            lambda: self._start(name='Measured'),
+        )
+        self.assertEqual(rerun.outcome, 'unchanged')
+        self.assertEqual(rerun.timeline_id, created.timeline_id)
+        self.assertEqual(_writes(rerun_statements), [])
+
+    def test_relation_checks_run_and_reject_bad_links_before_insert(self):
+        called = []
+        wrapped = {}
+        for name, function in RELATION_CHECKS.items():
+            def inner(context, name=name, function=function):
+                called.append(name)
+                return function(context)
+            wrapped[name] = inner
+        with patch.dict(RELATION_CHECKS, wrapped, clear=True):
+            self._start(name='Checked Relations')
+        self.assertEqual(set(called), set(RELATION_CHECKS))
+
+        timeline, season, rows, availability = self._opening_batch()
+        other = self._shell('Other Timeline')
+        cases = {
+            'timeline': (
+                lambda: validate_opening_batch(other, season, rows, availability),
+                'season belongs',
+            ),
+        }
+        with self.assertRaises(ValidationError) as caught:
+            cases['timeline'][0]()
+        self.assertIn(cases['timeline'][1], str(caught.exception))
+
+        mutations = (
+            (
+                'release',
+                lambda loaded: setattr(loaded[0].player, 'release_id', -1),
+                'player belongs',
+            ),
+            (
+                'franchise',
+                lambda loaded: setattr(
+                    next(row.franchise for row in loaded if row.franchise_id),
+                    'release_id',
+                    -1,
+                ),
+                'franchise belongs',
+            ),
+            (
+                'rating_profile',
+                lambda loaded: setattr(loaded[0].player.rating_profile, 'player_id', -1),
+                'rating profile',
+            ),
+            (
+                'role',
+                lambda loaded: setattr(
+                    next(row for row in loaded if row.franchise_id),
+                    'role',
+                    'reserve',
+                ),
+                'opening role',
+            ),
+            (
+                'availability',
+                None,
+                'available or unavailable',
+            ),
+        )
+        for label, mutate, message in mutations:
+            with self.subTest(relation=label):
+                loaded = self._load_assignments()
+                supplied = {row.player_id: 'available' for row in loaded}
+                if label == 'availability':
+                    supplied[loaded[0].player_id] = 'nope'
+                else:
+                    mutate(loaded)
+                with patch.object(
+                    QuerySet,
+                    'bulk_create',
+                    side_effect=AssertionError('inserted'),
+                ):
+                    with self.assertRaises(ValidationError) as caught:
+                        copy_fresh_opening(timeline, season, loaded, supplied)
+                self.assertIn(message, str(caught.exception))
+
+    def test_missing_reloaded_overlay_rolls_the_start_back(self):
+        from timelines.services import opening_copy
+        real = opening_copy._reload_players
+
+        def drop(timeline, player_ids):
+            found = real(timeline, player_ids)
+            found.pop(next(iter(found)))
+            return found
+
+        before = Timeline.objects.count()
+        with patch('timelines.services.opening_copy._reload_players', drop):
+            with self.assertRaises(TimelineStartRefused) as caught:
+                self._start(name='Dropped Overlay')
+        self.assertIn('exactly one overlay', str(caught.exception))
+        self.assertEqual(Timeline.objects.count(), before)
+        self.assertFalse(TimelinePlayer.objects.exists())
+
+    def test_forced_integrity_error_rolls_headers_back(self):
+        real = QuerySet.bulk_create
+
+        def boom(qs, objs, *args, **kwargs):
+            if qs.model is TimelinePlayer and objs:
+                raise IntegrityError('forced unique index')
+            return real(qs, objs, *args, **kwargs)
+
+        before = Timeline.objects.count()
+        with patch.object(QuerySet, 'bulk_create', boom):
+            with self.assertRaises(TimelineStartRefused) as caught:
+                self._start(name='Forced Conflict')
+        self.assertIn('conflicts', str(caught.exception))
+        self.assertEqual(Timeline.objects.count(), before)
+        self.assertFalse(Timeline.objects.filter(name='Forced Conflict').exists())
+        self.assertFalse(TimelineParticipant.objects.exists())
+        self.assertFalse(TimelinePlayer.objects.exists())
+
+    def test_control_unique_index_is_a_domain_error(self):
+        def boom(self, *args, **kwargs):
+            raise IntegrityError('forced open control index')
+
+        before = Timeline.objects.count()
+        with patch.object(TimelineFranchiseControl, 'save', boom):
+            with self.assertRaises(TimelineStartRefused) as caught:
+                self._start(name='Control Conflict')
+        self.assertIn('conflicts', str(caught.exception))
+        self.assertEqual(Timeline.objects.count(), before)
+        self.assertFalse(Timeline.objects.filter(name='Control Conflict').exists())
+        self.assertFalse(TimelineParticipant.objects.exists())
+        self.assertFalse(TimelineFranchiseControl.objects.exists())
+
+    def test_duplicate_overlay_constraint_is_a_domain_error(self):
+        timeline = self._shell('Constraint')
+        player = UniversePlayer.objects.filter(
+            release=self.release,
+            cohort=UniversePlayer.Cohort.OPENING,
+        ).first()
+        rows = [
+            TimelinePlayer(timeline=timeline, player=player, status='active'),
+            TimelinePlayer(timeline=timeline, player=player, status='taxi'),
+        ]
+        with self.assertRaises(ValidationError) as caught:
+            with transaction.atomic():
+                bulk_insert_rows(TimelinePlayer, rows)
+        self.assertIn('conflicts', str(caught.exception))
+        self.assertFalse(TimelinePlayer.objects.filter(timeline=timeline).exists())
+
+    def test_ordinary_save_still_validates(self):
+        timeline = self._shell('Ordinary Save')
+        player = UniversePlayer.objects.filter(
+            release=self.release,
+            cohort=UniversePlayer.Cohort.OPENING,
+        ).first()
+        overlay = TimelinePlayer(timeline=timeline, player=player, status='active')
+        with self.assertRaises(ValidationError) as caught:
+            overlay.save()
+        self.assertIn('one open roster membership', str(caught.exception))
+        self.assertIsNone(overlay.pk)
+        invalid = TimelinePlayer(timeline=timeline, player=player, status='not-a-status')
+        with self.assertRaises(ValidationError):
+            invalid.save()
+        self.assertFalse(TimelinePlayer.objects.filter(timeline=timeline).exists())
+
+    def _opening_batch(self):
+        timeline = self._shell('Batch Check')
+        profile = EraRuleProfile.objects.get(
+            release=self.release,
+            profile_key='y1970',
+        )
+        season = TimelineSeason.objects.create(
+            timeline=timeline,
+            profile=profile,
+            season_year=1970,
+            season_index=1,
+            phase=Timeline.Phase.DIRECTION,
+        )
+        rows = self._load_assignments()
+        availability = {row.player_id: 'available' for row in rows}
+        return timeline, season, rows, availability
+
+    def _load_assignments(self):
+        return list(
+            OpeningAssignment.objects.filter(release=self.release).select_related(
+                'player',
+                'player__rating_profile',
+                'franchise',
+            )
+        )
 
     def _assert_ratings_match_initial(self, timeline):
         overlays = TimelinePlayer.objects.filter(timeline=timeline).select_related('player')
@@ -604,3 +914,37 @@ class StartTimelineTests(TestCase):
 def models_count():
     from django.db.models import Count
     return Count('pk')
+
+
+def _statements_during(callback):
+    statements = []
+
+    def wrap(execute, sql, params, many, context):
+        statements.append(sql)
+        return execute(sql, params, many, context)
+
+    connection.execute_wrappers.append(wrap)
+    try:
+        result = callback()
+    finally:
+        connection.execute_wrappers.remove(wrap)
+    return result, statements
+
+
+def _split_statements(statements):
+    inserts = []
+    lookups = []
+    for sql in statements:
+        word = sql.lstrip().split(None, 1)[0].strip('"').upper()
+        if word == 'INSERT':
+            inserts.append(sql)
+        else:
+            lookups.append(sql)
+    return inserts, lookups
+
+
+def _writes(statements):
+    return [
+        sql for sql in statements
+        if sql.lstrip().split(None, 1)[0].strip('"').upper() in WRITE_WORDS
+    ]

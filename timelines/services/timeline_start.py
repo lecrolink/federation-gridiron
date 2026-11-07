@@ -7,7 +7,7 @@ release, materialize the 1970 draft class, or copy staff seats.
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
-from django.db import DEFAULT_DB_ALIAS
+from django.db import DEFAULT_DB_ALIAS, IntegrityError
 
 from timelines.models import (
     DevelopmentEvent,
@@ -22,6 +22,7 @@ from timelines.models import (
     TimelinePlayer,
     TimelineSeason,
 )
+from timelines.services.opening_copy import verify_open_control_keys
 from timelines.services.player_lifecycle import initialize_opening_state
 from universe.generation.opening_draft_order import (
     FOUNDING_SLUGS,
@@ -132,6 +133,10 @@ def start_timeline(
             except ValidationError as exc:
                 raise TimelineStartRefused(
                     'Timeline start refused: %s' % exc
+                ) from exc
+            except IntegrityError as exc:
+                raise TimelineStartRefused(
+                    'Timeline start refused: the campaign conflicts with an existing row.'
                 ) from exc
     except UniverseRelease.DoesNotExist:
         raise TimelineStartRefused(
@@ -490,16 +495,30 @@ def _assignments(release):
 
 
 def _staff_complete(release, franchise):
-    seats = OpeningStaffAssignment.objects.filter(release_id=release.pk)
-    gm = seats.filter(role='gm')
-    coach = seats.filter(role='head_coach')
-    return (
-        gm.count() == STAFF_SEATS
-        and coach.count() == STAFF_SEATS
-        and seats.count() == STAFF_SEATS * 2
-        and gm.filter(franchise_id=franchise.pk).exists()
-        and coach.filter(franchise_id=franchise.pk).exists()
+    seats = list(
+        OpeningStaffAssignment.objects.filter(release_id=release.pk).values_list(
+            'franchise_id',
+            'role',
+        )
     )
+    if len(seats) != STAFF_SEATS * 2:
+        return False
+    by_franchise = {}
+    for franchise_id, role in seats:
+        by_franchise.setdefault(franchise_id, set()).add(role)
+    founding_ids = set(
+        UniverseFranchise.objects.filter(
+            release_id=release.pk,
+            origin=UniverseFranchise.Origin.FOUNDING,
+            placeholder_slug__in=FOUNDING_SLUGS,
+        ).values_list('pk', flat=True)
+    )
+    required = {'gm', 'head_coach'}
+    if len(founding_ids) != len(FOUNDING_SLUGS):
+        return False
+    if any(by_franchise.get(franchise_id) != required for franchise_id in founding_ids):
+        return False
+    return franchise.pk in founding_ids
 
 
 def _create(release, user, name, shared):
@@ -523,6 +542,11 @@ def _create(release, user, name, shared):
         joined_season=SEASON_YEAR,
     )
     participant.save()
+    verify_open_control_keys(
+        timeline.pk,
+        participant.pk,
+        shared['franchise'].pk,
+    )
     control = TimelineFranchiseControl(
         timeline=timeline,
         participant=participant,

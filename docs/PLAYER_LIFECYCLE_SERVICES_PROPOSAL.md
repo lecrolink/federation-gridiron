@@ -41,7 +41,7 @@ Creating the timeline, creating `TimelineSeason`, choosing the phase, locking di
 
 ## Common rules
 
-Every insert and update uses `Model.save()` on one instance, which runs `full_clean()`. The one delete, the guarded early rating, uses `Model.delete()` on that instance, which runs the timeline-open check in `TimelineChild.delete`. `QuerySet.update`, `bulk_create`, `bulk_update`, and `QuerySet.delete` are forbidden. They skip those checks. MySQL has no trigger that would replace them.
+Every insert and update uses `Model.save()` on one instance, which runs `full_clean()`, except the fresh opening cohort. That cohort is the one bulk exception: `initialize_opening_state` validates it in memory and inserts `TimelinePlayer`, `PlayerSeasonRating`, and `RosterMembership` with `bulk_create` when every opening overlay is absent. A partial opening cohort, and every other lifecycle write, still uses `save()`. The one delete, the guarded early rating, uses `Model.delete()` on that instance, which runs the timeline-open check in `TimelineChild.delete`. `QuerySet.update`, `bulk_update`, and `QuerySet.delete` are forbidden. MySQL has no trigger that would replace them.
 
 One service call is one database transaction. A failure raises and the transaction rolls back. The call does not catch a player-level error and continue with the next player. After a rollback, the committed rows are the rows that were committed before the call.
 
@@ -125,9 +125,11 @@ The assignment already requires an opening-cohort player, a role in `starter`, `
 
 ### Transaction
 
-One `deferred_lifecycle()` block for the whole opening cohort. That block is the transaction. Ratings are saved inside it so a later membership failure rolls the ratings back too.
+One `deferred_lifecycle()` block for the whole opening cohort. That block is the transaction. A failure rolls the overlays, ratings, and memberships back together.
 
-Per assignment, inside the block:
+When every opening overlay is absent and the release has the full 1,378-player cohort, the block does not call `save()` once per player. It checks scalars with `clean_fields`, runs `TimelinePlayer.clean()` while lifecycle pairing is deferred, and checks the excluded foreign keys in memory: timeline, season, shared player, rating profile, franchise, overlay, release, and the role, status, position, and availability relationships. It then checks unique universe keys, one overlay per assignment, the 494/546/208/130 role counts, the 1,248/130 franchise split, the 33 initial ratings, and the generated open-roster keys. `bulk_create` inserts the three tables in batches of 400. SQLite's variable cap may make those batches smaller. Primary keys are reloaded by `(timeline, player)` before the rating and membership rows are attached. An `IntegrityError` from any of those inserts becomes `ValidationError`. Database foreign keys, checks, and unique constraints still apply.
+
+A cohort that is not the full absent 1,378, including a source-state overlay that still needs a rating or membership, keeps the per-row writes:
 
 1. Save `TimelinePlayer` for `(timeline, player)` with `retired_year` null and `status` from `_status_for_role(assignment.role)`.
 2. Save `PlayerSeasonRating` for `(overlay, season)` with each `current_*` copied from `initial_*`.
@@ -627,7 +629,7 @@ A failed guard, a missing open membership when the player is not already in the 
 
 `deferred_lifecycle()` does not make two top-level calls atomic with each other. A cut committed in one call and a signing committed in a later call are two transactions. `advance_season` is the operation that retires and hands off in one transaction so a player is not both copied forward and retired.
 
-Child saves note the player id after `save()`. The outer block then reloads those players and checks only the lifecycle table. Week overlap, the open-key uniqueness, the potential ceiling, and the retirement-year later-row rule have already run on each save.
+Child saves note the player id after `save()`. The fresh opening bulk insert notes the reloaded overlay ids the same way. The outer block then reloads those players and checks only the lifecycle table. Week overlap, the open-key uniqueness, the potential ceiling, and the retirement-year later-row rule have already run, either on each `save()` or in the opening bulk checks.
 
 ## Dependencies this design does not specify
 
@@ -664,7 +666,7 @@ These are left open. The workflow requires the caller to pass the value, or it r
 
 This phase does not design or implement contracts, staff overlays, scouting, simulation, schedules, standings, admin, API, UI, or deployment. It does not change `timelines/models.py`, `timelines/migrations/`, universe models or migrations, settings, or database state. It does not run migrations and it does not contact a database.
 
-The implementation that follows this document, when separately approved, should keep the write path on `save()` / `delete()`, keep one transaction around each operation above, and treat any universe write as a defect.
+The implementation keeps one transaction around each operation above and treats any universe write as a defect. Ordinary rows still go through `save()` and `delete()`. The fresh 1,378-player opening copy is the bulk exception described under `initialize_opening_state`.
 
 ## Confirmation
 
