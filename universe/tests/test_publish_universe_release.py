@@ -10,6 +10,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
 from django.db.models.query import QuerySet
 from django.test import SimpleTestCase, TestCase
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from leagues.models import League
@@ -52,6 +53,7 @@ from universe.release_guard import (
     holding_release_lock,
     persisted_release_id,
 )
+import universe.release_guard as release_guard
 from universe.rules import (
     DraftClass,
     EraAllowedScheme,
@@ -1299,6 +1301,90 @@ class PublicationServiceTests(TestCase):
         with self.assertRaises(RuntimeError):
             with holding_release_lock(self.release.pk, using='default'):
                 assert_release_lock_held(self.release.pk, using='default')
+                raise RuntimeError('probe')
+        self._assert_lock_context_clear()
+
+    def test_a_different_nested_lock_raises_before_any_query(self):
+        other = self._other_release()
+        self.assertNotEqual(other.pk, self.release.pk)
+
+        def refuse(release_id, alias):
+            stack = release_guard._lock_stack.get()
+            with patch.object(
+                release_guard.transaction, 'atomic',
+                side_effect=AssertionError('atomic'),
+            ):
+                with patch.object(
+                    QuerySet, 'select_for_update',
+                    side_effect=AssertionError('select_for_update'),
+                ):
+                    with patch.object(
+                        QuerySet, 'get',
+                        side_effect=AssertionError('get'),
+                    ):
+                        with CaptureQueriesContext(connection) as captured:
+                            with self.assertRaises(RuntimeError):
+                                with holding_release_lock(release_id, using=alias):
+                                    pass
+            self.assertEqual(captured.captured_queries, [])
+            self.assertIs(release_guard._lock_stack.get(), stack)
+            assert_release_lock_held(self.release.pk, using='default')
+
+        with holding_release_lock(self.release.pk, using='default') as held:
+            assert_release_lock_held(self.release.pk, using='default')
+            with holding_release_lock(self.release.pk, using='default') as nested:
+                self.assertEqual(nested.pk, held.pk)
+                assert_release_lock_held(self.release.pk, using='default')
+            with CaptureQueriesContext(connection) as same_release:
+                with holding_release_lock(self.release.pk, using='default'):
+                    assert_release_lock_held(self.release.pk, using='default')
+            same_sql = ' '.join(item['sql'] for item in same_release.captured_queries)
+            self.assertIn(
+                '"universe_universerelease"."id" = %s' % self.release.pk,
+                same_sql,
+            )
+            self.assertNotIn(
+                '"universe_universerelease"."id" = %s' % other.pk,
+                same_sql,
+            )
+            self.assertNotIn(other.slug, same_sql)
+
+            refuse(other.pk, 'default')
+            refuse(self.release.pk, 'other')
+            refuse(other.pk, 'other')
+            stack = release_guard._lock_stack.get()
+            with patch.object(
+                release_guard.transaction, 'atomic',
+                side_effect=AssertionError('atomic'),
+            ):
+                with patch.object(
+                    QuerySet, 'select_for_update',
+                    side_effect=AssertionError('select_for_update'),
+                ):
+                    with patch.object(
+                        QuerySet, 'get',
+                        side_effect=AssertionError('get'),
+                    ):
+                        with CaptureQueriesContext(connection) as captured:
+                            with self.assertRaises(RuntimeError):
+                                with holding_release_lock(
+                                    slug=held.slug,
+                                    using='default',
+                                ):
+                                    pass
+            self.assertEqual(captured.captured_queries, [])
+            self.assertIs(release_guard._lock_stack.get(), stack)
+            assert_release_lock_held(self.release.pk, using='default')
+
+        self._assert_lock_context_clear()
+
+        with self.assertRaises(RuntimeError):
+            with holding_release_lock(self.release.pk, using='default'):
+                held_stack = release_guard._lock_stack.get()
+                with self.assertRaises(RuntimeError):
+                    with holding_release_lock(other.pk, using='default'):
+                        pass
+                self.assertIs(release_guard._lock_stack.get(), held_stack)
                 raise RuntimeError('probe')
         self._assert_lock_context_clear()
 

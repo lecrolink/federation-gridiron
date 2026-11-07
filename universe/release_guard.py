@@ -14,8 +14,10 @@ locks the release it proposes to join. Instance ``delete()`` uses the stored
 owner and ignores a dirty in-memory parent.
 
 The held-lock record is ``(database alias, release primary key)``. Nested
-calls may lock that same pair again. They do not lock a child row first, and
-they do not lock a second release or the same primary key on another alias.
+calls may lock that same pair again. A different release or database alias is
+refused before any query, so the refused attempt issues no SELECT and takes
+no row lock. The context stack stays as it was. These calls do not lock a
+child row first.
 Queryset ``update``, ``bulk_create``, ``bulk_update``, queryset ``delete``,
 and SQL from outside this application skip these methods. Sanctioned bulk
 writers call ``assert_release_lock_held`` with the same alias after
@@ -80,13 +82,33 @@ def write_alias(instance, args, kwargs, position):
     return database_alias(instance, explicit)
 
 
+def _lock_conflict_message():
+    return (
+        'Release content locks UniverseRelease first. '
+        'A different release or database is already locked.'
+    )
+
+
+def _reject_incompatible_lock(alias, release_id):
+    """Refuse a different lock before this call touches the database.
+
+    An empty context may lock any release. The same alias and primary key
+    may lock that release again. Any other pair, including a slug whose
+    primary key is not already known, raises here so the caller cannot
+    acquire a second row lock.
+    """
+    stack = _lock_stack.get()
+    if not stack:
+        return
+    if release_id is not None and (alias, release_id) in stack:
+        return
+    raise RuntimeError(_lock_conflict_message())
+
+
 def _push(key):
     stack = _lock_stack.get()
     if stack and key not in stack:
-        raise RuntimeError(
-            'Release content locks UniverseRelease first. '
-            'A different release or database is already locked.'
-        )
+        raise RuntimeError(_lock_conflict_message())
     _lock_stack.set(stack + (key,))
 
 
@@ -112,6 +134,9 @@ def holding_release_lock(release_id=None, *, slug=None, using=None):
     if (release_id is None) == (slug is None):
         raise ValueError('Lock one UniverseRelease by primary key or slug.')
     alias = DEFAULT_DB_ALIAS if using is None else using
+    # Decide from the context before BEGIN, SELECT, or select_for_update.
+    # A refused nested request must not take a second row lock.
+    _reject_incompatible_lock(alias, release_id)
     with transaction.atomic(using=alias):
         # Set the alias on this queryset. Cloning with ``using()`` would drop
         # a ``get`` wrapper installed by tests on the manager's return value.
