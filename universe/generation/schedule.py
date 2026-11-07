@@ -12,11 +12,17 @@ match fg-founding-1 for the same seed and release slug.
 """
 
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, transaction
+from django.db import DEFAULT_DB_ALIAS, IntegrityError
 from django.db.models import Q
 from django.db.models.deletion import ProtectedError
 
 from timelines.models import Timeline
+from universe.release_guard import (
+    assert_release_lock_held,
+    database_alias,
+    holding_release_lock,
+    parent_release_id,
+)
 from universe.generation.founding import (
     AGE_MAX,
     AGE_MIN,
@@ -787,6 +793,7 @@ def _slice_existed(release, franchises, old_keys):
 
 
 def _delete_slice(release, franchises, old_keys):
+    assert_release_lock_held(release.pk, using=database_alias(release))
     release.expansion_events.all().delete()
     if old_keys:
         OpeningStaffAssignment.objects.filter(
@@ -810,6 +817,11 @@ def _save_all(rows):
                 f'A generated row failed validation: {exc}'
             ) from exc
     if rows:
+        alias = database_alias(rows[0])
+        release_id = parent_release_id(rows[0], using=alias)
+        if release_id is None:
+            raise ScheduleGenerationError('A generated row has no parent release.')
+        assert_release_lock_held(release_id, using=alias)
         type(rows[0]).objects.bulk_create(rows)
 
 
@@ -847,6 +859,7 @@ def _sync_names(release, names):
                 setattr(current, status_field, row[status_field])
                 changed.append(current)
     if changed:
+        assert_release_lock_held(release.pk, using=database_alias(release))
         ProvisionalFranchiseName.objects.bulk_update(
             changed,
             ['city', 'city_status', 'nickname', 'nickname_status'],
@@ -886,6 +899,7 @@ def _write_slice(release, expected):
     ]
     # The seat batch is checked in membership_rows before insert. full_clean
     # cannot see unsaved siblings, so it is not the uniqueness guard.
+    assert_release_lock_held(release.pk, using=database_alias(release))
     FranchiseSeasonMembership.objects.bulk_create(memberships, batch_size=500)
 
     identities = [
@@ -1116,8 +1130,7 @@ def generate_schedule_release(league_id, seed):
     except FoundingGenerationError as exc:
         raise ScheduleGenerationError(str(exc)) from exc
     try:
-        with transaction.atomic():
-            release = UniverseRelease.objects.select_for_update().get(pk=release_id)
+        with holding_release_lock(release_id, using=DEFAULT_DB_ALIAS) as release:
             if release.status != UniverseRelease.Status.DRAFT:
                 raise ScheduleGenerationError('A published release cannot be changed.')
             _require_horizon(release)

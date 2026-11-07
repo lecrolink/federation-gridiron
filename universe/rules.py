@@ -1,8 +1,9 @@
 """Shared era rules, draft classes, expansion, and the 1970 opening state.
 
-Published-release guards are application checks. They are not database
-triggers. Confirmed years and arithmetic stay release data. This module
-does not generate people or insert rows.
+Published-release guards are application checks. Concrete rows inherit
+``ReleaseChild`` and lock the parent ``UniverseRelease`` on ordinary save
+and delete. They are not database triggers. Confirmed years and arithmetic
+stay release data. This module does not generate people or insert rows.
 """
 
 from django.db import models

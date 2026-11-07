@@ -586,6 +586,65 @@ class PublicationEvaluatorTests(TestCase):
         self.assertEqual(release.status, UniverseRelease.Status.DRAFT)
         self.assertIsNone(release.published_at)
 
+    def test_candidate_fingerprints_are_compared_without_writes(self):
+        league = League.objects.create(
+            name='Candidate League',
+            slug='candidate-league',
+            tier=1,
+            active=True,
+        )
+        release = _release(league, 'fg-candidate', '', '')
+        stored = (release.catalog_fingerprint, release.validation_fingerprint)
+        catalog, validation = release_digests(release)
+        statements = []
+
+        def wrap(execute, sql, params, many, context):
+            statements.append(sql)
+            return execute(sql, params, many, context)
+
+        connection.execute_wrappers.append(wrap)
+        try:
+            stored_report = evaluate_release_publication(release)
+            candidate_report = evaluate_release_publication(
+                release,
+                candidate_fingerprints=(catalog, validation),
+            )
+        finally:
+            connection.execute_wrappers.remove(wrap)
+        self.assertFalse(any(
+            sql.lstrip().split(None, 1)[0].upper() in (
+                'INSERT', 'UPDATE', 'DELETE', 'REPLACE',
+            )
+            for sql in statements
+        ))
+        self.assertFalse(stored_report.catalog_digest_match)
+        self.assertFalse(stored_report.validation_digest_match)
+        self.assertEqual(stored_report.fingerprint_verification, 'mismatch')
+        self.assertIn(
+            'does not match the stored catalog fingerprint',
+            '\n'.join(stored_report.messages),
+        )
+        self.assertTrue(candidate_report.catalog_digest_match)
+        self.assertTrue(candidate_report.validation_digest_match)
+        self.assertEqual(candidate_report.fingerprint_verification, 'match')
+        self.assertEqual(candidate_report.catalog_digest, catalog)
+        self.assertEqual(candidate_report.validation_digest, validation)
+        self.assertIn(
+            'matches the candidate catalog fingerprint',
+            '\n'.join(candidate_report.messages),
+        )
+        self.assertEqual(
+            (release.catalog_fingerprint, release.validation_fingerprint),
+            stored,
+        )
+        release.refresh_from_db()
+        self.assertEqual(
+            (release.catalog_fingerprint, release.validation_fingerprint),
+            stored,
+        )
+        self.assertEqual(release.status, UniverseRelease.Status.DRAFT)
+        self.assertIsNone(release.published_at)
+
 
 def _depth_world(slug):
     league = League.objects.create(name=slug, slug=slug, tier=1, active=True)
