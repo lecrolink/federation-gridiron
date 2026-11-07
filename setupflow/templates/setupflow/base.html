@@ -1,0 +1,38 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#14352c">
+  <meta name="robots" content="noindex">
+  <title>{% block title %}Setup{% endblock %} · Federation Gridiron</title>
+  <link rel="stylesheet" href="{% static 'setupflow/setup.css' %}">
+</head>
+<body>
+  <div class="shell">
+    <header class="top">
+      <p class="brand">Federation Gridiron</p>
+      <p class="banner">Development prototype. Choices stay in this browser.</p>
+      {% if selected %}
+        <p class="chip">Your club: {{ selected.name }}</p>
+      {% endif %}
+      {% if show_steps %}
+        <nav class="steps" aria-label="Setup">
+          {% for step in steps %}
+            {% if step.href %}
+              <a href="{{ step.href }}"{% if step.current %} aria-current="step"{% endif %}>{{ step.label }}</a>
+            {% else %}
+              <span{% if step.current %} aria-current="step"{% endif %}>{{ step.label }}</span>
+            {% endif %}
+          {% endfor %}
+        </nav>
+      {% endif %}
+    </header>
+    <main>
+      {% block content %}{% endblock %}
+    </main>
+    {% block actions %}{% endblock %}
+  </div>
+</body>
+</html>

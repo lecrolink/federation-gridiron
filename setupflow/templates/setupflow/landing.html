@@ -1,0 +1,22 @@
+{% extends "setupflow/base.html" %}
+
+{% block title %}1970 setup{% endblock %}
+
+{% block content %}
+  <p class="kicker">1970 season</p>
+  <h1>Take a founding franchise</h1>
+  <p class="lede">You are the owner. The league has 24 clubs, and the first season has not been played.</p>
+  <ol class="path">
+    <li>Choose one founding franchise.</li>
+    <li>Keep or replace the general manager and the head coach.</li>
+    <li>Give each of them a few broad instructions.</li>
+  </ol>
+  <p>You do not call plays, set the depth chart, or edit ratings. The general manager handles contracts and trades. The head coach handles the lineup.</p>
+  <p>The clubs, cities, and staff on the next screens are placeholders. Taking a club here stores the choice in a cookie on this browser.</p>
+{% endblock %}
+
+{% block actions %}
+  <div class="actionbar">
+    <a class="button" href="{% url 'setupflow:franchises' %}">Choose a franchise</a>
+  </div>
+{% endblock %}
