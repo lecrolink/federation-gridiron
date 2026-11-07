@@ -1,6 +1,6 @@
 # Player lifecycle services
 
-Design only. Baseline is `main` at `6a37bb8c7caa5a49870bcc775c26676efaf9c190` (`Add Phase 5 timeline player and roster state`). The models and migration from that commit stay as merged. This document specifies the service workflow that will later write those rows. It does not add services, models, migrations, settings, or database rows.
+The lifecycle operations below remain the workflow for player state. `start_timeline` is now implemented in `timelines/services/timeline_start.py`. It calls `initialize_opening_state` only when the entire opening overlay is absent, and it does not call `materialize_draft_class`. The 1970 class stays on the shared release until a later draft transaction. Baseline for the lifecycle models is `main` at `6a37bb8c7caa5a49870bcc775c26676efaf9c190` (`Add Phase 5 timeline player and roster state`). The models and migration from that commit stay as merged. This document does not add models, migrations, settings, or database rows.
 
 Authority for the rows is [PLAYER_STATE_MODEL_PROPOSAL.md](PLAYER_STATE_MODEL_PROPOSAL.md) and `timelines/models.py`. The older phase list in [PLAYER_UNIVERSE_MODEL_PROPOSAL.md](PLAYER_UNIVERSE_MODEL_PROPOSAL.md) still bundles staff and scouting into a different phase 5 and still describes `PlayerCurrentRating` as the live rating. Those older statements are not the authority for this workflow. This document does not rewrite that file.
 
