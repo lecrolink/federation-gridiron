@@ -30,7 +30,7 @@ from contextlib import contextmanager
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import models, transaction
+from django.db import DEFAULT_DB_ALIAS, models, transaction
 
 from universe.people import (
     GM_PRIORITIES,
@@ -697,6 +697,47 @@ class TimelineFranchiseControl(TimelineChild):
         if not self.timeline_id:
             return None
         return self.timeline
+
+    def validate_constraints(self, exclude=None):
+        # Django compares a generated column that cites ``participant_id`` or
+        # ``franchise_id`` with that same column, so a second open stint looks
+        # like a duplicate. Check the stored key values directly.
+        excluded = set(exclude or ())
+        super().validate_constraints(
+            exclude=excluded | {'open_participant_key', 'open_franchise_key'},
+        )
+        if self.final_controlled_season is not None:
+            return
+        manager = type(self)._default_manager.using(self._state.db or DEFAULT_DB_ALIAS)
+        if 'open_participant_key' not in excluded and self.participant_id:
+            clash = manager.filter(open_participant_key=self.participant_id)
+            if self.pk:
+                clash = clash.exclude(pk=self.pk)
+            if clash.exists():
+                raise ValidationError({
+                    'open_participant_key': self.unique_error_message(
+                        type(self),
+                        ('open_participant_key',),
+                    ),
+                })
+        if (
+            'open_franchise_key' not in excluded
+            and self.timeline_id
+            and self.franchise_id
+        ):
+            clash = manager.filter(
+                timeline_id=self.timeline_id,
+                open_franchise_key=self.franchise_id,
+            )
+            if self.pk:
+                clash = clash.exclude(pk=self.pk)
+            if clash.exists():
+                raise ValidationError(
+                    self.unique_error_message(
+                        type(self),
+                        ('timeline', 'open_franchise_key'),
+                    )
+                )
 
     def extra_clean(self, errors):
         if not self.timeline_id or not self.participant_id or not self.franchise_id:
@@ -1893,6 +1934,29 @@ class RosterMembership(TimelineChild):
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
         _note_deferred(self.overlay_id)
+
+    def validate_constraints(self, exclude=None):
+        # Django compares this generated column with itself when the expression
+        # cites ``overlay_id``, so the second open membership looks like a
+        # duplicate. Check the stored overlay id directly.
+        excluded = set(exclude or ())
+        super().validate_constraints(exclude=excluded | {'open_overlay_key'})
+        if 'open_overlay_key' in excluded or self.end_week is not None or not self.overlay_id:
+            return
+        clash = type(self)._default_manager.using(
+            self._state.db or DEFAULT_DB_ALIAS,
+        ).filter(
+            open_overlay_key=self.overlay_id,
+        )
+        if self.pk:
+            clash = clash.exclude(pk=self.pk)
+        if clash.exists():
+            raise ValidationError({
+                'open_overlay_key': self.unique_error_message(
+                    type(self),
+                    ('open_overlay_key',),
+                ),
+            })
 
     def extra_clean(self, errors):
         if not self.overlay_id or not self.season_id:

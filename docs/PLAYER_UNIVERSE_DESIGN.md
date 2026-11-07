@@ -195,7 +195,7 @@ An optional involved mode, off by default, lets the owner pin up to five named p
 5. A future draft class or incoming staff class stays a universe row until that timeline's clock reaches the class year. Creating a timeline does not insert overlay rows for the 1988 class.
 6. The 1970 class is materialized during the opening draft, before the 1970 season, because that draft is part of setup rather than a later offseason.
 7. Publishing freezes the release. A correction is a new release. Existing timelines stay pinned, so a retune cannot change the 1970 roster or a class a timeline has already seen.
-8. Opening contracts and opening staff assignments are shared templates. `start_timeline` copies them into timeline rows. Later cuts, extensions, and firings update the copies.
+8. Opening contracts and opening staff assignments stay shared templates. The implemented `start_timeline` copies opening player assignments into timeline rows and leaves contracts and staff on the release. The 26 opening GM seats and the 26 opening head-coach seats remain `OpeningStaffAssignment` rows. Later cuts, extensions, and firings belong to a later service.
 9. Pre-1970 counting stats are the shared record book. They are display. Starting ratings and traits are what the 1970 simulator reads. The generator builds the counting stats so they agree with those ratings; the sim does not replay 1960–1969.
 10. Franchise identity, first and last active seasons, per-season conference and division membership, and expansion events are stored once on the release. Every timeline on that release introduces the same franchises in the same seasons.
 11. A year's draft class is fixed by the release and by `N(year)` on that schedule. Standings inside a timeline change pick order. They do not add or remove prospects.
@@ -223,6 +223,12 @@ An optional involved mode, off by default, lets the owner pin up to five named p
 
 `start_timeline` requires a published release. `N(year)` is computed from the schedule. It is not a settings constant and it is not `TEAM_COUNT`.
 
+The implemented `start_timeline` starts one human 1970 campaign on a published `fg-founding-2` release. It does not publish a release and it does not create a web page. Inputs are the release slug, the expected seed, the expected generator version, the Django user id, the campaign name, and the founding franchise slug. The service locks that `UniverseRelease` first and holds the lock through the identity lookup, the creation, and the commit. Lock order after that row is the `Timeline`, the `TimelineSeason`, the opening-state writes, then the `OwnerDirective`.
+
+One user may start more than one timeline on the same release. While the release lock is held, the service loads timelines on that release where the user is `created_by` or a participant, then compares each stored `name` with the requested name using Python `==`. The name is not part of the SQL filter. The comparison does not trim, casefold, or Unicode-normalize. Zero matches create a distinct timeline. One match returns unchanged, and writes nothing, only when the timeline, participant, control, season, directive, and opening overlay all match the request. A partial match, including a matching name with no participant, fails closed. More than one exact match fails closed and reports those timeline ids. A different name may use any legal founding franchise, including one this user controls on another timeline. There is no billing limit and no uniqueness migration in this service. A writer that never takes the release lock can still insert a second Python-equal name, because no database unique covers release, user, and name. Whether to add that constraint is a later decision.
+
+The created campaign is one active `Timeline` in phase `direction`, year 1970, season index 1; one active `TimelineParticipant`; one open `TimelineFranchiseControl`; one `TimelineSeason` on `y1970`, also in phase `direction`, with `expansion_gate` `not_expansion` and the progress flags false; and one unlocked `OwnerDirective` at the model defaults. `initialize_opening_state` then writes 1,378 `TimelinePlayer` rows, 1,378 `PlayerSeasonRating` rows, and 1,378 open week-0 `RosterMembership` rows, all available. That call runs only when the entire opening overlay is absent. The counts are 494 starters, 546 backups, 208 taxi players, and 130 free agents: 1,248 rostered memberships and 130 free-agent memberships with a null franchise. Current ratings equal the shared initial ratings. Missing franchise-control rows are the AI clubs. The service checks the approved neutral 26-club order in memory and does not store it. It does not call `materialize_draft_class`. It does not create prospect overlays, draft picks, a board, games, standings, contracts, timeline staff, development events, expansion choices, pins, kickoff rows, or audit rows. The management command is `start_timeline`. It requires every input, calls only the service, and prints `created` or `unchanged` with the five ids and the opening counts.
+
 ### Publication
 
 `evaluate_release_publication` is read-only. By default it compares the fingerprints stored on the release with freshly computed `catalog-sha256-v1` and `validation-sha256-v1` digests. It does not save the release or any child. An optional `candidate_fingerprints` argument compares those candidates with a fresh computation and still does not write.
@@ -230,6 +236,8 @@ An optional involved mode, off by default, lets the owner pin up to five named p
 `publish_universe_release` is the only writer of the publication fields. It runs in `transaction.atomic()`, locks the release with `select_for_update()` through the shared release lock, and checks the supplied slug, seed, generator version, and league before it evaluates. It computes both digests from the locked draft and evaluates every gate against those candidates before any publication field is saved. Fingerprints are stored only when every required gate passes, in the same transaction as `status = published` and a timezone-aware `published_at`. The write touches only `catalog_fingerprint`, `validation_fingerprint`, `status`, and `published_at`. A failed gate or any exception rolls the transaction back, so placeholder or blank fingerprints stay as they were.
 
 Publication is irreversible. The service has no unpublish path. An identical rerun of a published release returns unchanged only when the supplied identity matches, `published_at` is present, both stored fingerprints are lowercase 64-character hex, recomputation matches those stored digests, and every read-only gate still passes. That path preserves `published_at` and both fingerprints. Any other result on a published release fails closed and does not rewrite the row. Timeline creation still requires `status = published`.
+
+Production publication freezes franchise `display_name` values and provisional city and nickname values, including rows whose city or nickname status is still `provisional`. After `status` is `published`, an ordinary save or delete of `UniverseFranchise` or `ProvisionalFranchiseName` is refused, so those stored strings stay as published. `start_timeline` does not change them. The catalog fingerprint does not include `display_name`. The validation fingerprint includes franchise names and provisional names. Tests of publication and of timeline start use disposable published fixtures. They do not publish the hosted release.
 
 The management command is `publish_universe_release`. It takes `--league-id`, `--slug`, `--seed`, and `--generator`, calls the service, and prints `published` or `unchanged`. It has no force, skip-validation, repair, unpublish, or fingerprint-only option.
 
@@ -573,7 +581,7 @@ GM and head-coach identities = 1,038
 
 The 8 and 6 are still a staffing assumption. The `E(year)` addend is the minimum so each new club has a shared candidate. Adding more candidates above the floor increases the shared staff count and does not change the franchise schedule.
 
-A timeline creates overlay rows for the initial 200 at `start_timeline`, because the owner may hire any unemployed member before the season. An incoming staff class is materialized in the offseason of its debut year, the same way a draft class is. New staff are not invented inside one timeline, so two timelines are hiring from the same people.
+The implemented `start_timeline` does not create staff overlay rows. Opening GM and head-coach seats stay on the shared `OpeningStaffAssignment` rows. A later service may create overlay rows for the initial unemployed staff when the owner can hire before the season. An incoming staff class is materialized in the offseason of its debut year, the same way a draft class is. New staff are not invented inside one timeline, so two timelines are hiring from the same people.
 
 Initial staff draw schemes that exist in 1970: `power_run`, `option`, `pro_style` on offense, and `stop_run` or `balanced` on defense. A coach who debuts in a later class may draw that era's schemes (`west_coast` from 1987, `air_raid` from the spread era).
 
@@ -1206,7 +1214,7 @@ Unused columns on a season row stay 0. One row shape covers every position and e
 
 ### Timeline player overlay
 
-Created for opening-cohort players at `start_timeline`, for a draft class when that class is materialized, and never for the archive cohort.
+Created for opening-cohort players at `start_timeline`, for a draft class when that class is materialized, and never for the archive cohort. The implemented start copies the 1,378 opening players and does not materialize the 1970 class.
 
 | Field | Layer | Type | Range / units | Origin | Use |
 |-------|-------|------|---------------|--------|-----|
@@ -2121,7 +2129,7 @@ A future implementation can turn these into tests. This document does not add th
 1. `start_timeline` does not change universe player, GM, or coach counts.
 2. Two new timelines on one release have the same player keys, the same GM keys, the same coach keys, the same pre-1970 stat rows, the same 1970 pre-draft `(player, franchise, role)` tuples, the same free-agent pool, and the same 1970 prospect keys.
 3. Those timelines have no 1970–2029 stat rows and no draft picks until the owner finishes the opening decisions and the season runs.
-4. The 1970 draft class is the first class materialized. Materializing year Y creates no overlay whose class year is greater than Y.
+4. The 1970 draft class is the first class materialized, and that materialization is a later draft transaction. `start_timeline` does not materialize it. Materializing year Y creates no overlay whose class year is greater than Y.
 5. A pick, stint, injury, contract, rating change, award, or 1970-or-later stat written on timeline A is invisible to timeline B and does not update universe tables.
 6. Timeline `season_year` values lie in 1970–2029. Shared pro seasons lie in 1960–1969.
 7. `season_year = 1969 + season_index`, and a complete timeline has `season_index` 60 and `season_year` 2029.
@@ -2150,7 +2158,7 @@ A future implementation can turn these into tests. This document does not add th
 Suggested order when implementation is allowed:
 
 1. Represent founding and expansion franchises without a fixed team-count constant (separate work). Then generate and publish one universe release: the 32 placeholder franchises, the alignment in this document, the opening cohort, the archive, 1970–2029 classes sized by `N(year)`, staff classes including coordinators, and the 1976, 1995, 1999, and 2002 expansion events with their numeric rules filled in. That generator is not `fg-founding-1`.
-2. Timeline models and `start_timeline`, including the opening sequence through the 1970 draft and directives.
+2. `start_timeline` is implemented through phase `direction`: one human, one founding franchise, the 1970 season, the default owner directive, and the opening player overlay. The 1970 draft is a later transaction.
 3. Season clock that materializes the next class and the next staff class each offseason, stopping after 2029.
 4. Development, injuries, contracts, and awards, writing timeline rows only.
 
