@@ -2,7 +2,7 @@
 
 Cap-on profiles and the two v1 fingerprints are separate checks. The
 confirmed fg-founding-2 release also has to match the documented horizon,
-membership alignment, expansion rows, quota sums, population totals,
+the corrected membership alignment, expansion rows, quota sums, population totals,
 staff-signature uniqueness, zero franchise-history events, the two-chart
 opening depth rule, and the deterministic 1970 opening draft order.
 

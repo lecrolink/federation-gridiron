@@ -2,7 +2,9 @@
 
 fg-founding-1 is unchanged and does not call this module. This generator
 writes 32 placeholder franchises, 1,797 memberships, four expansion events,
-and the opening GM and head-coach pools. It does not write players,
+and the opening GM and head-coach pools. The 1976, 1977–1994, and 1999–2001
+seats are the corrected alignment. A published release is left unchanged;
+generating these seats is a new draft catalog. It does not write players,
 coordinators, expansion hires, era profiles, historical standings, or
 fingerprints, and it does not publish.
 
@@ -227,11 +229,27 @@ _ALIGN_1970 = (
     ('c2-d2', _teams(17, 18, 19, 20)),
     ('c2-d3', _teams(21, 22, 23, 24, 26)),
 )
+# 1976 only. d1 is the four-club Central role, d2 the five-club West role,
+# and d3 the five-club East role. The two expansion slugs exchange
+# conferences for this season and are not historical franchises.
 _ALIGN_1976 = (
-    ('c1-d1', _teams(1, 2, 3, 4, 9, 10) + ('expansion-1976-01',)),
-    ('c1-d2', _teams(5, 6, 7, 8, 11, 12, 25)),
-    ('c2-d1', _teams(13, 14, 15, 16, 21, 22) + ('expansion-1976-02',)),
-    ('c2-d2', _teams(17, 18, 19, 20, 23, 24, 26)),
+    ('c1-d1', _teams(1, 2, 3, 4)),
+    ('c1-d2', _teams(5, 6, 7, 8) + ('expansion-1976-02',)),
+    ('c1-d3', _teams(9, 10, 11, 12, 25)),
+    ('c2-d1', _teams(13, 14, 15, 16)),
+    ('c2-d2', _teams(17, 18, 19, 20) + ('expansion-1976-01',)),
+    ('c2-d3', _teams(21, 22, 23, 24, 26)),
+)
+# 1977–1994. Conference-1 stays 4/5/5. Conference-2 is 5/4/5.
+# expansion-1976-01 returns to conference-1. expansion-1976-02 returns
+# to conference-2.
+_ALIGN_1977 = (
+    ('c1-d1', _teams(1, 2, 3, 4)),
+    ('c1-d2', _teams(5, 6, 7, 8) + ('expansion-1976-01',)),
+    ('c1-d3', _teams(9, 10, 11, 12, 25)),
+    ('c2-d1', _teams(13, 14, 15, 16) + ('expansion-1976-02',)),
+    ('c2-d2', _teams(17, 18, 19, 20)),
+    ('c2-d3', _teams(21, 22, 23, 24, 26)),
 )
 _ALIGN_1995 = (
     ('c1-d1', _teams(1, 2, 3, 4, 9)),
@@ -241,11 +259,12 @@ _ALIGN_1995 = (
     ('c2-d2', _teams(17, 18, 19, 20, 23)),
     ('c2-d3', ('founding-22', 'expansion-1976-02', 'founding-24', 'founding-26', 'expansion-1995-02')),
 )
+# Conference-1 is 6/5/5. d1 is the six-club Central role and holds
+# expansion-1999-01. Conference-2 stays the kept three divisions of five.
 _ALIGN_1999 = (
-    ('c1-d1', _teams(1, 2, 3, 4)),
-    ('c1-d2', _teams(5, 6, 7, 8)),
-    ('c1-d3', ('founding-10', 'expansion-1976-01', 'founding-12', 'founding-25')),
-    ('c1-d4', ('founding-09', 'founding-11', 'expansion-1995-01', 'expansion-1999-01')),
+    ('c1-d1', _teams(1, 2, 3, 4) + ('expansion-1995-01', 'expansion-1999-01')),
+    ('c1-d2', _teams(5, 6, 7, 8) + ('expansion-1976-01',)),
+    ('c1-d3', _teams(9, 10, 11, 12, 25)),
     ('c2-d1', _teams(13, 14, 15, 16, 21)),
     ('c2-d2', _teams(17, 18, 19, 20, 23)),
     ('c2-d3', ('founding-22', 'expansion-1976-02', 'founding-24', 'founding-26', 'expansion-1995-02')),
@@ -263,7 +282,8 @@ _ALIGN_2002 = (
 
 ALIGNMENTS = (
     (1970, 1975, _ALIGN_1970),
-    (1976, 1994, _ALIGN_1976),
+    (1976, 1976, _ALIGN_1976),
+    (1977, 1994, _ALIGN_1977),
     (1995, 1998, _ALIGN_1995),
     (1999, 2001, _ALIGN_1999),
     (2002, 2029, _ALIGN_2002),
@@ -1063,12 +1083,18 @@ def _validate_schedule_slice(release):
         (1970, 'founding-09', 'conference-1', 'd3', 1),
         (1975, 'founding-25', 'conference-1', 'd3', 5),
         (1975, 'founding-26', 'conference-2', 'd3', 5),
-        (1976, 'founding-09', 'conference-1', 'd1', 5),
-        (1976, 'expansion-1976-01', 'conference-1', 'd1', 7),
+        (1976, 'founding-09', 'conference-1', 'd3', 1),
+        (1976, 'expansion-1976-01', 'conference-2', 'd2', 5),
+        (1976, 'expansion-1976-02', 'conference-1', 'd2', 5),
+        (1977, 'expansion-1976-01', 'conference-1', 'd2', 5),
+        (1977, 'expansion-1976-02', 'conference-2', 'd1', 5),
+        (1994, 'expansion-1976-01', 'conference-1', 'd2', 5),
+        (1994, 'expansion-1976-02', 'conference-2', 'd1', 5),
         (1995, 'expansion-1995-02', 'conference-2', 'd3', 5),
         (1998, 'founding-09', 'conference-1', 'd1', 5),
-        (1999, 'founding-09', 'conference-1', 'd4', 1),
-        (1999, 'expansion-1999-01', 'conference-1', 'd4', 4),
+        (1999, 'founding-09', 'conference-1', 'd3', 1),
+        (1999, 'expansion-1999-01', 'conference-1', 'd1', 6),
+        (1999, 'expansion-1976-01', 'conference-1', 'd2', 5),
         (2001, 'expansion-1995-02', 'conference-2', 'd3', 5),
         (2002, 'expansion-2002-01', 'conference-2', 'd4', 4),
         (2029, 'founding-09', 'conference-1', 'd4', 1),
@@ -1087,6 +1113,34 @@ def _validate_schedule_slice(release):
             raise ScheduleGenerationError(
                 f'{slug} is in the wrong seat in {season_year}.'
             )
+    shape_checks = (
+        (1976, 'conference-1', (('d1', 4), ('d2', 5), ('d3', 5))),
+        (1976, 'conference-2', (('d1', 4), ('d2', 5), ('d3', 5))),
+        (1994, 'conference-1', (('d1', 4), ('d2', 5), ('d3', 5))),
+        (1994, 'conference-2', (('d1', 5), ('d2', 4), ('d3', 5))),
+        (1999, 'conference-1', (('d1', 6), ('d2', 5), ('d3', 5))),
+        (1999, 'conference-2', (('d1', 5), ('d2', 5), ('d3', 5))),
+        (2002, 'conference-1', (('d1', 4), ('d2', 4), ('d3', 4), ('d4', 4))),
+    )
+    for season_year, conference_slug, divisions in shape_checks:
+        for division_slug, size in divisions:
+            found = FranchiseSeasonMembership.objects.filter(
+                franchise__release=release,
+                season_year=season_year,
+                conference_slug=conference_slug,
+                division_slug=division_slug,
+            ).count()
+            if found != size:
+                raise ScheduleGenerationError(
+                    f'{season_year} {conference_slug} {division_slug} has '
+                    f'{found} clubs, not {size}.'
+                )
+    if FranchiseSeasonMembership.objects.filter(
+        franchise__release=release,
+        season_year__in=(1999, 2000, 2001),
+        division_slug='d4',
+    ).exists():
+        raise ScheduleGenerationError('1999–2001 uses a fourth division.')
     if FranchiseSeasonMembership.objects.filter(
         franchise__release=release,
         franchise__placeholder_slug='expansion-2002-01',

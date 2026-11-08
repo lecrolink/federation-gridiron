@@ -364,7 +364,7 @@ The profile key, the season span, and the style key on each row are approved. `y
 
 The approved style keys are `run-first` for 1970–1977, `passing-rules` for 1978–1986, `timing-specialists` for 1987–1994, `cap-and-size` for 1995–2003, `spread-influence` for 2004–2013, and `modern-passing` for 2014–2029. Each span holds one of those keys. A season with more franchises uses the same per-team quota and the same round count, multiplied by `N(year)`.
 
-`twelve_team_fill_to_six` is the approved stored value for 1999–2001: 12 teams, 6 from each conference, every division winner, wild cards filling that conference to 6, byes for the top two seeds in each conference, and a first round of 3 vs 6 and 4 vs 5. Conference-1 supplies 4 division winners and 2 wild cards. Conference-2 supplies 3 division winners and 3 wild cards. Order inside either group is outside that value. From 2002 the documented field is `twelve_team_4_and_2`: conference-2 gains its fourth division, so both conferences supply 4 winners and 2 wild cards. The field size, the byes, and the first-round pairings stay. 1995–1998 have three divisions in each conference, so they use the 8-team field of 3 winners and 1 wild card. 1976–1994 keep 2 winners and 2 wild cards. 1970–1975 keep 3 winners and 1 wild card. Those later playoff descriptions, other than the approved 1999–2001 value, remain unresolved card fields.
+`twelve_team_fill_to_six` is the approved stored value for 1999–2001: 12 teams, 6 from each conference, every division winner, wild cards filling that conference to 6, byes for the top two seeds in each conference, and a first round of 3 vs 6 and 4 vs 5. Conference-1 supplies 4 division winners and 2 wild cards. Conference-2 supplies 3 division winners and 3 wild cards. Order inside either group is outside that value. From 2002 the documented field is `twelve_team_4_and_2`: conference-2 gains its fourth division, so both conferences supply 4 winners and 2 wild cards. The field size, the byes, and the first-round pairings stay. 1995–1998 have three divisions in each conference, so they use the 8-team field of 3 winners and 1 wild card. 1976–1994 keep 2 winners and 2 wild cards. 1970–1975 keep 3 winners and 1 wild card. Those later playoff descriptions, other than the approved 1999–2001 value, remain unresolved card fields. The corrected alignment gives each conference three divisions in 1976–1994, and it gives conference-1 three divisions in 1999–2001. `eight_team_2_and_2` and `twelve_team_fill_to_six` stay the stored values, so their winner counts are not rewritten from those division sizes. `schedule_length` stays 16 for 1982 and 1987.
 
 ### Positions
 
@@ -634,12 +634,13 @@ Conferences stay `conference-1` and `conference-2` for the whole timeline. Twent
 | Seasons | Shape | Slots |
 |---------|--------|-------|
 | 1970–1975 | 2 conferences × (5 + 4 + 4) | `c1-d1`, `c1-d2`, `c1-d3`, `c2-d1`, `c2-d2`, `c2-d3` |
-| 1976–1994 | 2 conferences × 2 divisions × 7 teams | `c1-d1`, `c1-d2`, `c2-d1`, `c2-d2` |
+| 1976 | each conference is `d1` 4, `d2` 5, `d3` 5 | `c1-d1` … `c1-d3` and `c2-d1` … `c2-d3` |
+| 1977–1994 | conference-1 is `d1` 4, `d2` 5, `d3` 5; conference-2 is `d1` 5, `d2` 4, `d3` 5 | the same six divisions |
 | 1995–1998 | 2 conferences × 3 divisions × 5 teams | `c1-d1` … `c1-d3` and `c2-d1` … `c2-d3` |
-| 1999–2001 | conference-1 is 4 × 4; conference-2 stays 3 × 5 | `c1-d1` … `c1-d4` and `c2-d1` … `c2-d3` |
+| 1999–2001 | conference-1 is `d1` 6, `d2` 5, `d3` 5; conference-2 stays 3 × 5 | `c1-d1` … `c1-d3` and `c2-d1` … `c2-d3` |
 | 2002–2029 | 2 conferences × 4 divisions × 4 teams | `c1-d1` … `c1-d4` and `c2-d1` … `c2-d4` |
 
-No geographic names are assigned. `c1-d3` means the third division of conference 1, not a region. `slot_order` is an integer on the membership row. It is the order in the tables below. It is not a city, and after 1970 it is not alphabetical order of the slug.
+No geographic names are assigned, and no placeholder slug is a historical NFL club. `c1-d3` means the third division of conference 1, not a region. For 1976–1994 and for conference-1 in 1999–2001, `d1` is the Central-sized role, `d2` is the West-sized role, and `d3` is the East-sized role. Those are size roles for the stored slugs. They do not rename a franchise. `slot_order` is an integer on the membership row. It is the order in the tables below. It is not a city, and after 1970 it is not alphabetical order of the slug. The corrected 1976, 1977–1994, and 1999–2001 seats are a new catalog. A release already published with the previous seats keeps those rows. This generator does not edit a published release.
 
 **1970 through 1975.** Thirteen founding clubs in each conference. `founding-01` through `founding-24` keep the seats from the earlier four-club table. `founding-25` is order 5 of `c1-d3`. `founding-26` is order 5 of `c2-d3`.
 
@@ -652,16 +653,29 @@ No geographic names are assigned. `c1-d3` means the third division of conference
 | `c2-d2` | founding-17 | founding-18 | founding-19 | founding-20 | |
 | `c2-d3` | founding-21 | founding-22 | founding-23 | founding-24 | founding-26 |
 
-**1976 realignment.** `c1-d3` and `c2-d3` are retired. Each conference keeps its 13 founding clubs and adds one expansion club. Orders 1 and 2 of the retired division join that conference's first division as orders 5 and 6. Orders 3 and 4 join the second division as orders 5 and 6. The retired division's order 5 joins the second division as order 7. The one expansion club joins the first division as order 7. Every founding club stays in its original conference.
+**1976.** Each conference is a four-club `d1`, a five-club `d2`, and the five-club `d3` carried forward from 1970–1975. `expansion-1976-01` is order 5 of `c2-d2`. `expansion-1976-02` is order 5 of `c1-d2`. Founding clubs stay in the conference they held in 1975. The two expansion slugs are not Seattle and Tampa Bay. Their conferences are the approved path, and that path reverses in 1977.
 
-| Division | Orders 1–4, unchanged | Order 5 | Order 6 | Order 7 |
-|----------|----------------------|---------|---------|---------|
-| `c1-d1` | founding-01 … founding-04 | founding-09 | founding-10 | expansion-1976-01 |
-| `c1-d2` | founding-05 … founding-08 | founding-11 | founding-12 | founding-25 |
-| `c2-d1` | founding-13 … founding-16 | founding-21 | founding-22 | expansion-1976-02 |
-| `c2-d2` | founding-17 … founding-20 | founding-23 | founding-24 | founding-26 |
+| Division | Order 1 | Order 2 | Order 3 | Order 4 | Order 5 |
+|----------|---------|---------|---------|---------|---------|
+| `c1-d1` | founding-01 | founding-02 | founding-03 | founding-04 | |
+| `c1-d2` | founding-05 | founding-06 | founding-07 | founding-08 | expansion-1976-02 |
+| `c1-d3` | founding-09 | founding-10 | founding-11 | founding-12 | founding-25 |
+| `c2-d1` | founding-13 | founding-14 | founding-15 | founding-16 | |
+| `c2-d2` | founding-17 | founding-18 | founding-19 | founding-20 | expansion-1976-01 |
+| `c2-d3` | founding-21 | founding-22 | founding-23 | founding-24 | founding-26 |
 
-**1995 realignment.** Each conference has 14 continuing clubs and adds one expansion club, which is three divisions of five. Orders 1–5 of each 1976 division stay. The restored third division is orders 6 and 7 of the first division, then orders 6 and 7 of the second, then that conference's 1995 club.
+**1977 through 1994.** The same founding seats stay. `expansion-1976-01` moves to order 5 of `c1-d2` and stays there through 1994. `expansion-1976-02` moves to order 5 of `c2-d1` and stays there through 1994. Conference-1 remains 4, 5, and 5. Conference-2 is 5, 4, and 5.
+
+| Division | Order 1 | Order 2 | Order 3 | Order 4 | Order 5 |
+|----------|---------|---------|---------|---------|---------|
+| `c1-d1` | founding-01 | founding-02 | founding-03 | founding-04 | |
+| `c1-d2` | founding-05 | founding-06 | founding-07 | founding-08 | expansion-1976-01 |
+| `c1-d3` | founding-09 | founding-10 | founding-11 | founding-12 | founding-25 |
+| `c2-d1` | founding-13 | founding-14 | founding-15 | founding-16 | expansion-1976-02 |
+| `c2-d2` | founding-17 | founding-18 | founding-19 | founding-20 | |
+| `c2-d3` | founding-21 | founding-22 | founding-23 | founding-24 | founding-26 |
+
+**1995 realignment.** Each conference has 14 continuing clubs and adds one expansion club, which is three divisions of five. These seats are the kept 1995–1998 table. They are not produced by splitting the 1976 or 1977 divisions above.
 
 | Division | Order 1 | Order 2 | Order 3 | Order 4 | Order 5 |
 |----------|---------|---------|---------|---------|---------|
@@ -672,14 +686,13 @@ No geographic names are assigned. `c1-d3` means the third division of conference
 | `c2-d2` | founding-17 | founding-18 | founding-19 | founding-20 | founding-23 |
 | `c2-d3` | founding-22 | expansion-1976-02 | founding-24 | founding-26 | expansion-1995-02 |
 
-**1999 realignment.** `expansion-1999-01` joins conference-1. That conference becomes 16 clubs. Conference-2 stays 15. Orders 1–4 of each conference-1 division stay, and that division returns to four clubs. The new fourth division is order 5 of `c1-d1`, order 5 of `c1-d2`, order 5 of `c1-d3`, then `expansion-1999-01`. Conference-2 is unchanged from the 1995 table.
+**1999 realignment.** `expansion-1999-01` joins conference-1. That conference becomes 16 clubs in three divisions: `d1` has six, `d2` has five, and `d3` has five. There is no `c1-d4` in 1999–2001. `expansion-1999-01` is order 6 of `c1-d1`. It is the club the 1999 expansion event adds. It is not a historical franchise. Conference-2 stays 15 and is unchanged from the 1995 table.
 
-| Division | Order 1 | Order 2 | Order 3 | Order 4 |
-|----------|---------|---------|---------|---------|
-| `c1-d1` | founding-01 | founding-02 | founding-03 | founding-04 |
-| `c1-d2` | founding-05 | founding-06 | founding-07 | founding-08 |
-| `c1-d3` | founding-10 | expansion-1976-01 | founding-12 | founding-25 |
-| `c1-d4` | founding-09 | founding-11 | expansion-1995-01 | expansion-1999-01 |
+| Division | Order 1 | Order 2 | Order 3 | Order 4 | Order 5 | Order 6 |
+|----------|---------|---------|---------|---------|---------|---------|
+| `c1-d1` | founding-01 | founding-02 | founding-03 | founding-04 | expansion-1995-01 | expansion-1999-01 |
+| `c1-d2` | founding-05 | founding-06 | founding-07 | founding-08 | expansion-1976-01 | |
+| `c1-d3` | founding-09 | founding-10 | founding-11 | founding-12 | founding-25 | |
 
 Conference-2 in 1999–2001:
 
@@ -689,7 +702,16 @@ Conference-2 in 1999–2001:
 | `c2-d2` | founding-17 | founding-18 | founding-19 | founding-20 | founding-23 |
 | `c2-d3` | founding-22 | expansion-1976-02 | founding-24 | founding-26 | expansion-1995-02 |
 
-**2002 realignment.** `expansion-2002-01` joins conference-2, and that conference uses the same conversion. Conference-1 stays as it was in 1999. Both conferences then have 16 clubs in four divisions of four.
+**2002 realignment.** `expansion-2002-01` joins conference-2. Both conferences have 16 clubs in four divisions of four. Conference-1’s 2002 seats are the kept four-division table. They are not the 1999–2001 seats. Conference-2 is the kept conversion below.
+
+| Division | Order 1 | Order 2 | Order 3 | Order 4 |
+|----------|---------|---------|---------|---------|
+| `c1-d1` | founding-01 | founding-02 | founding-03 | founding-04 |
+| `c1-d2` | founding-05 | founding-06 | founding-07 | founding-08 |
+| `c1-d3` | founding-10 | expansion-1976-01 | founding-12 | founding-25 |
+| `c1-d4` | founding-09 | founding-11 | expansion-1995-01 | expansion-1999-01 |
+
+Conference-2 in 2002–2029:
 
 | Division | Order 1 | Order 2 | Order 3 | Order 4 |
 |----------|---------|---------|---------|---------|
@@ -698,11 +720,11 @@ Conference-2 in 1999–2001:
 | `c2-d3` | founding-22 | expansion-1976-02 | founding-24 | founding-26 |
 | `c2-d4` | founding-21 | founding-23 | expansion-1995-02 | expansion-2002-01 |
 
-`founding-09` plays in `c1-d3` through 1975, `c1-d1` from 1976 through 1998, and `c1-d4` from 1999 on. Continuing clubs stay in their original conference. A club that moved in one expansion year can move again in a later one. The 2002 shape is 2 conferences and 8 divisions of 4, which is the shape `league_generator.py` already builds as a 32-team tree. That generator still cannot represent 1970, 1976, 1995, or 1999. This document does not change it.
+`founding-09` plays in `c1-d3` slot 1 for 1970–1994 and again for 1999–2001. It plays in `c1-d1` slot 5 for 1995–1998 and in `c1-d4` slot 1 from 2002 on. Founding clubs stay in their original conference. `expansion-1976-01` changes conference in 1976 and again in 1977, then stays in conference-1 through 1994. `expansion-1976-02` does the reverse. A club that moved in one year can move again in a later one. The 2002 shape is 2 conferences and 8 divisions of 4, which is the shape `league_generator.py` already builds as a 32-team tree. That generator still cannot represent 1970, 1976, 1995, or 1999. This document does not change it.
 
 The schedule is shared universe data and is versioned with the release. Every timeline on that release activates the same franchises in the same seasons, in the same conferences and divisions. A timeline cannot vote a club into the league or change `N(year)`. After publish, editing the schedule means a new release. Timelines already pinned to the old release keep the old schedule.
 
-The years, franchise counts, and alignment shapes above are the confirmed first release. They are release data. The tables store `origin` and `owner_selectable` as their own columns, and they store conference and division as slugs. They do not hardcode 1970, 1976, 1995, 1999, 2002, 2029, 26 founding clubs, 60 seasons, or the era shapes as database checks. A later release with a different horizon does not need a migration to change those numbers.
+The years, franchise counts, and alignment shapes above are the confirmed release. They are release data. The tables store `origin` and `owner_selectable` as their own columns, and they store conference and division as slugs. They do not hardcode 1970, 1976, 1995, 1999, 2002, 2029, 26 founding clubs, 60 seasons, or the era shapes as database checks. A later release with a different horizon does not need a migration to change those numbers.
 
 Publication of the confirmed release still requires 26 founding franchises, playable seasons 1970–2029, expansion to 28 franchises in 1976, 30 in 1995, 31 in 1999, and 32 in 2002, the alignment tables above, and 1,797 franchise-season memberships. That check belongs to release publication (phase 8 in the model proposal). It is not a permanent limit on every row the database can store. The atomic publication service performs the check, as described in [Publication](#publication). `fg-founding-1` does not write this release. It remains the 24-club generator. The later version that writes `founding-01` through `founding-26` is a different generator version, because seating indexes 24 and 25 changes those two head-coach birth years.
 
@@ -737,7 +759,7 @@ One shared row per franchise per season in which it exists. This is the alignmen
 | `season_year` | Shared | smallint | inside the franchise's active span and the release's playable span; 1970–2029 for the confirmed release | Schedule author | Both |
 | `conference_slug` | Shared | slug | nonempty conference slug for that season; `conference-1` or `conference-2` in the confirmed release | Schedule author | Both |
 | `division_slug` | Shared | slug | nonempty division slug for that season; `d1`–`d4` as the confirmed alignment requires | Schedule author | Both |
-| `slot_order` | Shared | smallint | positive; 1–4, 1–5, or 1–7 in the confirmed alignment tables | Schedule author, from the alignment tables | Both |
+| `slot_order` | Shared | smallint | positive; 1–4, 1–5, or 1–6 in the confirmed alignment tables | Schedule author, from the alignment tables | Both |
 | `owner_selectable` | Shared | bool | a human may control this franchise during this season; true for every active season in the confirmed release; not a timeline-start flag; column default true | Schedule author | Both |
 
 Every active franchise on the confirmed release has `owner_selectable` true in every season it is active. False would mark that franchise as bot-only for that season, and no such row is scheduled. Realignment is a new membership row for the later season, using the alignment tables above. A timeline does not recompute conference, division, `slot_order`, or `owner_selectable` from standings. Eligibility to start a new timeline in 1970, 1976, 1995, 1999, or 2002 is not read from this flag. A later-start mode, if one is approved, keeps its rules in timeline-start configuration in a later phase. Phase 1 does not add that configuration.
