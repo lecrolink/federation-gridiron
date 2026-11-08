@@ -2127,3 +2127,120 @@ class DevelopmentEvent(TimelineChild):
         previous = _previous(self)
         if previous is not None and _changed(previous, self, _stored_names(self)):
             errors['event_index'] = 'A development event is written once.'
+
+
+class TimelineDraftSelection(TimelineChild):
+    """One immutable 1970 opening-draft selection.
+
+    ``created_at`` records when this selection row is inserted, not when the surrounding transaction commits.
+    Rows inserted in one transaction can therefore carry different timestamps.
+    ``overall_pick`` is the board order.
+    """
+
+    timeline = models.ForeignKey(
+        Timeline,
+        on_delete=models.CASCADE,
+        related_name='draft_selections',
+    )
+    season = models.ForeignKey(
+        TimelineSeason,
+        on_delete=models.CASCADE,
+        related_name='draft_selections',
+    )
+    overall_pick = models.PositiveSmallIntegerField()
+    round = models.PositiveSmallIntegerField()
+    slot_in_round = models.PositiveSmallIntegerField()
+    franchise = models.ForeignKey(
+        'universe.UniverseFranchise',
+        on_delete=models.PROTECT,
+        related_name='timeline_draft_selections',
+    )
+    overlay = models.ForeignKey(
+        TimelinePlayer,
+        on_delete=models.CASCADE,
+        related_name='draft_selections',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['timeline', 'season', 'overall_pick']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['timeline', 'season', 'overall_pick'],
+                name='unique_tl_draft_overall',
+            ),
+            models.UniqueConstraint(
+                fields=['timeline', 'season', 'round', 'slot_in_round'],
+                name='unique_tl_draft_round_slot',
+            ),
+            models.UniqueConstraint(
+                fields=['timeline', 'overlay'],
+                name='unique_tl_draft_overlay',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(overall_pick__gte=1, overall_pick__lte=442),
+                name='tl_draft_pick_range',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(round__gte=1, round__lte=17),
+                name='tl_draft_round_range',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(slot_in_round__gte=1, slot_in_round__lte=26),
+                name='tl_draft_slot_range',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    overall_pick=(
+                        (models.F('round') - 1) * 26 + models.F('slot_in_round')
+                    ),
+                ),
+                name='tl_draft_pick_arithmetic',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.timeline_id} {self.overall_pick}'
+
+    def bound_timeline(self):
+        if not self.timeline_id:
+            return None
+        return self.timeline
+
+    def extra_clean(self, errors):
+        if not self.timeline_id or not self.season_id or not self.franchise_id or (
+            not self.overlay_id
+        ):
+            return
+        timeline = self.timeline
+        season = self.season
+        if season.timeline_id != timeline.id:
+            errors['season'] = 'The season belongs to this timeline.'
+        elif season.season_year != 1970:
+            errors['season'] = 'The opening draft selection is the 1970 season.'
+        if self.franchise.release_id != timeline.release_id:
+            errors['franchise'] = 'The franchise belongs to this timeline\'s release.'
+        overlay = self.overlay
+        if overlay.timeline_id != timeline.id:
+            errors['overlay'] = 'The player overlay belongs to this timeline.'
+        else:
+            player = overlay.player
+            if player.release_id != timeline.release_id:
+                errors['overlay'] = 'The player belongs to this timeline\'s release.'
+            elif (
+                player.cohort != UniversePlayer.Cohort.DRAFT
+                or player.draft_pool != UniversePlayer.DraftPool.DRAFTABLE
+            ):
+                errors['overlay'] = 'The selection is a draftable prospect.'
+            elif (
+                player.draft_class_id is None
+                or player.draft_class.season_year != season.season_year
+            ):
+                errors['overlay'] = 'The prospect is in this season\'s draft class.'
+        if self.overall_pick != (self.round - 1) * 26 + self.slot_in_round:
+            errors['overall_pick'] = (
+                'The overall pick is (round - 1) * 26 + the slot in the round.'
+            )
+        previous = _previous(self)
+        if previous is not None and _changed(previous, self, _stored_names(self)):
+            errors['overall_pick'] = 'A draft selection is written once.'
