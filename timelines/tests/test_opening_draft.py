@@ -1,6 +1,9 @@
+import re
 import socket
+from collections import Counter
 from copy import deepcopy
 from pathlib import Path
+from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -26,7 +29,10 @@ from timelines.services.opening_draft import (
     OpeningDraftRefused,
     record_opening_draft,
 )
-from timelines.services.player_lifecycle import place_drafted_players
+from timelines.services.player_lifecycle import (
+    materialize_draft_class,
+    place_drafted_players,
+)
 from timelines.services.timeline_start import OPENING_COUNT, start_timeline
 from universe.generation.opening_draft_order import opening_draft_board
 from universe.generation.opening_players import generate_opening_players
@@ -55,6 +61,21 @@ def setUpModule():
 
 def tearDownModule():
     socket.socket.connect = _ORIGINAL_CONNECT
+
+
+def _statements(callback):
+    statements = []
+
+    def wrap(execute, sql, params, many, context):
+        statements.append(sql)
+        return execute(sql, params, many, context)
+
+    connection.execute_wrappers.append(wrap)
+    try:
+        result = callback()
+    finally:
+        connection.execute_wrappers.remove(wrap)
+    return result, statements
 
 
 def _writes(callback):
@@ -653,6 +674,93 @@ class OpeningDraftTests(TestCase):
         )
         self.assertEqual(self._opening_rows(), opening)
         self.assertEqual(self._shared_counts(), shared)
+
+    def test_complete_draft_stays_under_the_sqlite_statement_bound(self):
+        """One recorded board must not insert the class one row at a time.
+
+        The disposable MariaDB smoke measured 87,132 statements, 1,872
+        single-row inserts, and 22,611 savepoints. This SQLite run measured
+        150 statements, 28 inserts, 4 updates, 18 savepoints, and a repeated
+        rating-insert shape of 17. The 494 overlays, 494 ratings, 442
+        selections, and 442 memberships were 2, 18, 4, and 4 inserts.
+        SQLite splits the 35-column rating insert into batches of about 28.
+        MariaDB accepts the 400-row batch, so the same inserts are a handful
+        of statements. The ceiling stays far below one statement per player
+        or pick.
+        """
+        result, statements = _statements(self._call)
+        self.assertEqual(result.outcome, 'recorded')
+        self.assertEqual(result.selection_count, DRAFTABLE_COUNT)
+        inserts = [
+            sql for sql in statements
+            if sql.lstrip().split(None, 1)[0].strip('"').upper() == 'INSERT'
+        ]
+        updates = [
+            sql for sql in statements
+            if sql.lstrip().split(None, 1)[0].strip('"').upper() == 'UPDATE'
+        ]
+        savepoints = [
+            sql for sql in statements
+            if sql.lstrip().split(None, 1)[0].strip('"').upper() == 'SAVEPOINT'
+        ]
+        counts = Counter(statements)
+        tables = Counter()
+        for sql in inserts:
+            match = re.search(r'INSERT INTO "([^"]+)"', sql)
+            self.assertIsNotNone(match, sql)
+            tables[match.group(1)] += 1
+        class_size = DRAFTABLE_COUNT + UNDRAFTED_COUNT
+        # Measured on this SQLite: 150 statements, 28 inserts, 4 updates,
+        # 18 savepoints, and a repeated rating-insert shape of 17.
+        self.assertLess(len(statements), 400)
+        self.assertLess(len(inserts), 60)
+        self.assertLess(len(updates), 20)
+        self.assertLess(len(savepoints), 40)
+        self.assertLess(max(counts.values()), 40)
+        self.assertLess(max(counts.values()), DRAFTABLE_COUNT)
+        for table, rows in (
+            ('timelines_timelineplayer', class_size),
+            ('timelines_playerseasonrating', class_size),
+            ('timelines_timelinedraftselection', DRAFTABLE_COUNT),
+            ('timelines_rostermembership', DRAFTABLE_COUNT),
+        ):
+            self.assertGreater(tables[table], 0)
+            self.assertLess(tables[table], rows)
+
+    def test_partial_class_and_placement_do_not_use_bulk_insert(self):
+        draft_class = DraftClass.objects.get(
+            release=self.release,
+            season_year=1970,
+        )
+        TimelinePlayer.objects.create(
+            timeline=self.timeline,
+            player=self.undrafted[0],
+            status=TimelinePlayer.Status.PROSPECT,
+        )
+        with patch.object(QuerySet, 'bulk_create', side_effect=AssertionError('bulk')):
+            with self.assertRaises(ValidationError):
+                materialize_draft_class(self.timeline, draft_class, self.season)
+        self.assertEqual(
+            TimelinePlayer.objects.filter(timeline=self.timeline).exclude(
+                player__cohort=UniversePlayer.Cohort.OPENING,
+            ).count(),
+            1,
+        )
+        franchise = self.release.franchises.get(placeholder_slug='founding-01')
+        with patch.object(QuerySet, 'bulk_create', side_effect=AssertionError('bulk')):
+            with self.assertRaises(ValidationError):
+                place_drafted_players(
+                    self.timeline,
+                    self.season,
+                    [{
+                        'player': self.opening_player,
+                        'franchise': franchise,
+                        'role': 'backup',
+                        'position': self.opening_player.position,
+                        'availability': 'available',
+                        'start_week': 0,
+                    }],
+                )
 
 
 def patch_select(spy):

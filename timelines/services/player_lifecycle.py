@@ -2,9 +2,10 @@
 
 The approved workflow is docs/PLAYER_LIFECYCLE_SERVICES_PROPOSAL.md.
 Shared universe rows are read and never saved. Campaign rows are written
-with ``save()`` or, for one guarded rating, ``delete()``. The fresh
-1,378-player opening copy is the exception: it validates in memory and
-uses ``bulk_create``.
+with ``save()`` or, for one guarded rating, ``delete()``. Two complete
+cohorts validate in memory and use ``bulk_create``: the fresh 1,378-player
+opening copy, and a draft class whose overlays are all absent. A partial
+cohort still uses one ``save()`` per row.
 """
 
 from django.core.exceptions import ValidationError
@@ -407,7 +408,19 @@ def materialize_draft_class(timeline, draft_class, season):
             season.season_year > release.last_season_year
         ):
             _fail('The class year is inside this timeline and its release.')
-        players = list(draft_class.players.all())
+        players = list(
+            draft_class.players.select_related('rating_profile', 'draft_class')
+        )
+        if players and not TimelinePlayer.objects.filter(
+            timeline_id=timeline.pk,
+            player_id__in=[player.pk for player in players],
+        ).exists():
+            _require_active(timeline)
+            _require_published(timeline)
+            _reject_complete_phase(season)
+            from timelines.services.draft_copy import copy_absent_draft_class
+            copy_absent_draft_class(timeline, season, players)
+            return
         to_create = []
         for player in players:
             overlay = TimelinePlayer.objects.filter(timeline=timeline, player=player).first()
@@ -471,6 +484,9 @@ def place_drafted_players(timeline, season, placements):
         timeline = _lock_timeline(timeline)
         season = _lock_season(season)
         _season_on_timeline(season, timeline)
+        from timelines.services.draft_copy import place_fresh_draft_cohort
+        if place_fresh_draft_cohort(timeline, season, placements):
+            return
         seen = set()
         planned = []
         for record in placements:
