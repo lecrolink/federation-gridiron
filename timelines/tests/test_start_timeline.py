@@ -43,6 +43,7 @@ from timelines.services.opening_copy import (
     copy_fresh_opening,
     validate_opening_batch,
 )
+from timelines.services.player_lifecycle import OPENING_START_WEEK
 from timelines.services.timeline_start import (
     BACKUP_COUNT,
     FREE_AGENT_COUNT,
@@ -327,7 +328,7 @@ class StartTimelineTests(TestCase):
                 franchise__isnull=True,
                 role='free_agent',
                 availability='available',
-                start_week=0,
+                start_week=OPENING_START_WEEK,
                 end_week__isnull=True,
             ).count(),
             FREE_AGENT_COUNT,
@@ -815,6 +816,57 @@ class StartTimelineTests(TestCase):
         self.assertFalse(Timeline.objects.filter(name='Forced Conflict').exists())
         self.assertFalse(TimelineParticipant.objects.exists())
         self.assertFalse(TimelinePlayer.objects.exists())
+
+    def test_bulk_insert_integrity_error_rolls_the_start_back(self):
+        from timelines.services import opening_copy
+
+        real = opening_copy.bulk_insert_rows
+        seen = {}
+
+        def conflict(model, rows):
+            if model is RosterMembership and rows:
+                seen['during'] = (
+                    Timeline.objects.filter(name='Composed Rollback').count(),
+                    TimelineParticipant.objects.count(),
+                    TimelineFranchiseControl.objects.count(),
+                    TimelineSeason.objects.count(),
+                    OwnerDirective.objects.count(),
+                    TimelinePlayer.objects.count(),
+                    PlayerSeasonRating.objects.count(),
+                    RosterMembership.objects.count(),
+                )
+                first = rows[0]
+                rows = list(rows)
+                rows.append(RosterMembership(
+                    overlay_id=first.overlay_id,
+                    season_id=first.season_id,
+                    franchise_id=first.franchise_id,
+                    position=first.position,
+                    role=first.role,
+                    availability=first.availability,
+                    start_week=first.start_week,
+                ))
+            return real(model, rows)
+
+        with patch('timelines.services.opening_copy.bulk_insert_rows', conflict):
+            with self.assertRaises(TimelineStartRefused) as caught:
+                self._start(name='Composed Rollback')
+        self.assertIn('conflicts', str(caught.exception))
+        self.assertEqual(
+            seen['during'],
+            (1, 1, 1, 1, 0, OPENING_COUNT, OPENING_COUNT, 0),
+        )
+        for model in (
+            Timeline,
+            TimelineParticipant,
+            TimelineFranchiseControl,
+            TimelineSeason,
+            OwnerDirective,
+            TimelinePlayer,
+            PlayerSeasonRating,
+            RosterMembership,
+        ):
+            self.assertFalse(model.objects.exists(), model.__name__)
 
     def test_control_unique_index_is_a_domain_error(self):
         def boom(self, *args, **kwargs):

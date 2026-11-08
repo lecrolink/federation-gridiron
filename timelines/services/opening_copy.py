@@ -32,6 +32,7 @@ from timelines.models import (
     _status_for_role,
     deferred_lifecycle,
 )
+from timelines.services.player_lifecycle import OPENING_START_WEEK
 from universe.models import FranchiseSeasonMembership, UniverseFranchise
 from universe.people import PLAYER_COMPONENTS, POSITIONS, UniversePlayer
 
@@ -224,7 +225,7 @@ def _build_rows(timeline, season, assignments, availability_by_player):
             position=player_obj.position,
             role=assignment.role,
             availability=availability_by_player.get(assignment.player_id),
-            start_week=0,
+            start_week=OPENING_START_WEEK,
         )
         rows.append(_OpeningRow(assignment, overlay, rating, membership))
     return rows
@@ -395,11 +396,14 @@ def _check_availability(context):
         if membership.availability != availability:
             _fail('The membership stores the supplied availability.')
         if (
-            membership.start_week != 0
+            membership.start_week != OPENING_START_WEEK
             or membership.end_week is not None
             or membership.reason_ended is not None
         ):
-            _fail('An opening membership starts at week 0 and stays open.')
+            _fail(
+                'An opening membership starts at week %s and stays open.'
+                % OPENING_START_WEEK
+            )
 
 
 def _check_overlay(context):

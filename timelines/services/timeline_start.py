@@ -23,7 +23,10 @@ from timelines.models import (
     TimelineSeason,
 )
 from timelines.services.opening_copy import verify_open_control_keys
-from timelines.services.player_lifecycle import initialize_opening_state
+from timelines.services.player_lifecycle import (
+    OPENING_START_WEEK,
+    initialize_opening_state,
+)
 from universe.generation.opening_draft_order import (
     FOUNDING_SLUGS,
     opening_draft_order,
@@ -379,7 +382,7 @@ def _membership_matches(membership, season, assignment):
         and membership.position == assignment.player.position
         and membership.role == assignment.role
         and membership.availability == RosterMembership.Availability.AVAILABLE
-        and membership.start_week == 0
+        and membership.start_week == OPENING_START_WEEK
         and membership.end_week is None
         and membership.reason_ended is None
     )
