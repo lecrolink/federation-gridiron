@@ -184,7 +184,7 @@ class ScheduleReleaseTests(TestCase):
             self.release.franchises.filter(history_predecessor__isnull=False).exists()
         )
 
-    def test_alignment_follows_the_five_eras(self):
+    def test_alignment_follows_the_corrected_seats(self):
         def seat(year, slug):
             return FranchiseSeasonMembership.objects.get(
                 franchise__placeholder_slug=slug,
@@ -197,18 +197,35 @@ class ScheduleReleaseTests(TestCase):
         self.assertEqual(founding.slot_order, 1)
         self.assertEqual(
             (seat(1976, 'founding-09').division_slug, seat(1976, 'founding-09').slot_order),
+            ('d3', 1),
+        )
+        self.assertEqual(seat(1976, 'expansion-1976-01').conference_slug, 'conference-2')
+        self.assertEqual(
+            (seat(1976, 'expansion-1976-01').division_slug, seat(1976, 'expansion-1976-01').slot_order),
+            ('d2', 5),
+        )
+        self.assertEqual(seat(1976, 'expansion-1976-02').conference_slug, 'conference-1')
+        self.assertEqual(seat(1977, 'expansion-1976-01').conference_slug, 'conference-1')
+        self.assertEqual(
+            (seat(1977, 'expansion-1976-02').division_slug, seat(1977, 'expansion-1976-02').slot_order),
             ('d1', 5),
+        )
+        self.assertEqual(
+            (seat(1994, 'expansion-1976-01').conference_slug, seat(1994, 'expansion-1976-01').division_slug),
+            ('conference-1', 'd2'),
         )
         self.assertEqual(
             (seat(1998, 'founding-09').division_slug, seat(1998, 'founding-09').slot_order),
             ('d1', 5),
         )
         moved = seat(1999, 'founding-09')
-        self.assertEqual((moved.conference_slug, moved.division_slug, moved.slot_order), ('conference-1', 'd4', 1))
+        self.assertEqual((moved.conference_slug, moved.division_slug, moved.slot_order), ('conference-1', 'd3', 1))
         self.assertEqual(seat(2029, 'founding-09').division_slug, 'd4')
         self.assertEqual(seat(1970, 'founding-25').slot_order, 5)
-        self.assertEqual(seat(1976, 'expansion-1976-01').slot_order, 7)
-        self.assertEqual(seat(1999, 'expansion-1999-01').division_slug, 'd4')
+        self.assertEqual(
+            (seat(1999, 'expansion-1999-01').division_slug, seat(1999, 'expansion-1999-01').slot_order),
+            ('d1', 6),
+        )
         self.assertEqual(seat(2002, 'expansion-2002-01').conference_slug, 'conference-2')
         self.assertFalse(
             FranchiseSeasonMembership.objects.filter(
