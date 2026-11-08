@@ -211,6 +211,8 @@ The 1970 clock step from `direction` to `draft`. It is not a lifecycle writer. I
 
 The caller supplies all 442 selections. Each record carries the overall pick, round, slot, franchise slug, shared player, role, position, availability, and start week. The service recomputes `opening_draft_board` and requires that franchise. It requires each 1970 draftable player once. It does not read `board_rank` or `draft_participation`. An empty, partial, extra, duplicate, or mismatched list is refused before any write. A stored class overlay, pick, or drafted membership that is not already the exact board is refused and left in place.
 
+When the class is completely absent, `materialize_draft_class` validates that cohort in memory and inserts the overlays and ratings with bounded `bulk_create` batches. `record_opening_draft` inserts the 442 selections the same way. `place_drafted_players` does the same for a placement list whose players are all still prospects with no membership. A partial or mismatched cohort keeps one `save()` per row. Those bulk writes do not weaken database constraints, and they do not run for a cohort that is already partial.
+
 `created_at` on `TimelineDraftSelection` records when that selection row is inserted, not when the surrounding transaction commits.
 
 An exact completed board returns `unchanged` and does not write. `ValidationError` and `IntegrityError` become `OpeningDraftRefused`, and the release lock rolls the phase, overlays, ratings, selections, and placements back together.

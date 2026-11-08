@@ -9,6 +9,7 @@ pick, or repair a partial log.
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import DEFAULT_DB_ALIAS, IntegrityError
+from django.db.models import Prefetch
 
 from timelines.models import (
     RosterMembership,
@@ -132,20 +133,18 @@ def _draft_locked(release, seed, generator_version, user_id, name, selections):
         for overlay in TimelinePlayer.objects.filter(
             timeline_id=timeline.pk,
             player_id__in=draftable,
-        )
+        ).select_related('player', 'player__draft_class')
     }
     if len(overlays) != DRAFTABLE_COUNT:
         _fail('The draft class did not materialize the draftable prospects.')
-    for record in selections:
-        TimelineDraftSelection(
-            timeline=timeline,
-            season=season,
-            overall_pick=record['overall_pick'],
-            round=record['round'],
-            slot_in_round=record['slot_in_round'],
-            franchise=franchises[record['franchise_slug']],
-            overlay=overlays[record['player_id']],
-        ).save()
+    from timelines.services.draft_copy import copy_opening_selections
+    copy_opening_selections(
+        timeline,
+        season,
+        selections,
+        franchises,
+        overlays,
+    )
     place_drafted_players(
         timeline,
         season,
@@ -548,7 +547,13 @@ def _target_matches(timeline, season, selections, draftable, undrafted):
         for overlay in TimelinePlayer.objects.filter(
             timeline_id=timeline.pk,
             player_id__in=draftable,
-        ).prefetch_related('roster_memberships', 'season_ratings')
+        ).prefetch_related(
+            Prefetch(
+                'roster_memberships',
+                queryset=RosterMembership.objects.select_related('franchise'),
+            ),
+            'season_ratings',
+        )
     }
     if set(drafted_overlays) != set(draftable):
         return False
@@ -589,9 +594,12 @@ def _target_matches(timeline, season, selections, draftable, undrafted):
     for overlay in unsigned:
         if overlay.status != TimelinePlayer.Status.PROSPECT or overlay.retired_year is not None:
             return False
-        if overlay.roster_memberships.exists():
+        if list(overlay.roster_memberships.all()):
             return False
-        if not overlay.season_ratings.filter(season_id=season.pk).exists():
+        if not any(
+            rating.season_id == season.pk
+            for rating in overlay.season_ratings.all()
+        ):
             return False
     if TimelineDraftSelection.objects.filter(timeline_id=timeline.pk).exclude(
         overlay__player_id__in=draftable,
