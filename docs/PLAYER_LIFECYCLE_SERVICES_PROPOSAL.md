@@ -1,6 +1,6 @@
 # Player lifecycle services
 
-The lifecycle operations below remain the workflow for player state. `start_timeline` is now implemented in `timelines/services/timeline_start.py`. It calls `initialize_opening_state` only when the entire opening overlay is absent, and it does not call `materialize_draft_class`. The 1970 class stays on the shared release until a later draft transaction. Baseline for the lifecycle models is `main` at `6a37bb8c7caa5a49870bcc775c26676efaf9c190` (`Add Phase 5 timeline player and roster state`). The models and migration from that commit stay as merged. This document does not add models, migrations, settings, or database rows.
+The lifecycle operations below remain the workflow for player state. `start_timeline` is now implemented in `timelines/services/timeline_start.py`. It calls `initialize_opening_state` only when the entire opening overlay is absent, and it does not call `materialize_draft_class`. The 1970 class stays on the shared release until `record_opening_draft`, the direction-to-draft transaction in `timelines/services/opening_draft.py`. Baseline for the lifecycle models is `main` at `6a37bb8c7caa5a49870bcc775c26676efaf9c190` (`Add Phase 5 timeline player and roster state`). The models and migration from that commit stay as merged. This document does not add models, migrations, settings, or database rows.
 
 Authority for the rows is [PLAYER_STATE_MODEL_PROPOSAL.md](PLAYER_STATE_MODEL_PROPOSAL.md) and `timelines/models.py`. The older phase list in [PLAYER_UNIVERSE_MODEL_PROPOSAL.md](PLAYER_UNIVERSE_MODEL_PROPOSAL.md) still bundles staff and scouting into a different phase 5 and still describes `PlayerCurrentRating` as the live rating. Those older statements are not the authority for this workflow. This document does not rewrite that file.
 
@@ -30,6 +30,7 @@ The design's opening sequence, for a timeline that starts at the release's first
 | Design step | Lifecycle operation |
 |-------------|---------------------|
 | First `TimelineSeason` exists, before the rookie draft | `initialize_opening_state` |
+| 1970 phase moves from `direction` to `draft` | `record_opening_draft` |
 | The clock has reached a class year | `materialize_draft_class` |
 | A later draft service has chosen who joined which club | `place_drafted_players` |
 | During the season, a rating delta is already chosen | `record_development` |
@@ -203,6 +204,16 @@ Inserts prospect overlays and one initial rating each, for class members who had
 ### Failure
 
 A missing profile, a completed season, a class from another release, or a partial overlay aborts the transaction. The shared `DraftClass` is read to select the year and the players, and it is not saved.
+
+## `record_opening_draft`
+
+The 1970 clock step from `direction` to `draft`. It is not a lifecycle writer. It saves `Timeline.phase` and `TimelineSeason.phase`, inserts `TimelineDraftSelection` rows, and calls `materialize_draft_class` and `place_drafted_players`. Later seasons, standings order, trades, undrafted signings, and player selection stay outside it.
+
+The caller supplies all 442 selections. Each record carries the overall pick, round, slot, franchise slug, shared player, role, position, availability, and start week. The service recomputes `opening_draft_board` and requires that franchise. It requires each 1970 draftable player once. It does not read `board_rank` or `draft_participation`. An empty, partial, extra, duplicate, or mismatched list is refused before any write. A stored class overlay, pick, or drafted membership that is not already the exact board is refused and left in place.
+
+`created_at` on `TimelineDraftSelection` records when that selection row is inserted, not when the surrounding transaction commits.
+
+An exact completed board returns `unchanged` and does not write. `ValidationError` and `IntegrityError` become `OpeningDraftRefused`, and the release lock rolls the phase, overlays, ratings, selections, and placements back together.
 
 ## `place_drafted_players`
 
