@@ -2,7 +2,9 @@
 
 The approved workflow is docs/PLAYER_LIFECYCLE_SERVICES_PROPOSAL.md.
 Shared universe rows are read and never saved. Campaign rows are written
-with ``save()`` or, for one guarded rating, ``delete()``.
+with ``save()`` or, for one guarded rating, ``delete()``. The fresh
+1,378-player opening copy is the exception: it validates in memory and
+uses ``bulk_create``.
 """
 
 from django.core.exceptions import ValidationError
@@ -295,7 +297,7 @@ def initialize_opening_state(timeline, season, availability_by_player):
             _fail('Opening state is copied into the timeline\'s first season.')
         assignments = list(
             OpeningAssignment.objects.filter(release_id=timeline.release_id)
-            .select_related('player', 'player__rating_profile')
+            .select_related('player', 'player__rating_profile', 'franchise')
         )
         supplied = {}
         for key, value in availability_by_player.items():
@@ -347,6 +349,14 @@ def initialize_opening_state(timeline, season, availability_by_player):
         _require_active(timeline)
         _require_published(timeline)
         _reject_complete_phase(season)
+        if (
+            not overlays
+            and len(pending) == len(assignments)
+            and all(item[4] is None for item in pending)
+        ):
+            from timelines.services.opening_copy import copy_fresh_opening
+            if copy_fresh_opening(timeline, season, assignments, supplied):
+                return
         for assignment, profile, availability, expected_status, overlay in pending:
             if overlay is None:
                 overlay = TimelinePlayer(
