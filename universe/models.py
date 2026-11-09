@@ -676,20 +676,21 @@ class HistoricalStanding(models.Model):
 
 
 class OpponentPairing(models.Model):
-    """One regular-season opponent pairing for 1970–1977 or 1978–1989.
+    """One regular-season opponent pairing for 1970–1977, 1978–1989, or 1990–1994.
 
-    Both spans are project schedules built from membership, division role,
-    slot order, and season. Neither is a named-club NFL chart, and a row
+    These spans are project schedules built from membership, division role,
+    slot order, and season. None is a named-club NFL chart, and a row
     does not store a week, a bye, a kickoff, or a score.
     ``OpponentWeekAssignment`` points at a 1970–1977 row and does not change
-    it. A 1978–1989 row has no week assignment.
+    it. A 1978–1994 row has no week assignment.
 
     ``matrix_interconference`` counts only games between the 13 non-swing
     clubs in 1970–1977. In 1976 and 1977 that matrix has 27 games.
     ``swing_meeting`` is the one game between the two expansion swing clubs
     and is outside the matrix, so those seasons have 28 interconference
-    games. ``interconference`` is the 1978–1989 cyclic cross-conference
-    game. It is not part of that matrix.
+    games. ``interconference`` is the cyclic cross-conference game for
+    1978–1994. It is not part of that matrix. 1990–1994 continues the
+    same formula, so 1992–1994 repeat earlier opponent sets.
     """
 
     class Kind(models.TextChoices):
