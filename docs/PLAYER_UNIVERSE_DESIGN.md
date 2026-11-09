@@ -750,7 +750,17 @@ These seasons keep the 1977–1994 seats and the 1978 formula. `t` is the season
 
 The rotation modulus is 14, so 1992 repeats the 1978 opponent set, 1993 repeats 1979, and 1994 repeats 1980. The same seats make those home sites repeat as well. Those repeated 1992–1994 opponent sets and home sites are the approved continuation of the 14-year cycle. They are not a new chart. 1990 uses offsets 12, 0, and 2. 1991 uses 13, 1, and 3. Those two offset triples do not occur in 1978–1989.
 
-The writer reads the stored `schedule_length` and accepts only 16. That does not approve the unresolved `y1987` calendar `games` field, and it does not edit that card. `y1978` does not cover these seasons. A season still has 224 games. Five seasons store 1,120 rows. The writer leaves 1970–1989 pairings and 1970–1977 week assignments untouched. It does not assign weeks, byes, kickoffs, scores, standings, or simulation. The 16-week calendar is a separate project rule. Seasons after 1994 are not generated here. These rows are not part of either release fingerprint.
+The writer reads the stored `schedule_length` and accepts only 16. That does not approve the unresolved `y1987` calendar `games` field, and it does not edit that card. `y1978` does not cover these seasons. A season still has 224 games. Five seasons store 1,120 rows. The writer leaves 1970–1989 pairings and 1970–1977 week assignments untouched. It does not assign weeks, byes, kickoffs, scores, standings, or simulation. The 16-week calendar is a separate project rule. Seasons after 1994 are not generated here. 1995–1998 pairings are a separate writer. These rows are not part of either release fingerprint.
+
+### 1995–1998 opponent pairings
+
+These pairings are a project schedule for the stored 1995–1998 seats. They are not an NFL opponent chart, and they do not extend the 1978–1994 formula. Each conference has 15 clubs in `d1`, `d2`, and `d3`, five clubs each. Seats are numbered `d1`, then `d2`, then `d3`, slots ascending, as positions 0–14. The East/Central/West size order is not the order for this span. Every division has the same size.
+
+Every club plays each of the other 14 clubs in its conference once. Division games are single games. That is 4 division games and 10 other-conference games. Every club also plays two clubs in the other conference. `t` is the season minus 1995. Conference-1 position `p` plays conference-2 positions `p+t` and `p+t+5`, modulo 15. 1995 uses offsets 0 and 5. 1996 uses 1 and 6. 1997 uses 2 and 7. 1998 uses 3 and 8. Across these four seasons, 120 cross-conference position pairs meet once. The other 105 position pairs do not meet.
+
+A season has 60 division games, 150 other-conference games, and 30 `interconference` games, which is 240. Every club plays 16 and finishes 8 home and 8 away. The first host is the lower seat key: conference, then `d1` before `d2` before `d3`, then slot. The same unpinned home-repair search used for the earlier spans then runs with a home quota of 8.
+
+The writer reads the stored `schedule_length` and accepts only 16. That does not approve the unresolved `y1995` calendar `games` field, and it does not edit that card. Four seasons store 960 rows. The writer leaves 1970–1994 pairings and week assignments untouched. An empty 1995–1998 span is written in one transaction. An exact rerun writes nothing. A partial, extra, or mismatched set in that span is left as it was. It does not assign weeks, byes, kickoffs, scores, standings, or simulation. Seasons after 1998 are not generated here. These rows are not part of either release fingerprint.
 
 ### 1978–1994 week assignment
 
