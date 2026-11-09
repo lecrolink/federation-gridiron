@@ -337,7 +337,12 @@ class OpponentWeekTests(TestCase):
         with self.assertRaises(ValidationError):
             OpponentWeekAssignment(release=self.release, pairing=shared, week=3).save()
         with self.assertRaises(ValidationError):
-            OpponentWeekAssignment(release=self.release, pairing=fresh, week=15).save()
+            OpponentWeekAssignment(release=self.release, pairing=fresh, week=17).save()
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                OpponentWeekAssignment.objects.bulk_create([
+                    OpponentWeekAssignment(release=self.release, pairing=fresh, week=17),
+                ])
 
         other = UniverseRelease(
             slug='weeks-other',

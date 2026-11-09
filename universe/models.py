@@ -786,12 +786,12 @@ class OpponentPairing(models.Model):
 
 
 class OpponentWeekAssignment(models.Model):
-    """The project week for one stored 1970–1977 pairing.
+    """The project week for one stored opponent pairing.
 
-    The season has 14 regular-season weeks and no byes. This row points at
-    an ``OpponentPairing`` and does not copy or change that pairing's clubs,
-    kind, or season. It is not a historical NFL week and it stores no
-    kickoff.
+    1970–1977 seasons have 14 weeks and no byes. 1978–1994 seasons have 16
+    weeks and no byes. This row points at an ``OpponentPairing`` and does
+    not copy or change that pairing's clubs, kind, or season. It is not a
+    historical NFL week and it stores no kickoff.
     """
 
     release = models.ForeignKey(
@@ -817,7 +817,7 @@ class OpponentWeekAssignment(models.Model):
         ]
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(week__gte=1, week__lte=14),
+                condition=models.Q(week__gte=1, week__lte=16),
                 name='universe_opponent_week_range',
             ),
         ]
@@ -828,8 +828,8 @@ class OpponentWeekAssignment(models.Model):
     def clean(self):
         super().clean()
         errors = {}
-        if self.week is None or not 1 <= self.week <= 14:
-            errors['week'] = 'The week is from 1 through 14.'
+        if self.week is None or not 1 <= self.week <= 16:
+            errors['week'] = 'The week is from 1 through 16.'
         release = self.release if self.release_id else None
         pairing = self.pairing if self.pairing_id else None
         if pairing is not None and release is not None and pairing.release_id != release.pk:
