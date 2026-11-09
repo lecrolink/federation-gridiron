@@ -172,6 +172,21 @@ Conference and division for one franchise in one season. The same rows in every 
 - Rows: 1,797.
 - Created at release publication.
 
+### OpponentPairing
+
+Shared 1970–1977 opponent list. A project approximation from the corrected memberships, division roles, slot order, season, and stored `schedule_length`. It is not a named-club NFL chart. It has no week, bye, kickoff, or score. `ScheduleGame` remains the later timeline fixture.
+
+- Ownership: shared, one release.
+- Primary key: `BigAutoField`.
+- Foreign keys: `release` `CASCADE`; `home_franchise` and `away_franchise` `PROTECT`.
+- Fields: `season_year`; `kind` one of `division`, `intraconference`, `matrix_interconference`, `swing_conference`, `swing_meeting`; `created_at`.
+- Unique: `(release, season_year, home_franchise, away_franchise)`.
+- Database checks: the two clubs differ; `kind` is one of those five values. Model validation keeps the season inside the release and both clubs on that release. The football counts are the generator's check, not a database ceiling.
+- `matrix_interconference` is only the 13 non-swing clubs. It has 40 games in each season 1970–1975 and 27 in each of 1976 and 1977. `swing_meeting` is outside that matrix. 1976 and 1977 therefore have 28 interconference games. Season totals are 182 and 196. Eight seasons store 1,484 rows.
+- The 1972 special matching pairs East positions 0–4 with the same position, positions 5–7 at +5, and positions 8–12 at +10. 1976 removes the +10 matching and 1977 removes the +11 matching.
+- Application guard after publish. The generator writes an empty span in one transaction, returns unchanged on an exact rerun, and refuses a partial or mismatched set without deleting it.
+- Created for a draft `fg-founding-2` release. Later seasons are not generated here.
+
 ### FranchiseHistoryEvent
 
 Rename, relocation, or reorganization. The table exists so a later release can add one. This release inserts none.

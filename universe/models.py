@@ -7,8 +7,9 @@ does not choose the lock or move the row. Queryset updates, bulk operations,
 and direct SQL bypass them. Sanctioned bulk writers hold the same release
 lock. Constraints on these models cover
 single-table structure only. The confirmed 1970–2029 schedule is release
-data, checked when that release is generated and published. This module
-adds no database trigger.
+data, checked when that release is generated and published. Opponent
+pairings are the 1970–1977 project approximation and carry no week, score,
+or historical chart. This module adds no database trigger.
 """
 
 from django.core.exceptions import ValidationError
@@ -670,6 +671,109 @@ class HistoricalStanding(models.Model):
     save = save_release_child
     delete = child_delete(
         'A historical standing on a published release cannot be deleted.'
+    )
+
+
+class OpponentPairing(models.Model):
+    """One 1970–1977 regular-season opponent pairing.
+
+    This is a project approximation built from membership, division role,
+    slot order, and season. It is not a transcription of a named-club NFL
+    chart, and it does not store a week, a bye, a kickoff, or a score.
+
+    ``matrix_interconference`` counts only games between the 13 non-swing
+    clubs. In 1976 and 1977 that matrix has 27 games. ``swing_meeting`` is
+    the one game between the two expansion swing clubs and is outside the
+    matrix, so those seasons have 28 interconference games.
+    """
+
+    class Kind(models.TextChoices):
+        DIVISION = 'division', 'Division'
+        INTRACONFERENCE = 'intraconference', 'Intraconference'
+        MATRIX_INTERCONFERENCE = 'matrix_interconference', 'Matrix interconference'
+        SWING_CONFERENCE = 'swing_conference', 'Swing conference'
+        SWING_MEETING = 'swing_meeting', 'Swing meeting'
+
+    release = models.ForeignKey(
+        UniverseRelease,
+        on_delete=models.CASCADE,
+        related_name='opponent_pairings',
+    )
+    season_year = models.PositiveSmallIntegerField()
+    home_franchise = models.ForeignKey(
+        UniverseFranchise,
+        on_delete=models.PROTECT,
+        related_name='home_opponent_pairings',
+    )
+    away_franchise = models.ForeignKey(
+        UniverseFranchise,
+        on_delete=models.PROTECT,
+        related_name='away_opponent_pairings',
+    )
+    kind = models.CharField(max_length=32, choices=Kind.choices)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['release', 'season_year', 'home_franchise', 'away_franchise']
+        indexes = [
+            models.Index(
+                fields=['release', 'season_year'],
+                name='universe_opponent_season_idx',
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['release', 'season_year', 'home_franchise', 'away_franchise'],
+                name='unique_opponent_pairing_directed',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(home_franchise=models.F('away_franchise')),
+                name='universe_opponent_distinct_clubs',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(kind__in=[
+                    'division',
+                    'intraconference',
+                    'matrix_interconference',
+                    'swing_conference',
+                    'swing_meeting',
+                ]),
+                name='universe_opponent_kind',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.season_year} {self.home_franchise} vs {self.away_franchise}'
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.home_franchise_id and self.home_franchise_id == self.away_franchise_id:
+            errors['away_franchise'] = 'The home and away clubs differ.'
+        release = None
+        if self.release_id:
+            release = self.release
+            if (
+                self.season_year < release.first_season_year
+                or self.season_year > release.last_season_year
+            ):
+                errors['season_year'] = 'The season stays inside the release.'
+        for label, franchise in (
+            ('home_franchise', getattr(self, 'home_franchise', None) if self.home_franchise_id else None),
+            ('away_franchise', getattr(self, 'away_franchise', None) if self.away_franchise_id else None),
+        ):
+            if franchise is None or release is None:
+                continue
+            if franchise.release_id != release.pk:
+                errors[label] = 'The club belongs to this release.'
+        if release is not None:
+            _reject_published_child(self, release, errors, new_row_field='release')
+        if errors:
+            raise ValidationError(errors)
+
+    save = save_release_child
+    delete = child_delete(
+        'An opponent pairing on a published release cannot be deleted.'
     )
 
 
