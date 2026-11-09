@@ -730,7 +730,19 @@ The stored length for 1970–1977 is 14. Division rivals play home and away. One
 
 In 1976 and 1977 the expansion club seated at slot 5 of Central or West is the swing club. It plays the other 13 clubs in its conference once and the other swing club once. Conference 1 hosts that swing-club meeting in both seasons. Each non-swing club adds its own conference's swing club in place of the removed interconference game.
 
-The non-swing 13×13 matrix has 27 games in each of 1976 and 1977. The swing-club meeting is outside that matrix, so total interconference games are 28 in each of those seasons. Season totals are 88 division + 54 intraconference + 40 interconference = 182 in 1970–1975, and 88 division + 54 intraconference + 27 matrix interconference + 26 games against the home-conference swing club + 1 swing-club game = 196 in 1976–1977. Across 1970–1977 the matrix has 294 games: 125 pairs twice and 44 pairs once. Every club plays 14 and finishes 7 home and 7 away. Single-game sites come from the deterministic home-repair rule. The pairing writer does not assign weeks, byes, kickoffs, scores, or seasons after 1977.
+The non-swing 13×13 matrix has 27 games in each of 1976 and 1977. The swing-club meeting is outside that matrix, so total interconference games are 28 in each of those seasons. Season totals are 88 division + 54 intraconference + 40 interconference = 182 in 1970–1975, and 88 division + 54 intraconference + 27 matrix interconference + 26 games against the home-conference swing club + 1 swing-club game = 196 in 1976–1977. Across 1970–1977 the matrix has 294 games: 125 pairs twice and 44 pairs once. Every club plays 14 and finishes 7 home and 7 away. Single-game sites come from the deterministic home-repair rule. This pairing writer does not assign weeks, byes, kickoffs, or scores. It does not write seasons after 1977. The 1978–1989 pairings are a separate project rule.
+
+### 1978–1989 opponent pairings
+
+These pairings are a project schedule for the stored 1977–1994 seats. They are not an NFL opponent chart, and they do not extend the 1970–1977 matrix. One rule covers every season from 1978 through 1989. There is no 1987 split. The `y1978` and `y1987` calendar `games` fields stay unresolved. This writer does not edit those cards and does not treat the population table as approval of either field. It reads the stored `schedule_length` and accepts only 16.
+
+Each conference is numbered on its own: East (`d3`) slots in order, then Central (`d1`) slots in order, then West (`d2`) slots in order. Conference-1 is 5, 4, and 5 clubs. Conference-2 is 5, 5, and 4. Those seats are positions 0–13.
+
+Every club plays each of the other 13 clubs in its conference once. Division games are single games, not home-and-home. A club in a 4-team division plays 3 division games and 10 other conference games. A club in a 5-team division plays 4 and 9. Every club also plays three clubs in the other conference. In 1978, conference-1 position `p` plays conference-2 positions `p`, `p+2`, and `p+4`, modulo 14. Each later season adds 1 to all three offsets. Across these twelve seasons, 84 cross-conference pairs meet twice and 112 meet three times. None is missing.
+
+A season has 52 division games, 130 other conference games, and 42 `interconference` games, which is 224. `interconference` is not `matrix_interconference`. Every club plays 16 and finishes 8 home and 8 away. The first host is the lower seat key: conference, then East before Central before West, then slot. The same home-repair search used for 1970–1977 then runs with no pinned games and a home quota of 8.
+
+The writer leaves 1970–1977 pairings and week assignments untouched. An empty 1978–1989 span is written in one transaction. An exact rerun writes nothing. A partial, extra, or mismatched set in that span is left as it was. This writer does not assign weeks, byes, kickoffs, scores, standings, or simulation, and it does not schedule seasons after 1989. Twelve seasons store 2,688 rows. These rows are not part of either release fingerprint.
 
 ### 1970–1977 week assignment
 
