@@ -11,7 +11,8 @@ by club slug, then week number, and the games for that slot are tried in
 home-slug, away-slug order. The first complete assignment is kept. If the
 search finishes without one, the season cannot be scheduled and nothing is
 written. An exact rerun writes nothing. A partial or different set is left
-in place.
+in place. Week rows for 1978–1994 belong to the other writer. This one
+does not read or replace them.
 """
 
 from collections import defaultdict
@@ -363,7 +364,12 @@ def _stored_state(release, expected):
         ).values_list('pairing_id', 'week')
     )
     if not stored:
-        outside = OpponentWeekAssignment.objects.filter(release_id=release.pk).exists()
+        # Weeks from 1978 onward are a separate span. A stray week on an
+        # earlier pairing still means this span is not empty.
+        outside = OpponentWeekAssignment.objects.filter(
+            release_id=release.pk,
+            pairing__season_year__lt=FIRST_SEASON,
+        ).exists()
         if outside:
             return 'differ'
         return 'absent'

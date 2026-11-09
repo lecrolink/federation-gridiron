@@ -174,7 +174,7 @@ Conference and division for one franchise in one season. The same rows in every 
 
 ### OpponentPairing
 
-Shared opponent list for 1970–1977, 1978–1989, and 1990–1994. Each span is a project schedule from the corrected memberships, division roles, slot order, season, and stored `schedule_length`. None is a named-club NFL chart. A row has no week, bye, kickoff, or score. The week for a 1970–1977 row is `OpponentWeekAssignment`. A 1978–1994 row has no week. `ScheduleGame` remains the later timeline fixture.
+Shared opponent list for 1970–1977, 1978–1989, and 1990–1994. Each span is a project schedule from the corrected memberships, division roles, slot order, season, and stored `schedule_length`. None is a named-club NFL chart. A row has no week, bye, kickoff, or score. The week for a stored row is `OpponentWeekAssignment`. `ScheduleGame` remains the later timeline fixture.
 
 - Ownership: shared, one release.
 - Primary key: `BigAutoField`.
@@ -193,18 +193,19 @@ Shared opponent list for 1970–1977, 1978–1989, and 1990–1994. Each span is
 
 ### OpponentWeekAssignment
 
-Shared project week for one stored 1970–1977 `OpponentPairing`. The pairing row stays unchanged. Each season has 14 weeks and no byes, so each club plays one stored game each week. This is not an NFL week chart and not a kickoff.
+Shared project week for one stored `OpponentPairing`. The pairing row stays unchanged. A 1970–1977 season has 14 weeks and no byes, so each club plays one stored game each week. A 1978–1994 season has 16 weeks and no byes. Neither is an NFL week chart or a kickoff. The stored `schedule_length` counts games. It does not approve the unresolved `y1978` or `y1987` calendar `games` fields.
 
 - Ownership: shared, one release. The row stores `release` so the release lock resolves, and that release is the pairing's release.
 - Primary key: `BigAutoField`.
 - Foreign keys: `release` `CASCADE`; `pairing` `OneToOne` `PROTECT`.
-- Fields: `week` from 1 through 14; `created_at`.
+- Fields: `week` from 1 through 16; `created_at`. The 1970–1977 writer still stores only 1 through 14.
 - Unique: one assignment per pairing.
-- Database checks: `week` is from 1 through 14. A club appearing once in a week depends on both clubs of the pairing, so `clean()` and the generator check it. It is not a single-table unique key. Bulk insert does not call `clean()`.
-- The generator reads the stored pairings and searches the whole season. It writes every week in one transaction, or reports that the season cannot be scheduled and writes nothing. Tie-breaks are club slug, then week, then home slug and away slug. An exact rerun writes nothing. A partial or different set is left in place. Pairing rows are not updated.
-- Eight seasons store 1,484 rows, one per pairing. The rows are not part of either release fingerprint.
+- Database checks: `week` is from 1 through 16. A club appearing once in a week depends on both clubs of the pairing, so `clean()` and the generator check it. It is not a single-table unique key. Bulk insert does not call `clean()`.
+- The 1970–1977 generator reads the stored pairings and searches the whole season. It writes every week in one transaction, or reports that the season cannot be scheduled and writes nothing. Tie-breaks are club slug, then week, then home slug and away slug. An exact rerun writes nothing. A partial or different set is left in place. Pairing rows are not updated.
+- The 1978–1994 generator does not search. Weeks 1–13 are the paired circle rounds. Position 0 stays fixed, the other seats rotate by moving the last seat to the front, and opposite indexes are paired. Round 0 is 0–13, 1–12, 2–11, 3–10, 4–9, 5–8, and 6–7. Weeks 14–16 are offsets `t`, `t+2`, and `t+4` modulo 14, in that order, with `t = season − 1978`. The same seats repeat the 1978 weeks in 1992, the 1979 weeks in 1993, and the 1980 weeks in 1994. Missing or mismatched pairings store nothing.
+- Eight early seasons store 1,484 rows. Seventeen later seasons store 3,808 rows, one per pairing. The rows are not part of either release fingerprint.
 - Application guard after publish. Not a database trigger.
-- Created for a draft `fg-founding-2` release after the pairings exist. Later seasons, kickoffs, scoring, standings, and simulation are not generated here.
+- Created for a draft `fg-founding-2` release after the pairings exist. Kickoffs, scoring, standings, and simulation are not generated here.
 
 ### FranchiseHistoryEvent
 
