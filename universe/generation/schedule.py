@@ -62,6 +62,7 @@ from universe.models import (
     FranchiseSeasonMembership,
     HistoricalStanding,
     OpponentPairing,
+    OpponentWeekAssignment,
     ProvisionalFranchiseName,
     UniverseFranchise,
     UniverseRelease,
@@ -711,6 +712,10 @@ def _slice_matches(release, expected):
 
 
 def _refuse_blockers(release, franchises, old_keys):
+    if OpponentWeekAssignment.objects.filter(release=release).exists():
+        raise ScheduleGenerationError(
+            'Opponent week assignments are attached to this release.'
+        )
     if OpponentPairing.objects.filter(release=release).exists():
         raise ScheduleGenerationError(
             'Opponent pairings are attached to this release.'

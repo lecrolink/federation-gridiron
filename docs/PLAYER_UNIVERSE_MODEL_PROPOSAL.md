@@ -174,7 +174,7 @@ Conference and division for one franchise in one season. The same rows in every 
 
 ### OpponentPairing
 
-Shared 1970–1977 opponent list. A project approximation from the corrected memberships, division roles, slot order, season, and stored `schedule_length`. It is not a named-club NFL chart. It has no week, bye, kickoff, or score. `ScheduleGame` remains the later timeline fixture.
+Shared 1970–1977 opponent list. A project approximation from the corrected memberships, division roles, slot order, season, and stored `schedule_length`. It is not a named-club NFL chart. It has no week, bye, kickoff, or score. The week is `OpponentWeekAssignment`. `ScheduleGame` remains the later timeline fixture.
 
 - Ownership: shared, one release.
 - Primary key: `BigAutoField`.
@@ -186,6 +186,21 @@ Shared 1970–1977 opponent list. A project approximation from the corrected mem
 - The 1972 special matching pairs East positions 0–4 with the same position, positions 5–7 at +5, and positions 8–12 at +10. 1976 removes the +10 matching and 1977 removes the +11 matching.
 - Application guard after publish. The generator writes an empty span in one transaction, returns unchanged on an exact rerun, and refuses a partial or mismatched set without deleting it.
 - Created for a draft `fg-founding-2` release. Later seasons are not generated here.
+
+### OpponentWeekAssignment
+
+Shared project week for one stored 1970–1977 `OpponentPairing`. The pairing row stays unchanged. Each season has 14 weeks and no byes, so each club plays one stored game each week. This is not an NFL week chart and not a kickoff.
+
+- Ownership: shared, one release. The row stores `release` so the release lock resolves, and that release is the pairing's release.
+- Primary key: `BigAutoField`.
+- Foreign keys: `release` `CASCADE`; `pairing` `OneToOne` `PROTECT`.
+- Fields: `week` from 1 through 14; `created_at`.
+- Unique: one assignment per pairing.
+- Database checks: `week` is from 1 through 14. A club appearing once in a week depends on both clubs of the pairing, so `clean()` and the generator check it. It is not a single-table unique key. Bulk insert does not call `clean()`.
+- The generator reads the stored pairings and searches the whole season. It writes every week in one transaction, or reports that the season cannot be scheduled and writes nothing. Tie-breaks are club slug, then week, then home slug and away slug. An exact rerun writes nothing. A partial or different set is left in place. Pairing rows are not updated.
+- Eight seasons store 1,484 rows, one per pairing. The rows are not part of either release fingerprint.
+- Application guard after publish. Not a database trigger.
+- Created for a draft `fg-founding-2` release after the pairings exist. Later seasons, kickoffs, scoring, standings, and simulation are not generated here.
 
 ### FranchiseHistoryEvent
 

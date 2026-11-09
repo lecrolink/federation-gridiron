@@ -9,7 +9,8 @@ lock. Constraints on these models cover
 single-table structure only. The confirmed 1970–2029 schedule is release
 data, checked when that release is generated and published. Opponent
 pairings are the 1970–1977 project approximation and carry no week, score,
-or historical chart. This module adds no database trigger.
+or historical chart. Week assignments are separate rows that point at
+those pairings. This module adds no database trigger.
 """
 
 from django.core.exceptions import ValidationError
@@ -680,6 +681,7 @@ class OpponentPairing(models.Model):
     This is a project approximation built from membership, division role,
     slot order, and season. It is not a transcription of a named-club NFL
     chart, and it does not store a week, a bye, a kickoff, or a score.
+    ``OpponentWeekAssignment`` points at this row and does not change it.
 
     ``matrix_interconference`` counts only games between the 13 non-swing
     clubs. In 1976 and 1977 that matrix has 27 games. ``swing_meeting`` is
@@ -774,6 +776,85 @@ class OpponentPairing(models.Model):
     save = save_release_child
     delete = child_delete(
         'An opponent pairing on a published release cannot be deleted.'
+    )
+
+
+class OpponentWeekAssignment(models.Model):
+    """The project week for one stored 1970–1977 pairing.
+
+    The season has 14 regular-season weeks and no byes. This row points at
+    an ``OpponentPairing`` and does not copy or change that pairing's clubs,
+    kind, or season. It is not a historical NFL week and it stores no
+    kickoff.
+    """
+
+    release = models.ForeignKey(
+        UniverseRelease,
+        on_delete=models.CASCADE,
+        related_name='opponent_week_assignments',
+    )
+    pairing = models.OneToOneField(
+        OpponentPairing,
+        on_delete=models.PROTECT,
+        related_name='week_assignment',
+    )
+    week = models.PositiveSmallIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['release', 'week', 'pairing']
+        indexes = [
+            models.Index(
+                fields=['release', 'week'],
+                name='universe_opponent_week_idx',
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(week__gte=1, week__lte=14),
+                name='universe_opponent_week_range',
+            ),
+        ]
+
+    def __str__(self):
+        return f'week {self.week} pairing {self.pairing_id}'
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.week is None or not 1 <= self.week <= 14:
+            errors['week'] = 'The week is from 1 through 14.'
+        release = self.release if self.release_id else None
+        pairing = self.pairing if self.pairing_id else None
+        if pairing is not None and release is not None and pairing.release_id != release.pk:
+            errors['pairing'] = 'The pairing belongs to this release.'
+        if (
+            pairing is not None
+            and release is not None
+            and 'week' not in errors
+            and 'pairing' not in errors
+        ):
+            clubs = (pairing.home_franchise_id, pairing.away_franchise_id)
+            clash = OpponentWeekAssignment.objects.filter(
+                release_id=release.pk,
+                week=self.week,
+                pairing__season_year=pairing.season_year,
+            ).filter(
+                models.Q(pairing__home_franchise_id__in=clubs)
+                | models.Q(pairing__away_franchise_id__in=clubs)
+            )
+            if self.pk:
+                clash = clash.exclude(pk=self.pk)
+            if clash.exists():
+                errors['week'] = 'That club already plays in this week.'
+        if release is not None:
+            _reject_published_child(self, release, errors, new_row_field='release')
+        if errors:
+            raise ValidationError(errors)
+
+    save = save_release_child
+    delete = child_delete(
+        'An opponent week assignment on a published release cannot be deleted.'
     )
 
 
