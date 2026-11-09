@@ -5,8 +5,10 @@ release. Published-release data is not written here.
 
 Player identity, the initial 33-component profile, and potential stay on
 the universe player. A campaign stores an overlay, one rating row per
-season, roster membership, and development events. This module does not
-copy those shared facts, and it does not create campaigns or play seasons.
+season, roster membership, and development events. It can also store one
+division-place row per franchise for a season. That row is not a schedule
+and it does not change shared membership. This module does not copy those
+shared facts, and it does not create campaigns or play seasons.
 
 Deleting a timeline cascades to its own rows. Shared releases, franchises,
 people, rules, and expansion events use PROTECT, so a timeline delete cannot
@@ -944,6 +946,93 @@ class TimelineSeason(TimelineChild):
                 errors['directives_locked'] = (
                     'An unlocked owner directive cannot remain after the season locks directives.'
                 )
+
+
+class TimelineDivisionPlace(TimelineChild):
+    """One club's closed regular-season record and division place.
+
+    The place is the competition rank inside the division this franchise
+    played in ``season``. A null place means the winning percentage was not
+    unique. This is not the proposed ``Standing`` model: it stores no points,
+    no conference, and no division, and it does not choose opponents.
+    """
+
+    timeline = models.ForeignKey(
+        Timeline,
+        on_delete=models.CASCADE,
+        related_name='division_places',
+    )
+    season = models.ForeignKey(
+        TimelineSeason,
+        on_delete=models.CASCADE,
+        related_name='division_places',
+    )
+    franchise = models.ForeignKey(
+        'universe.UniverseFranchise',
+        on_delete=models.PROTECT,
+        related_name='timeline_division_places',
+    )
+    wins = models.PositiveSmallIntegerField()
+    losses = models.PositiveSmallIntegerField()
+    ties = models.PositiveSmallIntegerField()
+    division_place = models.PositiveSmallIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['timeline', 'season', 'franchise']
+        indexes = [
+            models.Index(
+                fields=['timeline', 'season'],
+                name='tl_div_place_season_idx',
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['timeline', 'franchise', 'season'],
+                name='unique_tl_div_place',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(division_place__isnull=True)
+                    | models.Q(division_place__gte=1)
+                ),
+                name='tl_div_place_positive',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.timeline_id} {self.season_id} {self.franchise_id}'
+
+    def bound_timeline(self):
+        if not self.timeline_id:
+            return None
+        return self.timeline
+
+    def extra_clean(self, errors):
+        if not self.timeline_id or not self.season_id or not self.franchise_id:
+            return
+        timeline = self.timeline
+        season = self.season
+        if season.timeline_id != timeline.id:
+            errors['season'] = 'The season belongs to this timeline.'
+            return
+        franchise = self.franchise
+        if franchise.release_id != timeline.release_id:
+            errors['franchise'] = 'The franchise belongs to this timeline\'s release.'
+            return
+        from universe.models import FranchiseSeasonMembership
+        if not FranchiseSeasonMembership.objects.filter(
+            franchise_id=franchise.id,
+            season_year=season.season_year,
+        ).exists():
+            errors['franchise'] = (
+                'The franchise has no membership in the season just played.'
+            )
+        if self.division_place is not None and self.division_place < 1:
+            errors['division_place'] = 'A division place starts at 1.'
+        previous = _previous(self)
+        if previous is not None and _changed(previous, self, _stored_names(self)):
+            errors['wins'] = 'A division place is written once.'
 
 
 class OwnerDirective(TimelineChild):

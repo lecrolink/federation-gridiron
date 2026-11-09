@@ -812,6 +812,16 @@ One shared row per franchise per season in which it exists. This is the alignmen
 
 Every active franchise on the confirmed release has `owner_selectable` true in every season it is active. False would mark that franchise as bot-only for that season, and no such row is scheduled. Realignment is a new membership row for the later season, using the alignment tables above. A timeline does not recompute conference, division, `slot_order`, or `owner_selectable` from standings. Eligibility to start a new timeline in 1970, 1976, 1995, 1999, or 2002 is not read from this flag. A later-start mode, if one is approved, keeps its rules in timeline-start configuration in a later phase. Phase 1 does not add that configuration.
 
+### Timeline division place
+
+`TimelineDivisionPlace` is one timeline-owned row for one franchise and one `TimelineSeason`. It stores that timeline's closed regular-season wins, losses, and ties, and a nullable division place. It is not the proposed `Standing` model. It stores no points, no conference, and no division.
+
+`record_division_places` accepts one win-loss-tie record for every franchise that has a `FranchiseSeasonMembership` in the season just played. It groups those franchises by the stored `conference_slug` and `division_slug` for that season. Winning percentage is the only rank. A tie counts as half a win and half a loss. A club with a unique percentage receives place `1` plus the number of clubs in that division with a strictly higher percentage. Every club that shares a percentage stores a null place. A record with no games has no percentage and stores a null place. The service does not use slug, `slot_order`, draft order, an HMAC, or an NFL tie-break.
+
+The service reads membership for the supplied season only. It does not read the next season's membership, and it does not write `placeholder_slug`, `origin`, active years, `slot_order`, `owner_selectable`, `conference_slug`, or `division_slug`. It does not generate or modify opponents, home and away sites, weeks, byes, or kickoffs. `OpponentPairing`, `OpponentWeekAssignment`, `HistoricalStanding`, and draft order stay untouched.
+
+There is no season-close flag separate from the phase chain. The service does not read or write `phase`, `setup_complete`, `directives_locked`, `regular_season_simulated`, or `postseason_complete`. Its precondition is an active timeline, a `TimelineSeason` for that year, and a complete nonnegative record for that year's memberships. An exact repeat writes nothing. A partial stored set, or a repeat that would change a stored record or place, is refused and the stored rows stay as they are. A null place is an unresolved tie. This slice does not turn places into an opponent list, and it does not implement an NFL opponent formula.
+
 ### History events
 
 Optional shared rows. None are required for the founding 26.

@@ -570,6 +570,21 @@ The clock for one year of one timeline.
 - Rows: 60 per completed timeline once a campaign is played through. This phase creates none of them, including the opening year.
 - Created later, at timeline creation for the opening season, then at season entry. Not by this migration.
 
+### TimelineDivisionPlace
+
+Implemented timeline row for one franchise and one `TimelineSeason`. This is not `Standing`.
+
+- Ownership: timeline.
+- Primary key: `BigAutoField`.
+- Foreign keys: `timeline` `CASCADE`; `season` to `TimelineSeason`, `CASCADE`; `franchise` to `UniverseFranchise`, `PROTECT`.
+- Fields: `wins`, `losses`, and `ties` `PositiveSmallIntegerField`; `division_place` `PositiveSmallIntegerField`, null when the winning percentage is shared or when the club played no games; `created_at`.
+- Unique: `(timeline, franchise, season)`.
+- Database checks: `division_place` is null or at least 1. Model validation requires the season to belong to the timeline, the franchise to belong to that release, and a membership in the season just played. A stored row cannot be edited.
+- Indexes: `(timeline, season)`.
+- Immutable once written. `record_division_places` inserts a complete season or writes nothing.
+- Rows: one per franchise with a membership in a season the service has recorded. The migration inserts none.
+- Created by `record_division_places`. The service ranks by winning percentage inside the stored division for that season. It does not apply an NFL tie-break, and it does not build opponents, sites, weeks, byes, or kickoffs. There is no season-close flag separate from the phase chain, so the service does not read or write those flags. The precondition is an active timeline, an existing season row, and one nonnegative record for every membership that season.
+
 ### SimulationAuditRecord
 
 The audit log for one kept event. The name is deliberately not `ReplayRecord`. A replay of a game is the kickoff snapshot plus this ordered log, not a row that already contains every snap.
@@ -974,6 +989,8 @@ A hash of `inputs` verifies a copy. It does not replace `inputs`. Without this r
 `verified` means the stored score was reproduced by replaying from `GameKickoffState` with the deterministic draws and the ordered audit log, or was just produced by that same function. The draw coordinates alone do not verify the score. Verification does not use a second random stream.
 
 ### Standing
+
+Proposed, and not implemented. The implemented division-place slice is `TimelineDivisionPlace`. That row stores wins, losses, ties, and a nullable place for one timeline. It does not store points or division slugs, and it does not apply an NFL tie-break or generate opponents. This proposed `Standing` model remains a later scoreboard.
 
 One row per franchise per season. Rebuildable from `GameResult`. Stored so the draft order and the standings page do not rescan every game.
 
