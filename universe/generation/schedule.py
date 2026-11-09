@@ -61,6 +61,7 @@ from universe.models import (
     FranchiseHistoryEvent,
     FranchiseSeasonMembership,
     HistoricalStanding,
+    OpponentPairing,
     ProvisionalFranchiseName,
     UniverseFranchise,
     UniverseRelease,
@@ -710,6 +711,10 @@ def _slice_matches(release, expected):
 
 
 def _refuse_blockers(release, franchises, old_keys):
+    if OpponentPairing.objects.filter(release=release).exists():
+        raise ScheduleGenerationError(
+            'Opponent pairings are attached to this release.'
+        )
     slugs = set(assignment_order())
     franchise_ids = [franchise.pk for franchise in franchises]
     extra = release.franchises.exclude(placeholder_slug__in=slugs)
