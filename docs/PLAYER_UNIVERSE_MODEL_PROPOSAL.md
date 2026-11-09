@@ -174,7 +174,7 @@ Conference and division for one franchise in one season. The same rows in every 
 
 ### OpponentPairing
 
-Shared opponent list for 1970–1977 and, separately, 1978–1989. Both are project schedules from the corrected memberships, division roles, slot order, season, and stored `schedule_length`. Neither is a named-club NFL chart. A row has no week, bye, kickoff, or score. The week for a 1970–1977 row is `OpponentWeekAssignment`. A 1978–1989 row has no week. `ScheduleGame` remains the later timeline fixture.
+Shared opponent list for 1970–1977, 1978–1989, and 1990–1994. Each span is a project schedule from the corrected memberships, division roles, slot order, season, and stored `schedule_length`. None is a named-club NFL chart. A row has no week, bye, kickoff, or score. The week for a 1970–1977 row is `OpponentWeekAssignment`. A 1978–1994 row has no week. `ScheduleGame` remains the later timeline fixture.
 
 - Ownership: shared, one release.
 - Primary key: `BigAutoField`.
@@ -187,8 +187,9 @@ Shared opponent list for 1970–1977 and, separately, 1978–1989. Both are proj
 - `interconference` is the 1978–1989 cyclic cross-conference game. It is not the 13×13 matrix. Each of those seasons has 52 division games, 130 other conference games, and 42 `interconference` games, which is 224. Twelve seasons store 2,688 rows. Every club plays 16 and finishes 8 home and 8 away. Division games are single games.
 - Seats in each conference are East (`d3`), then Central (`d1`), then West (`d2`), slots in order. Conference-1 is 5/4/5 and conference-2 is 5/5/4. In 1978, conference-1 position `p` plays conference-2 positions `p`, `p+2`, and `p+4`, modulo 14. Each later season adds 1 to all three offsets. Across 1978–1989, 84 cross-conference pairs meet twice and 112 meet three times.
 - The 1978–1989 writer reads the stored `schedule_length` and accepts only 16. That does not approve the unresolved `y1978` or `y1987` calendar `games` fields, and it does not edit those cards. It does not assign weeks, byes, kickoffs, scores, standings, or simulation, and it does not write seasons after 1989. It does not replace 1970–1977 rows.
+- 1990–1994 keeps that formula with `t = season - 1978`. The 14-year cycle repeats the 1978 opponent set in 1992, the 1979 set in 1993, and the 1980 set in 1994, including home sites. 1990 uses offsets 12, 0, and 2. 1991 uses 13, 1, and 3. Five seasons store 1,120 rows. The writer accepts a stored length of 16 and does not approve or edit the unresolved `y1987` games field. It assigns no weeks or byes. There is still no 16-game calendar rule. It does not replace earlier pairing rows. Seasons after 1994 are not generated here.
 - Application guard after publish. Each generator writes an empty span in one transaction, returns unchanged on an exact rerun, and refuses a partial or mismatched set without deleting it.
-- Created for a draft `fg-founding-2` release. Seasons after 1989 are not generated here.
+- Created for a draft `fg-founding-2` release.
 
 ### OpponentWeekAssignment
 

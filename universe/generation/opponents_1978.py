@@ -11,9 +11,10 @@ and accepts only 16, which is the length this rule uses.
 
 An empty 1978–1989 span is written in one transaction. An exact rerun
 returns ``unchanged`` and writes nothing. A partial, extra, or mismatched
-set in that span fails closed and is left as it was. 1970–1977 pairings
-and their week assignments are not read or replaced. This writer does not
-assign weeks, byes, kickoffs, scores, standings, or simulation.
+set in that span fails closed and is left as it was. 1970–1977 pairings,
+1990–1994 pairings, and week assignments are not read or replaced. This
+writer does not assign weeks, byes, kickoffs, scores, standings, or
+simulation.
 """
 
 from collections import Counter, defaultdict
@@ -70,15 +71,21 @@ _DIFFER = (
 )
 
 
-def cross_offsets(season_year):
+def formula_offsets(season_year):
     """Return ``t``, ``t+2``, and ``t+4`` modulo 14.
 
-    ``t`` is zero in 1978 and advances by one each season.
+    ``t`` is ``season_year - 1978``. The 1978–1989 writer accepts only its
+    own span. Later seasons that keep this formula use it from their writer.
     """
-    if not FIRST_SEASON <= season_year <= LAST_SEASON:
-        raise OpponentGenerationError('The cross-conference rotation covers 1978–1989.')
     step = season_year - FIRST_SEASON
     return tuple((step + delta) % POSITIONS for delta in (0, 2, 4))
+
+
+def cross_offsets(season_year):
+    """Return the 1978–1989 offsets for one season in that span."""
+    if not FIRST_SEASON <= season_year <= LAST_SEASON:
+        raise OpponentGenerationError('The cross-conference rotation covers 1978–1989.')
+    return formula_offsets(season_year)
 
 
 def generate_opponent_pairings_1978(league_id, seed):
@@ -180,7 +187,7 @@ def _raw_games(season_year, ordered):
             for right in nodes[left_at + 1:]:
                 kind = KIND_DIVISION if left[1] == right[1] else KIND_INTRA
                 games.append((kind, left, right))
-    offsets = cross_offsets(season_year)
+    offsets = formula_offsets(season_year)
     conference_1 = ordered[1]
     conference_2 = ordered[2]
     for index, left in enumerate(conference_1):
@@ -287,7 +294,7 @@ def _validate_season(season_year, pairings, ordered, franchise_at):
         raise OpponentGenerationError(f'{season_year} does not give every club 16 games.')
     if any(homes[franchise_id] != REQUIRED_SCHEDULE_LENGTH // 2 for franchise_id in franchises):
         raise OpponentGenerationError(f'{season_year} does not finish every club 8–8.')
-    offsets = set(cross_offsets(season_year))
+    offsets = set(formula_offsets(season_year))
     expected_cross = {
         (index, (index + offset) % POSITIONS)
         for index in range(POSITIONS)
@@ -391,6 +398,8 @@ def _seats_for(release, season_year):
 
 
 def _stored_state(release, expected):
+    # 1990–1994 rows are a separate span. They must not turn an exact
+    # 1978–1989 rerun into a mismatch, and this writer must not delete them.
     stored = list(
         OpponentPairing.objects.filter(
             release_id=release.pk,

@@ -744,6 +744,14 @@ A season has 52 division games, 130 other conference games, and 42 `interconfere
 
 The writer leaves 1970–1977 pairings and week assignments untouched. An empty 1978–1989 span is written in one transaction. An exact rerun writes nothing. A partial, extra, or mismatched set in that span is left as it was. This writer does not assign weeks, byes, kickoffs, scores, standings, or simulation, and it does not schedule seasons after 1989. Twelve seasons store 2,688 rows. These rows are not part of either release fingerprint.
 
+### 1990–1994 opponent pairings
+
+These seasons keep the 1977–1994 seats and the 1978 formula. `t` is the season minus 1978. Conference-1 position `p` plays conference-2 positions `p+t`, `p+t+2`, and `p+t+4`, modulo 14. The seat order is still East (`d3`), then Central (`d1`), then West (`d2`). Each club still plays the other 13 clubs in its conference once. Division games stay single games. Home repair is the same unpinned search with a quota of 8.
+
+The rotation modulus is 14, so 1992 repeats the 1978 opponent set, 1993 repeats 1979, and 1994 repeats 1980. The same seats make those home sites repeat as well. Those repeated 1992–1994 opponent sets and home sites are the approved continuation of the 14-year cycle. They are not a new chart. 1990 uses offsets 12, 0, and 2. 1991 uses 13, 1, and 3. Those two offset triples do not occur in 1978–1989.
+
+The writer reads the stored `schedule_length` and accepts only 16. That does not approve the unresolved `y1987` calendar `games` field, and it does not edit that card. `y1978` does not cover these seasons. A season still has 224 games. Five seasons store 1,120 rows. The writer leaves 1970–1989 pairings and 1970–1977 week assignments untouched. It does not assign weeks, byes, kickoffs, scores, standings, or simulation. The project still has no 16-game calendar or bye rule. Seasons after 1994 are not generated here. These rows are not part of either release fingerprint.
+
 ### 1970–1977 week assignment
 
 Each of these seasons has exactly 14 regular-season weeks and no byes. Each club plays exactly one of its 14 stored games in every week. `OpponentWeekAssignment` stores that week on its own row and points at the existing `OpponentPairing`. Generating weeks does not change the pairing's clubs, kind, identifier, or timestamp. This is a valid project schedule for these pairings. It is not the historical NFL week chart, and it stores no kickoff date or time.
