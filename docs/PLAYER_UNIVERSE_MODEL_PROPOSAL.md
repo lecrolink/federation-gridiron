@@ -174,18 +174,21 @@ Conference and division for one franchise in one season. The same rows in every 
 
 ### OpponentPairing
 
-Shared 1970–1977 opponent list. A project approximation from the corrected memberships, division roles, slot order, season, and stored `schedule_length`. It is not a named-club NFL chart. It has no week, bye, kickoff, or score. The week is `OpponentWeekAssignment`. `ScheduleGame` remains the later timeline fixture.
+Shared opponent list for 1970–1977 and, separately, 1978–1989. Both are project schedules from the corrected memberships, division roles, slot order, season, and stored `schedule_length`. Neither is a named-club NFL chart. A row has no week, bye, kickoff, or score. The week for a 1970–1977 row is `OpponentWeekAssignment`. A 1978–1989 row has no week. `ScheduleGame` remains the later timeline fixture.
 
 - Ownership: shared, one release.
 - Primary key: `BigAutoField`.
 - Foreign keys: `release` `CASCADE`; `home_franchise` and `away_franchise` `PROTECT`.
-- Fields: `season_year`; `kind` one of `division`, `intraconference`, `matrix_interconference`, `swing_conference`, `swing_meeting`; `created_at`.
+- Fields: `season_year`; `kind` one of `division`, `intraconference`, `interconference`, `matrix_interconference`, `swing_conference`, `swing_meeting`; `created_at`.
 - Unique: `(release, season_year, home_franchise, away_franchise)`.
-- Database checks: the two clubs differ; `kind` is one of those five values. Model validation keeps the season inside the release and both clubs on that release. The football counts are the generator's check, not a database ceiling.
-- `matrix_interconference` is only the 13 non-swing clubs. It has 40 games in each season 1970–1975 and 27 in each of 1976 and 1977. `swing_meeting` is outside that matrix. 1976 and 1977 therefore have 28 interconference games. Season totals are 182 and 196. Eight seasons store 1,484 rows.
+- Database checks: the two clubs differ; `kind` is one of those six values. Model validation keeps the season inside the release and both clubs on that release. The football counts are the generator's check, not a database ceiling.
+- `matrix_interconference` is only the 13 non-swing clubs in 1970–1977. It has 40 games in each season 1970–1975 and 27 in each of 1976 and 1977. `swing_meeting` is outside that matrix. 1976 and 1977 therefore have 28 interconference games. Season totals are 182 and 196. Eight seasons store 1,484 rows.
 - The 1972 special matching pairs East positions 0–4 with the same position, positions 5–7 at +5, and positions 8–12 at +10. 1976 removes the +10 matching and 1977 removes the +11 matching.
-- Application guard after publish. The generator writes an empty span in one transaction, returns unchanged on an exact rerun, and refuses a partial or mismatched set without deleting it.
-- Created for a draft `fg-founding-2` release. Later seasons are not generated here.
+- `interconference` is the 1978–1989 cyclic cross-conference game. It is not the 13×13 matrix. Each of those seasons has 52 division games, 130 other conference games, and 42 `interconference` games, which is 224. Twelve seasons store 2,688 rows. Every club plays 16 and finishes 8 home and 8 away. Division games are single games.
+- Seats in each conference are East (`d3`), then Central (`d1`), then West (`d2`), slots in order. Conference-1 is 5/4/5 and conference-2 is 5/5/4. In 1978, conference-1 position `p` plays conference-2 positions `p`, `p+2`, and `p+4`, modulo 14. Each later season adds 1 to all three offsets. Across 1978–1989, 84 cross-conference pairs meet twice and 112 meet three times.
+- The 1978–1989 writer reads the stored `schedule_length` and accepts only 16. That does not approve the unresolved `y1978` or `y1987` calendar `games` fields, and it does not edit those cards. It does not assign weeks, byes, kickoffs, scores, standings, or simulation, and it does not write seasons after 1989. It does not replace 1970–1977 rows.
+- Application guard after publish. Each generator writes an empty span in one transaction, returns unchanged on an exact rerun, and refuses a partial or mismatched set without deleting it.
+- Created for a draft `fg-founding-2` release. Seasons after 1989 are not generated here.
 
 ### OpponentWeekAssignment
 

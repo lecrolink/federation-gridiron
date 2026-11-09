@@ -14,7 +14,8 @@ is outside the matrix, so those seasons have 28 interconference games.
 An empty 1970–1977 span is written in one transaction. An exact rerun
 returns ``unchanged`` and writes nothing. A partial, extra, or mismatched
 stored set fails closed and is left as it was. A persistence error rolls
-the transaction back.
+the transaction back. Rows outside 1970–1977 belong to another writer and
+are not read or replaced here.
 """
 
 from collections import Counter, defaultdict
@@ -87,7 +88,7 @@ _DIFFER = (
 
 
 class OpponentGenerationError(Exception):
-    """The 1970–1977 opponent pairings cannot be written."""
+    """Opponent pairings cannot be written."""
 
 
 class Seat(NamedTuple):
@@ -754,8 +755,14 @@ def _directed_matrix(season_year):
 
 
 def _stored_state(release, expected):
+    # 1978–1989 rows are a separate span. They must not turn an exact
+    # 1970–1977 rerun into a mismatch, and this writer must not delete them.
     stored = list(
-        OpponentPairing.objects.filter(release_id=release.pk).values_list(
+        OpponentPairing.objects.filter(
+            release_id=release.pk,
+            season_year__gte=FIRST_SEASON,
+            season_year__lte=LAST_SEASON,
+        ).values_list(
             'season_year',
             'home_franchise_id',
             'away_franchise_id',

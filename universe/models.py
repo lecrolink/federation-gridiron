@@ -676,22 +676,26 @@ class HistoricalStanding(models.Model):
 
 
 class OpponentPairing(models.Model):
-    """One 1970–1977 regular-season opponent pairing.
+    """One regular-season opponent pairing for 1970–1977 or 1978–1989.
 
-    This is a project approximation built from membership, division role,
-    slot order, and season. It is not a transcription of a named-club NFL
-    chart, and it does not store a week, a bye, a kickoff, or a score.
-    ``OpponentWeekAssignment`` points at this row and does not change it.
+    Both spans are project schedules built from membership, division role,
+    slot order, and season. Neither is a named-club NFL chart, and a row
+    does not store a week, a bye, a kickoff, or a score.
+    ``OpponentWeekAssignment`` points at a 1970–1977 row and does not change
+    it. A 1978–1989 row has no week assignment.
 
     ``matrix_interconference`` counts only games between the 13 non-swing
-    clubs. In 1976 and 1977 that matrix has 27 games. ``swing_meeting`` is
-    the one game between the two expansion swing clubs and is outside the
-    matrix, so those seasons have 28 interconference games.
+    clubs in 1970–1977. In 1976 and 1977 that matrix has 27 games.
+    ``swing_meeting`` is the one game between the two expansion swing clubs
+    and is outside the matrix, so those seasons have 28 interconference
+    games. ``interconference`` is the 1978–1989 cyclic cross-conference
+    game. It is not part of that matrix.
     """
 
     class Kind(models.TextChoices):
         DIVISION = 'division', 'Division'
         INTRACONFERENCE = 'intraconference', 'Intraconference'
+        INTERCONFERENCE = 'interconference', 'Interconference'
         MATRIX_INTERCONFERENCE = 'matrix_interconference', 'Matrix interconference'
         SWING_CONFERENCE = 'swing_conference', 'Swing conference'
         SWING_MEETING = 'swing_meeting', 'Swing meeting'
@@ -736,6 +740,7 @@ class OpponentPairing(models.Model):
                 condition=models.Q(kind__in=[
                     'division',
                     'intraconference',
+                    'interconference',
                     'matrix_interconference',
                     'swing_conference',
                     'swing_meeting',
