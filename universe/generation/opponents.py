@@ -3,8 +3,9 @@
 This is a project approximation. It reads the corrected franchise-season
 memberships, the East/Central/West roles on ``d3``/``d1``/``d2``, slot
 order, the season, and the stored ``schedule_length``. It does not
-transcribe the NFL's named-club opponent charts, and it does not assign
-weeks, byes, kickoffs, scores, or later-era schedules.
+transcribe the NFL's named-club opponent charts. Week assignment is a
+separate writer and does not change these rows. This writer does not
+assign byes, kickoffs, scores, or later-era schedules.
 
 The 13-by-13 matrix counts games between non-swing clubs only. In 1976 and
 1977 that matrix has 27 games. The meeting of the two expansion swing clubs
