@@ -174,7 +174,7 @@ Conference and division for one franchise in one season. The same rows in every 
 
 ### OpponentPairing
 
-Shared opponent list for 1970–1977, 1978–1989, and 1990–1994. Each span is a project schedule from the corrected memberships, division roles, slot order, season, and stored `schedule_length`. None is a named-club NFL chart. A row has no week, bye, kickoff, or score. The week for a stored row is `OpponentWeekAssignment`. `ScheduleGame` remains the later timeline fixture.
+Shared opponent list for 1970–1977, 1978–1989, and 1990–1994. Each span is a project schedule from the corrected memberships, division roles, slot order, season, and stored `schedule_length`. None is a named-club NFL chart. A row has no week, bye, kickoff, or score. The week for a stored row is `OpponentWeekAssignment`. The 2002 timeline fixture is `ScheduleGame` and does not replace these shared rows.
 
 - Ownership: shared, one release.
 - Primary key: `BigAutoField`.
@@ -970,18 +970,32 @@ The derived rank, 1 through 4, inside one stored 2002 division. Same-place games
 
 ### ScheduleGame
 
-The fixture. Its identity is the replay game id.
+One 2002 regular-season fixture owned by one timeline. The clubs and the category are the fixture. A week, a bye, a kickoff, and a score are not on this row. The later replay fixture, with weeks and playoff games, is a different model and is not stored here.
+
+- Ownership: timeline and season.
+- Primary key: `BigAutoField`.
+- Foreign keys: `timeline` `CASCADE`; `home` and `away` to `UniverseFranchise`, `PROTECT`.
+- Fields: `season_year`; `kind` `regular`; `category` one of `division`, `conference`, `interconference`, `same_place`.
+- Unique: `(timeline, season_year, home, away)`.
+- Checks: home and away differ; the season is 2002 through 2020; the kind is regular; the category is one of those four. Model validation also requires the timeline season and both 2002 memberships. The service writes 2002 only. A request for 2003–2020 is refused because those seasons need the prior season's verified results and historical tiebreak resolution.
+- Indexes: `(timeline, season_year)`.
+- Immutable once written.
+- Rows: 256 for one timeline's 2002 season. Every club plays 16 and finishes 8 home and 8 away. 2003–2020 are not generated.
+- Created by the 2002 timeline-schedule service. An exact rerun writes nothing.
+
+### TimelineScheduleSeed
+
+The opening 1–4 permutation of one stored 2002 division. It is a schedule seed for a timeline that starts in 2002 or later. It is not a played standing and it is not a 2001 finish. A timeline that starts in 2001 or earlier cannot store one.
 
 - Ownership: timeline.
-- Primary key: `BigAutoField`. The replay id is `(timeline, season_year, week, home, away)`.
-- Foreign keys: `timeline` `CASCADE`; `home` and `away` to `UniverseFranchise`, `PROTECT`.
-- Fields: `season_year`; `week`; `kind` choices `regular` or `playoff`; `played` `BooleanField`.
-- Unique: `(timeline, season_year, week, home, away)`.
-- Checks: home and away differ; both memberships exist for that shared season. This later model decides which calendar weeks exist, which are byes, how many games each franchise plays, whether a franchise is scheduled in a week, and how postseason weeks are numbered. `schedule_length` remains games per franchise, not the maximum week.
-- Indexes: `(timeline, season_year, week)`.
-- Immutable: teams, year, week, kind. Mutable: `played`.
-- Rows: 14,308 regular-season games per completed timeline if the schedule lengths hold (1,092 + 392 + 3,808 + 960 + 744 + 4,864 + 2,448). Playoff games add a few hundred more, depending on byes and the field. They are not in the 14,308.
-- Created at season entry for the regular season. Playoff fixtures are created when the bracket is known.
+- Primary key: `BigAutoField`.
+- Foreign keys: `timeline` `CASCADE`; `franchise` to `UniverseFranchise`, `PROTECT`.
+- Fields: `season_year` 2002; `division_place` 1 through 4; the 2002 `conference_slug` and `division_slug`.
+- Unique: one seed per franchise; one place per 2002 division.
+- Checks: the season is 2002; the place is 1 through 4. Model validation refuses the row when `Timeline.start_season_year` is 2001 or earlier, and it requires the franchise's stored 2002 division.
+- Immutable once written. The permutation is HMAC-SHA256 of the release seed and `opening-2001-place:{conference}:{division}:{franchise slug}:{index}`. Place 1 is the lowest digest. The timeline id is not an input.
+- Rows: 32 per timeline that starts in 2002 or later and has a 2002 schedule. Zero when the timeline includes 2001.
+- Created in the same transaction as that timeline's 2002 fixtures. An exact rerun reads the seed and writes nothing.
 
 ### GameKickoffState
 

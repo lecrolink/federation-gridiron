@@ -2697,3 +2697,247 @@ class TimelineSchedulingRank(TimelineChild):
         previous = _previous(self)
         if previous is not None and _changed(previous, self, _stored_names(self)):
             errors['scheduling_rank'] = 'A scheduling rank is written once.'
+
+
+class ScheduleGame(TimelineChild):
+    """One 2002 regular-season fixture owned by a timeline.
+
+    The clubs and the category are the fixture. A calendar week, a bye, a
+    kickoff, and a score stay out of this row. Home and away are franchise
+    identities. A 2001 division place does not choose which club is stored.
+    """
+
+    class Kind(models.TextChoices):
+        REGULAR = 'regular', 'regular'
+
+    class Category(models.TextChoices):
+        DIVISION = 'division', 'division'
+        CONFERENCE = 'conference', 'conference'
+        INTERCONFERENCE = 'interconference', 'interconference'
+        SAME_PLACE = 'same_place', 'same_place'
+
+    timeline = models.ForeignKey(
+        Timeline,
+        on_delete=models.CASCADE,
+        related_name='schedule_games',
+    )
+    season_year = models.PositiveSmallIntegerField()
+    home = models.ForeignKey(
+        'universe.UniverseFranchise',
+        on_delete=models.PROTECT,
+        related_name='schedule_games_home',
+    )
+    away = models.ForeignKey(
+        'universe.UniverseFranchise',
+        on_delete=models.PROTECT,
+        related_name='schedule_games_away',
+    )
+    kind = models.CharField(max_length=16, choices=Kind.choices)
+    category = models.CharField(max_length=32, choices=Category.choices)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['timeline', 'season_year', 'home', 'away']
+        indexes = [
+            models.Index(
+                fields=['timeline', 'season_year'],
+                name='tl_schedule_game_season_idx',
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['timeline', 'season_year', 'home', 'away'],
+                name='unique_tl_schedule_game',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(home=models.F('away')),
+                name='tl_schedule_game_clubs',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(season_year__gte=2002, season_year__lte=2020),
+                name='tl_schedule_game_span',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(kind='regular'),
+                name='tl_schedule_game_kind',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(category__in=[
+                    'division',
+                    'conference',
+                    'interconference',
+                    'same_place',
+                ]),
+                name='tl_schedule_game_category',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.timeline_id} {self.season_year} {self.home_id} vs {self.away_id}'
+
+    def bound_timeline(self):
+        if not self.timeline_id:
+            return None
+        return self.timeline
+
+    def extra_clean(self, errors):
+        if not self.timeline_id:
+            return
+        if self.season_year < 2002 or self.season_year > 2020:
+            errors['season_year'] = (
+                'Schedule fixtures in this slice run from 2002 through 2020.'
+            )
+            return
+        if self.kind != self.Kind.REGULAR:
+            errors['kind'] = 'This slice stores regular-season fixtures.'
+        if self.category not in self.Category.values:
+            errors['category'] = (
+                'The category is division, conference, interconference, or same place.'
+            )
+        if self.home_id and self.away_id and self.home_id == self.away_id:
+            errors['away'] = 'Home and away are different franchises.'
+        if not TimelineSeason.objects.filter(
+            timeline_id=self.timeline_id,
+            season_year=self.season_year,
+        ).exists():
+            errors['season_year'] = 'The timeline has no season for this year.'
+        timeline = self.timeline
+        from universe.models import FranchiseSeasonMembership
+        for field_name in ('home', 'away'):
+            franchise_id = getattr(self, field_name + '_id')
+            if not franchise_id:
+                continue
+            franchise = getattr(self, field_name)
+            if franchise.release_id != timeline.release_id:
+                errors[field_name] = (
+                    'The franchise belongs to this timeline\'s release.'
+                )
+                continue
+            seated = FranchiseSeasonMembership.objects.filter(
+                franchise_id=franchise_id,
+                season_year=self.season_year,
+            ).exists()
+            if not seated:
+                errors[field_name] = 'The franchise is seated in this season.'
+        previous = _previous(self)
+        if previous is not None and _changed(previous, self, _stored_names(self)):
+            errors['home'] = 'A schedule fixture is written once.'
+
+
+class TimelineScheduleSeed(TimelineChild):
+    """Opening 1–4 permutation of one stored 2002 division.
+
+    This is a schedule seed for a timeline that did not play 2001. It is
+    not a played standing and it is not a 2001 finish. A timeline whose
+    start season is 2001 or earlier cannot store one.
+    """
+
+    timeline = models.ForeignKey(
+        Timeline,
+        on_delete=models.CASCADE,
+        related_name='schedule_seeds',
+    )
+    franchise = models.ForeignKey(
+        'universe.UniverseFranchise',
+        on_delete=models.PROTECT,
+        related_name='schedule_seeds',
+    )
+    season_year = models.PositiveSmallIntegerField()
+    division_place = models.PositiveSmallIntegerField()
+    conference_slug = models.CharField(max_length=32)
+    division_slug = models.CharField(max_length=32)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['timeline', 'conference_slug', 'division_slug', 'division_place']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['timeline', 'franchise', 'season_year'],
+                name='unique_tl_schedule_seed_franchise',
+            ),
+            models.UniqueConstraint(
+                fields=[
+                    'timeline',
+                    'season_year',
+                    'conference_slug',
+                    'division_slug',
+                    'division_place',
+                ],
+                name='unique_tl_schedule_seed_place',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(season_year=2002),
+                name='tl_schedule_seed_year',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(division_place__gte=1, division_place__lte=4),
+                name='tl_schedule_seed_place',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(conference_slug=''),
+                name='tl_schedule_seed_conference',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(division_slug=''),
+                name='tl_schedule_seed_division',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.timeline_id} {self.franchise_id} seed {self.division_place}'
+
+    def bound_timeline(self):
+        if not self.timeline_id:
+            return None
+        return self.timeline
+
+    def extra_clean(self, errors):
+        if self.season_year != 2002:
+            errors['season_year'] = 'The opening schedule seed is a 2002 rank.'
+            return
+        if self.division_place < 1 or self.division_place > 4:
+            errors['division_place'] = 'The opening seed place is 1 through 4.'
+        if not self.timeline_id or not self.franchise_id:
+            return
+        timeline = self.timeline
+        if timeline.start_season_year <= 2001:
+            errors['timeline'] = (
+                'A timeline that includes 2001 does not use a schedule seed.'
+            )
+            return
+        franchise = self.franchise
+        if franchise.release_id != timeline.release_id:
+            errors['franchise'] = (
+                'The franchise belongs to this timeline\'s release.'
+            )
+            return
+        from universe.models import FranchiseSeasonMembership
+        membership = FranchiseSeasonMembership.objects.filter(
+            franchise_id=self.franchise_id,
+            season_year=2002,
+        ).first()
+        if (
+            membership is None
+            or membership.conference_slug != self.conference_slug
+            or membership.division_slug != self.division_slug
+        ):
+            errors['franchise'] = (
+                'The opening seed uses the franchise\'s 2002 division seat.'
+            )
+        else:
+            clash = TimelineScheduleSeed.objects.filter(
+                timeline_id=self.timeline_id,
+                season_year=self.season_year,
+                conference_slug=self.conference_slug,
+                division_slug=self.division_slug,
+                division_place=self.division_place,
+            )
+            if self.pk:
+                clash = clash.exclude(pk=self.pk)
+            if clash.exists():
+                errors['division_place'] = (
+                    'That opening place is already stored in this division.'
+                )
+        previous = _previous(self)
+        if previous is not None and _changed(previous, self, _stored_names(self)):
+            errors['division_place'] = 'An opening schedule seed is written once.'
