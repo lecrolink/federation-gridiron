@@ -566,7 +566,7 @@ The clock for one year of one timeline.
 - Unique: `(timeline, season_year)`.
 - Database checks: phase and expansion gate are in their lists; `season_index` is at least 1; directives lock only after setup is complete; the regular season is marked simulated only after directives are locked, which also requires setup to be complete; postseason completion follows regular-season simulation; `phase = complete` requires `postseason_complete`, and therefore the earlier milestones; `completed_at` is set exactly when `phase` is `complete`. The opening flow does not lock directives before setup is complete. Model validation places the year inside the timeline and the release, requires `season_year = start_season_year + season_index - 1`, requires the profile to belong to the release and cover the year, and refuses `directives_locked` while an `OwnerDirective` for that season is still unlocked. It does not hardcode `1969 + season_index`. The header phase and the season phase are both stored. They are not forced to be equal. For 1976, 1995, 1999, and 2002, a later service may set `expansion_gate` to `ready` from the shared expansion arithmetic. It is not `blocked` because the timeline has too few free agents. Taxi does not count. A failure of the shared arithmetic is a release-publication error, not a reason to invent a person at season entry.
 - Indexes: the unique key; `(profile, season_year)`.
-- Immutable: `season_index`, `season_year`, `profile`, `timeline`. Mutable while the timeline is active: `phase`, `expansion_gate`, and the progress flags.
+- Immutable: `season_index`, `season_year`, `profile`, `timeline`. Mutable while the timeline is active: `phase`, `expansion_gate`, and the progress flags. For 2002 only, `save()` always refuses to change `regular_season_simulated` from false to true. Stored results, places, and draws do not authorize that change, because `save()` does not recompute the tiebreak or verify the draw digests. The 2002 close is the only supported writer. After it inserts and checks the rows, or after it recomputes and verifies a stored set whose flag is still false, it updates the locked season with a queryset filtered to that primary key and to the flag still false, changing only `regular_season_simulated`, and it requires a count of one row. An exact rerun of a season already marked complete does not write. Other season years, including 2001, still change the flag through `save()`. A general queryset `update` or direct SQL can bypass `save()`. Neither is a supported way to complete 2002.
 - Rows: 60 per completed timeline once a campaign is played through. This phase creates none of them, including the opening year.
 - Created later, at timeline creation for the opening season, then at season entry. Not by this migration.
 
@@ -996,6 +996,49 @@ The opening 1–4 permutation of one stored 2002 division. It is a schedule seed
 - Immutable once written. The permutation is HMAC-SHA256 of the release seed and `opening-2001-place:{conference}:{division}:{franchise slug}:{index}`. Place 1 is the lowest digest. The timeline id is not an input.
 - Rows: 32 per timeline that starts in 2002 or later and has a 2002 schedule. Zero when the timeline includes 2001.
 - Created in the same transaction as that timeline's 2002 fixtures. An exact rerun reads the seed and writes nothing.
+
+### ScheduleGameResult
+
+The project result for one stored 2002 `ScheduleGame`. It is not a historical NFL score, and it is not the simulation `GameResult` described later. This slice does not apply an overtime rule. The 2002–2003 Official Playing Rules were not available as text, and the 2003 rulebook governs 2003, so overtime is not stored.
+
+- Ownership: timeline.
+- Primary key: `BigAutoField`.
+- Foreign keys: `timeline` `CASCADE`; `game` one-to-one to `ScheduleGame`, `CASCADE`.
+- Fields: `season_year` 2002; `home_score`; `away_score`; `home_touchdowns`; `away_touchdowns`; `source_key`, the producing simulation or result source, at most 64 characters.
+- Unique: the game.
+- Checks: the season is 2002; `source_key` is non-empty; `home_score >= 6 × home_touchdowns` and `away_score >= 6 × away_touchdowns`. The database checks are portable `CHECK` constraints. Model validation and the close apply the same bound. It rejects a 0–0 result with touchdowns. Six points with one touchdown is allowed, and points above that multiple can be field goals, safeties, or tries, which this row does not store. Model validation also requires the result and its fixture to share a timeline, and the result's `season_year` to equal the fixture's `season_year`, both 2002 in this slice. A result labeled 2002 cannot point at a 2003 fixture. SQLite and MySQL check constraints cannot read the fixture row, so that link stays a model and service rule. Model validation refuses a new row after `regular_season_simulated` is set.
+- Indexes: `(timeline, season_year)`.
+- Immutable once written. A new row is not saved on its own. The close validates the complete 256-game set, then `bulk_create` writes it.
+- Rows: 256 per closed 2002 timeline.
+- Created by the 2002 close, in the same transaction as the division places and the completion flag.
+
+### TimelineDivisionDraw
+
+One resolving project draw for a 2002 division place. The hashed coordinate does not include the timeline id.
+
+- Ownership: timeline.
+- Primary key: `BigAutoField`.
+- Foreign keys: `timeline` `CASCADE`.
+- Fields: `season_year` 2002; `conference_slug`; `division_slug`; `draw_index`; `candidates`, the sorted franchise keys; `coordinate`; `digest`, the 64-character SHA-256 hex of that coordinate under the release seed; `chosen_slug`; `outcome`, the place and the chosen key.
+- Unique: one index per timeline, 2002 conference, and 2002 division.
+- Checks: the season is 2002; the coordinate, candidates, choice, and outcome are non-empty. Model validation requires a 64-character hex digest.
+- Immutable once written. The coordinate is `division-place:2002:{conference}:{division}:{sorted franchise keys}:{draw index}:{attempt}`.
+- Rows: one per draw the procedure needs. A step that separates the clubs stores no draw.
+- Created with the 2002 division places.
+
+### TimelineDivisionPlace
+
+The played 2002 place, 1 through 4, inside the franchise's stored 2002 division. It is not a scheduling rank and it does not change membership or `slot_order`.
+
+- Ownership: timeline.
+- Primary key: `BigAutoField`.
+- Foreign keys: `timeline` `CASCADE`; `franchise` to `UniverseFranchise`, `PROTECT`; `draw` one-to-one to `TimelineDivisionDraw`, `CASCADE`, null unless `resolved_by` is `draw`.
+- Fields: `season_year` 2002; `division_place`; `conference_slug`; `division_slug`; `resolved_by`, one of `winning_percentage`, `head_to_head`, `division_percentage`, `common_games`, `conference_percentage`, `strength_of_victory`, `strength_of_schedule`, `conference_rank`, `league_rank`, `common_net_points`, `net_points`, `net_touchdowns`, `draw`, or `sole_remaining`.
+- Unique: one place per franchise; one place value per 2002 division.
+- Checks: the season is 2002; the place is 1 through 4; a drawn place points at its draw and every other step does not. Model validation copies the conference and division from the 2002 membership.
+- Immutable once written. The whole division is stored together. `winning_percentage` is the standings comparison. The other names before `draw` are the 2002 tiebreak steps. Their arithmetic is a project rule where the 2002 text names the step and omits the formula, as described in the design. Inside one place, a reduction to exactly two clubs restarts at two-club head-to-head. That restart is the sourced 2002 rule. A reduction from four clubs to three continues at the next step. After one place is assigned, the procedure starts again for the clubs that remain.
+- Rows: 32 per closed 2002 timeline.
+- Created by the 2002 close after the results validate and before `regular_season_simulated` is set. An exact rerun writes nothing.
 
 ### GameKickoffState
 

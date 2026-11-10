@@ -21,8 +21,10 @@ service reassigns it. Phase 4 does not implement that service.
 
 The 2001-to-2002 scheduling draw is stored on the timeline that owns the
 derived ranks. Its random input is the release seed and the scheduling
-coordinate. The timeline id is not an input. Other random draws are not
-stored. This module does not simulate, and it does not insert campaigns.
+coordinate. The timeline id is not an input. The 2002 division-place draw
+uses that same release seed and its own coordinate, and it also omits the
+timeline id. This module does not simulate games, and it does not insert
+campaigns.
 """
 
 import contextvars
@@ -125,6 +127,24 @@ RESERVE_BLOCKED_PHASES = (
 
 _deferred_players = contextvars.ContextVar('tl_deferred_players', default=None)
 _transition_rows = contextvars.ContextVar('tl_transition_rows', default=False)
+_division_rows = contextvars.ContextVar('tl_division_rows', default=False)
+
+DIVISION_PLACE_STEPS = (
+    'winning_percentage',
+    'head_to_head',
+    'division_percentage',
+    'common_games',
+    'conference_percentage',
+    'strength_of_victory',
+    'strength_of_schedule',
+    'conference_rank',
+    'league_rank',
+    'common_net_points',
+    'net_points',
+    'net_touchdowns',
+    'draw',
+    'sole_remaining',
+)
 
 
 @contextmanager
@@ -143,8 +163,31 @@ def writing_transition_rows():
         _transition_rows.reset(token)
 
 
+@contextmanager
+def writing_division_rows():
+    """Allow the 2002 close to validate a complete result and place batch.
+
+    ``save()`` on a new result, division draw, or division place stays
+    refused. The service validates every row, then ``bulk_create`` writes
+    the batch. A new row whose ``full_clean`` runs outside this block is
+    refused, so one row cannot freeze a partial division.
+    """
+    token = _division_rows.set(True)
+    try:
+        yield
+    finally:
+        _division_rows.reset(token)
+
+
 def _choices(values):
     return [(value, value) for value in values]
+
+
+def _touchdowns_exceed_score(score, touchdowns):
+    """Each stored touchdown is six points of that club's final score."""
+    if type(score) is not int or type(touchdowns) is not int:
+        return False
+    return touchdowns * 6 > score
 
 
 def _previous(instance):
@@ -961,6 +1004,14 @@ class TimelineSeason(TimelineChild):
                 errors['directives_locked'] = (
                     'An unlocked owner directive cannot remain after the season locks directives.'
                 )
+        if (
+            self.season_year == 2002
+            and self.regular_season_simulated
+            and (previous is None or not previous.regular_season_simulated)
+        ):
+            errors['regular_season_simulated'] = (
+                'The 2002 regular season is marked complete only by its close.'
+            )
 
 
 class OwnerDirective(TimelineChild):
@@ -2941,3 +2992,436 @@ class TimelineScheduleSeed(TimelineChild):
         previous = _previous(self)
         if previous is not None and _changed(previous, self, _stored_names(self)):
             errors['division_place'] = 'An opening schedule seed is written once.'
+
+
+class ScheduleGameResult(TimelineChild):
+    """Final score of one stored 2002 fixture.
+
+    The row is a project timeline result. It is not a historical NFL score
+    and it does not record an overtime procedure. Home and away clubs stay
+    on the fixture. Touchdown counts are stored beside the scores because a
+    score does not determine how many touchdowns were scored. The result
+    season equals the fixture season, and both rows share a timeline. A
+    database check cannot read the fixture table, so model validation and
+    the 2002 close enforce that link.
+    """
+
+    timeline = models.ForeignKey(
+        Timeline,
+        on_delete=models.CASCADE,
+        related_name='schedule_results',
+    )
+    game = models.OneToOneField(
+        ScheduleGame,
+        on_delete=models.CASCADE,
+        related_name='result',
+    )
+    season_year = models.PositiveSmallIntegerField()
+    home_score = models.PositiveSmallIntegerField()
+    away_score = models.PositiveSmallIntegerField()
+    home_touchdowns = models.PositiveSmallIntegerField()
+    away_touchdowns = models.PositiveSmallIntegerField()
+    source_key = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['timeline', 'season_year', 'game']
+        indexes = [
+            models.Index(
+                fields=['timeline', 'season_year'],
+                name='tl_result_season_idx',
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(season_year=2002),
+                name='tl_schedule_result_year',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(source_key=''),
+                name='tl_schedule_result_source',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(home_score__gte=models.F('home_touchdowns') * 6),
+                name='tl_schedule_result_home_td',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(away_score__gte=models.F('away_touchdowns') * 6),
+                name='tl_schedule_result_away_td',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.timeline_id} {self.game_id} {self.home_score}-{self.away_score}'
+
+    def bound_timeline(self):
+        if not self.timeline_id:
+            return None
+        return self.timeline
+
+    def save(self, *args, **kwargs):
+        if not self.pk:
+            raise ValidationError({
+                'timeline': 'A 2002 result is stored with the whole season.',
+            })
+        super().save(*args, **kwargs)
+
+    def extra_clean(self, errors):
+        if not self.pk and not _division_rows.get():
+            errors['timeline'] = 'A 2002 result is stored with the whole season.'
+            return
+        if self.season_year != 2002:
+            errors['season_year'] = 'A schedule result records the 2002 season.'
+            return
+        if not self.source_key:
+            errors['source_key'] = 'A result names its producing source.'
+        if _touchdowns_exceed_score(self.home_score, self.home_touchdowns):
+            errors['home_touchdowns'] = (
+                'Touchdowns cannot account for more points than the final score.'
+            )
+        if _touchdowns_exceed_score(self.away_score, self.away_touchdowns):
+            errors['away_touchdowns'] = (
+                'Touchdowns cannot account for more points than the final score.'
+            )
+        if not self.timeline_id or not self.game_id:
+            return
+        game = self.game
+        if game.timeline_id != self.timeline_id:
+            errors['game'] = 'The result belongs to the fixture\'s timeline.'
+            return
+        if game.season_year != 2002 or self.season_year != game.season_year:
+            errors['game'] = (
+                'The result season must match its 2002 fixture.'
+            )
+            return
+        if game.kind != ScheduleGame.Kind.REGULAR:
+            errors['game'] = 'The result is a regular-season fixture.'
+        season = TimelineSeason.objects.filter(
+            timeline_id=self.timeline_id,
+            season_year=2002,
+        ).first()
+        if season is None:
+            errors['season_year'] = 'The timeline has no 2002 season.'
+        elif season.regular_season_simulated:
+            errors['season_year'] = 'The 2002 regular season is already complete.'
+        previous = _previous(self)
+        if previous is not None and _changed(previous, self, _stored_names(self)):
+            errors['home_score'] = 'A 2002 result is written once.'
+
+
+class TimelineDivisionDraw(TimelineChild):
+    """One resolving draw for a 2002 division place.
+
+    The coordinate is HMAC-SHA256 of the release seed. It names the
+    procedure, the season, the division, the tied franchise keys, and the
+    draw index. The timeline id is not an input. An exact rerun reads this
+    row and does not sample another draw.
+    """
+
+    timeline = models.ForeignKey(
+        Timeline,
+        on_delete=models.CASCADE,
+        related_name='division_draws',
+    )
+    season_year = models.PositiveSmallIntegerField()
+    conference_slug = models.CharField(max_length=32)
+    division_slug = models.CharField(max_length=32)
+    draw_index = models.PositiveSmallIntegerField()
+    candidates = models.TextField()
+    coordinate = models.TextField()
+    digest = models.CharField(max_length=64)
+    chosen_slug = models.CharField(max_length=64)
+    outcome = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = [
+            'timeline',
+            'season_year',
+            'conference_slug',
+            'division_slug',
+            'draw_index',
+        ]
+        indexes = [
+            models.Index(
+                fields=['timeline', 'season_year'],
+                name='tl_div_draw_season_idx',
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    'timeline',
+                    'season_year',
+                    'conference_slug',
+                    'division_slug',
+                    'draw_index',
+                ],
+                name='unique_tl_division_draw',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(season_year=2002),
+                name='tl_division_draw_year',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(conference_slug=''),
+                name='tl_division_draw_conference',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(division_slug=''),
+                name='tl_division_draw_division',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(candidates=''),
+                name='tl_division_draw_candidates',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(coordinate=''),
+                name='tl_division_draw_coordinate',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(chosen_slug=''),
+                name='tl_division_draw_chosen',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(outcome=''),
+                name='tl_division_draw_outcome',
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f'{self.timeline_id} {self.conference_slug} '
+            f'{self.division_slug} draw {self.draw_index}'
+        )
+
+    def bound_timeline(self):
+        if not self.timeline_id:
+            return None
+        return self.timeline
+
+    def save(self, *args, **kwargs):
+        if not self.pk:
+            raise ValidationError({
+                'timeline': 'A division draw is stored with the 2002 places.',
+            })
+        super().save(*args, **kwargs)
+
+    def extra_clean(self, errors):
+        if not self.pk and not _division_rows.get():
+            errors['timeline'] = 'A division draw is stored with the 2002 places.'
+            return
+        if self.season_year != 2002:
+            errors['season_year'] = 'A division draw belongs to the 2002 season.'
+            return
+        if len(self.digest) != 64 or any(
+            character not in '0123456789abcdef' for character in self.digest
+        ):
+            errors['digest'] = 'The division draw digest is 64 hex characters.'
+        if not self.timeline_id:
+            return
+        season = TimelineSeason.objects.filter(
+            timeline_id=self.timeline_id,
+            season_year=2002,
+        ).first()
+        if season is None:
+            errors['season_year'] = 'The timeline has no 2002 season.'
+        elif season.regular_season_simulated:
+            errors['season_year'] = 'The 2002 regular season is already complete.'
+        previous = _previous(self)
+        if previous is not None and _changed(previous, self, _stored_names(self)):
+            errors['digest'] = 'A division draw is written once.'
+
+
+class TimelineDivisionPlace(TimelineChild):
+    """Played 2002 division place, 1 through 4.
+
+    The conference and division are copied from the 2002 membership. The
+    resolving step, or the draw that selected the club, is stored on the
+    row. The place does not change franchise identity, membership, or
+    ``slot_order``.
+    """
+
+    timeline = models.ForeignKey(
+        Timeline,
+        on_delete=models.CASCADE,
+        related_name='division_places',
+    )
+    franchise = models.ForeignKey(
+        'universe.UniverseFranchise',
+        on_delete=models.PROTECT,
+        related_name='timeline_division_places',
+    )
+    season_year = models.PositiveSmallIntegerField()
+    division_place = models.PositiveSmallIntegerField()
+    conference_slug = models.CharField(max_length=32)
+    division_slug = models.CharField(max_length=32)
+    resolved_by = models.CharField(max_length=32)
+    draw = models.OneToOneField(
+        TimelineDivisionDraw,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='resolved_place',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = [
+            'timeline',
+            'season_year',
+            'conference_slug',
+            'division_slug',
+            'division_place',
+        ]
+        indexes = [
+            models.Index(
+                fields=['timeline', 'season_year'],
+                name='tl_div_place_season_idx',
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['timeline', 'franchise', 'season_year'],
+                name='unique_tl_division_place_franchise',
+            ),
+            models.UniqueConstraint(
+                fields=[
+                    'timeline',
+                    'season_year',
+                    'conference_slug',
+                    'division_slug',
+                    'division_place',
+                ],
+                name='unique_tl_division_place_value',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(season_year=2002),
+                name='tl_division_place_year',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(division_place__gte=1, division_place__lte=4),
+                name='tl_division_place_span',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(conference_slug=''),
+                name='tl_division_place_conference',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(division_slug=''),
+                name='tl_division_place_division',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(resolved_by__in=DIVISION_PLACE_STEPS),
+                name='tl_division_place_step',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(resolved_by='draw', draw__isnull=False)
+                    | (
+                        ~models.Q(resolved_by='draw')
+                        & models.Q(draw__isnull=True)
+                    )
+                ),
+                name='tl_division_place_draw_link',
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f'{self.timeline_id} {self.franchise_id} '
+            f'2002 place {self.division_place}'
+        )
+
+    def bound_timeline(self):
+        if not self.timeline_id:
+            return None
+        return self.timeline
+
+    def save(self, *args, **kwargs):
+        if not self.pk:
+            raise ValidationError({
+                'timeline': 'A 2002 division place is stored with its division.',
+            })
+        super().save(*args, **kwargs)
+
+    def extra_clean(self, errors):
+        if not self.pk and not _division_rows.get():
+            errors['timeline'] = (
+                'A 2002 division place is stored with its division.'
+            )
+            return
+        if self.season_year != 2002:
+            errors['season_year'] = 'A division place records the 2002 season.'
+            return
+        if self.division_place < 1 or self.division_place > 4:
+            errors['division_place'] = 'The 2002 place runs from 1 through 4.'
+        if self.resolved_by not in DIVISION_PLACE_STEPS:
+            errors['resolved_by'] = 'The place names a division step or the draw.'
+        if self.resolved_by == 'draw':
+            if not self.draw_id:
+                errors['draw'] = 'A drawn place points at its draw.'
+        elif self.draw_id:
+            errors['draw'] = 'Only a drawn place points at a draw.'
+        if not self.timeline_id or not self.franchise_id:
+            return
+        timeline = self.timeline
+        franchise = self.franchise
+        if franchise.release_id != timeline.release_id:
+            errors['franchise'] = (
+                'The franchise belongs to this timeline\'s release.'
+            )
+            return
+        from universe.models import FranchiseSeasonMembership
+        season = TimelineSeason.objects.filter(
+            timeline_id=timeline.id,
+            season_year=2002,
+        ).first()
+        if season is None:
+            errors['season_year'] = 'The timeline has no 2002 season.'
+            return
+        if season.regular_season_simulated:
+            errors['season_year'] = 'The 2002 regular season is already complete.'
+            return
+        membership = FranchiseSeasonMembership.objects.filter(
+            franchise_id=self.franchise_id,
+            season_year=2002,
+        ).first()
+        if membership is None:
+            errors['franchise'] = 'The franchise has no 2002 membership.'
+            return
+        if (
+            membership.conference_slug != self.conference_slug
+            or membership.division_slug != self.division_slug
+        ):
+            errors['division_slug'] = (
+                'The 2002 place uses the franchise\'s stored 2002 division.'
+            )
+            return
+        if self.draw_id:
+            draw = self.draw
+            if (
+                draw.timeline_id != self.timeline_id
+                or draw.season_year != 2002
+                or draw.conference_slug != self.conference_slug
+                or draw.division_slug != self.division_slug
+                or draw.chosen_slug != franchise.placeholder_slug
+            ):
+                errors['draw'] = 'The draw resolves this club in this division.'
+                return
+        clash = TimelineDivisionPlace.objects.filter(
+            timeline_id=self.timeline_id,
+            season_year=self.season_year,
+            conference_slug=self.conference_slug,
+            division_slug=self.division_slug,
+            division_place=self.division_place,
+        )
+        if self.pk:
+            clash = clash.exclude(pk=self.pk)
+        if clash.exists():
+            errors['division_place'] = (
+                'That 2002 place is already stored in this division.'
+            )
+        previous = _previous(self)
+        if previous is not None and _changed(previous, self, _stored_names(self)):
+            errors['division_place'] = 'A 2002 division place is written once.'
