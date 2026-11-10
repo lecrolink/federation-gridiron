@@ -559,8 +559,8 @@ class TimelineScheduleTests(TestCase):
         season = TimelineSeason.objects.get(timeline=self.timeline, season_year=2002)
         season.setup_complete = True
         season.directives_locked = True
-        season.regular_season_simulated = True
         season.save()
+        TimelineSeason.objects.filter(pk=season.pk).update(regular_season_simulated=True)
         with self.assertRaisesMessage(TimelineScheduleRefused, 'simulated'):
             generate_timeline_schedule(timeline_id=self.timeline.pk, season_year=2002)
         self.assertEqual(ScheduleGame.objects.count(), 0)

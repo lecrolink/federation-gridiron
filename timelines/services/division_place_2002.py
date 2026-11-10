@@ -27,12 +27,14 @@ Combined ranks use the later published method as a project adaptation: points
 scored and points allowed are ranked separately, tied values share the best
 competition rank, the next rank is skipped, and the lower sum wins.
 
-Inside one place, a step that leaves several clubs sharing the best value
-drops the others and continues forward. It does not return to head-to-head.
-After a place is stored, the same procedure runs again on every club that
-does not yet have a place. The last remaining club is ``sole_remaining``.
-Both of those repetitions are project rules. The 2002 text names the steps
-and says the procedure continues until a champion is determined.
+Inside one place, a step that leaves three or more clubs sharing the best
+value drops the others and continues at the next step. When that step leaves
+exactly two clubs, the tiebreaker restarts at two-club head-to-head. That
+restart is the 2002 rule. A reduction from four clubs to three does not
+restart; the later three-club restart is not a 2002 rule. After a place is
+stored, the same procedure runs again on every club that does not yet have a
+place. The last remaining club is ``sole_remaining``. Each touchdown stored
+on a result counts as six points of that club's final score.
 """
 
 import hashlib
@@ -437,7 +439,11 @@ def _tiebreak(
     division,
     place_number,
 ):
-    """Walk the 2002 steps forward on the clubs tied for this place."""
+    """Apply the 2002 steps to the clubs tied for this place.
+
+    Three or more clubs that remain tied move to the next step. Exactly two
+    clubs left from a larger group start again at head-to-head.
+    """
     current = list(group)
     step_index = 0
     while len(current) > 1 and step_index < len(_TIEBREAK_STEPS):
@@ -449,6 +455,12 @@ def _tiebreak(
             continue
         if len(kept) == 1:
             return kept[0], step, None
+        if len(kept) == 2 and len(current) > 2:
+            # 2002: two clubs left from a larger tie start again at head-to-head.
+            # Four clubs reduced to three stay on the following step.
+            current = kept
+            step_index = 0
+            continue
         current = kept
         step_index += 1
     if len(current) == 1:
@@ -906,13 +918,24 @@ def _validated_results(results, games, memberships):
                 'The 2002 results do not match the stored fixtures.'
             )
         seen.add(pair)
+        home_score = _require_count(result.home_score)
+        away_score = _require_count(result.away_score)
+        home_touchdowns = _require_count(result.home_touchdowns)
+        away_touchdowns = _require_count(result.away_touchdowns)
+        if (
+            home_touchdowns * 6 > home_score
+            or away_touchdowns * 6 > away_score
+        ):
+            raise DivisionPlaceRefused(
+                'Touchdowns cannot account for more points than the final score.'
+            )
         normalized.append(Result(
             home_id,
             away_id,
-            _require_count(result.home_score),
-            _require_count(result.away_score),
-            _require_count(result.home_touchdowns),
-            _require_count(result.away_touchdowns),
+            home_score,
+            away_score,
+            home_touchdowns,
+            away_touchdowns,
             _require_source(result.source_key),
         ))
     if seen != fixture_pairs:

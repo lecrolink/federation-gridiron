@@ -217,7 +217,7 @@ class DivisionProcedureTests(SimpleTestCase):
         self.assertEqual(found['b'].place, 2)
         self.assertEqual(found['c'].place, 3)
 
-    def test_steps_move_forward_and_the_next_place_starts_again(self):
+    def test_three_clubs_reduced_to_two_restart_at_head_to_head(self):
         clubs = [
             _club('a'),
             _club('b'),
@@ -239,13 +239,53 @@ class DivisionProcedureTests(SimpleTestCase):
         ]
         places, _draws = _rank(clubs, games)
         found = _by_key(places)
-        self.assertEqual((found['b'].place, found['b'].resolved_by), (1, 'common_games'))
-        self.assertEqual((found['c'].place, found['c'].resolved_by), (2, HEAD_TO_HEAD))
         self.assertEqual(
-            (found['a'].place, found['a'].resolved_by),
-            (3, 'winning_percentage'),
+            [(found[name].place, found[name].resolved_by) for name in ('a', 'b', 'c', 'd')],
+            [
+                (1, HEAD_TO_HEAD),
+                (2, HEAD_TO_HEAD),
+                (3, 'winning_percentage'),
+                (4, 'sole_remaining'),
+            ],
         )
-        self.assertEqual((found['d'].place, found['d'].resolved_by), (4, 'sole_remaining'))
+
+    def test_four_clubs_reduced_to_two_restart_at_head_to_head(self):
+        clubs = [
+            _club('a'),
+            _club('b'),
+            _club('c'),
+            _club('d'),
+            _club('x', 'c2', 'd1'),
+            _club('y', 'c2', 'd2'),
+            _club('z', 'c2', 'd2'),
+        ]
+        games = [
+            _game('a', 'b', 1, 0),
+            _game('c', 'a', 1, 0),
+            _game('a', 'd', 1, 1),
+            _game('b', 'c', 1, 0),
+            _game('b', 'd', 1, 1),
+            _game('c', 'd', 1, 1),
+            _game('a', 'x', 1, 0),
+            _game('b', 'x', 1, 0),
+            _game('x', 'c', 1, 0),
+            _game('x', 'd', 1, 0),
+            _game('y', 'a', 1, 0),
+            _game('y', 'b', 1, 0),
+            _game('c', 'z', 1, 0),
+            _game('d', 'z', 1, 0),
+        ]
+        places, _draws = _rank(clubs, games)
+        found = _by_key(places)
+        self.assertEqual(
+            [(found[name].place, found[name].resolved_by) for name in ('a', 'b', 'c', 'd')],
+            [
+                (1, HEAD_TO_HEAD),
+                (2, HEAD_TO_HEAD),
+                (3, 'strength_of_victory'),
+                (4, 'sole_remaining'),
+            ],
+        )
 
     def test_common_games_use_only_the_shared_opponents(self):
         clubs = [
@@ -543,8 +583,8 @@ class DivisionPlaceStorageTests(TestCase):
             {2002},
         )
         stored = ScheduleGameResult.objects.filter(timeline=self.timeline).first()
-        self.assertEqual(stored.home_score, 0)
-        self.assertEqual(stored.away_score, 0)
+        self.assertEqual(stored.home_score, 6)
+        self.assertEqual(stored.away_score, 6)
         self.assertEqual(stored.home_touchdowns, 1)
         self.assertEqual(stored.away_touchdowns, 1)
         self.assertEqual(stored.source_key, 'project-result')
@@ -632,7 +672,16 @@ class DivisionPlaceStorageTests(TestCase):
         )
         bad_score = results[0]._replace(home_score=True)
         blank_source = results[0]._replace(source_key='')
-        for submitted in (short, [flipped, *results[1:]], [bad_score, *results[1:]], [blank_source, *results[1:]]):
+        home_touchdowns = results[0]._replace(home_score=0, home_touchdowns=1)
+        away_touchdowns = results[0]._replace(away_score=5, away_touchdowns=1)
+        for submitted in (
+            short,
+            [flipped, *results[1:]],
+            [bad_score, *results[1:]],
+            [blank_source, *results[1:]],
+            [home_touchdowns, *results[1:]],
+            [away_touchdowns, *results[1:]],
+        ):
             _outcome, writes = _writes_during(lambda submitted=submitted: self.assertRaises(
                 DivisionPlaceRefused,
                 lambda: close_2002_regular_season(
@@ -666,26 +715,39 @@ class DivisionPlaceStorageTests(TestCase):
 
     def test_a_failed_completion_rolls_back_results_draws_and_places(self):
         _lock_directives(self.timeline)
-
-        def boom(*_args, **_kwargs):
-            raise IntegrityError('forced')
-
-        with patch(
+        results = _tied_results(self.timeline)
+        targets = (
+            'timelines.services.division_place_2002.ScheduleGameResult.objects.bulk_create',
+            'timelines.services.division_place_2002.TimelineDivisionDraw.objects.bulk_create',
+            'timelines.services.division_place_2002.TimelineDivisionPlace.objects.bulk_create',
             'timelines.services.division_place_2002.TimelineSeason.save',
-            boom,
-        ):
-            with self.assertRaises(DivisionPlaceRefused):
-                close_2002_regular_season(
-                    timeline_id=self.timeline.pk,
-                    results=_tied_results(self.timeline),
-                )
-        self.assertEqual(ScheduleGameResult.objects.filter(timeline=self.timeline).count(), 0)
-        self.assertEqual(TimelineDivisionDraw.objects.filter(timeline=self.timeline).count(), 0)
-        self.assertEqual(TimelineDivisionPlace.objects.filter(timeline=self.timeline).count(), 0)
-        self.assertFalse(TimelineSeason.objects.get(
-            timeline=self.timeline,
-            season_year=2002,
-        ).regular_season_simulated)
+        )
+        for target in targets:
+            with patch(target, side_effect=IntegrityError('forced')):
+                with self.assertRaises(DivisionPlaceRefused):
+                    close_2002_regular_season(
+                        timeline_id=self.timeline.pk,
+                        results=results,
+                    )
+            self.assertEqual(
+                ScheduleGameResult.objects.filter(timeline=self.timeline).count(),
+                0,
+                target,
+            )
+            self.assertEqual(
+                TimelineDivisionDraw.objects.filter(timeline=self.timeline).count(),
+                0,
+                target,
+            )
+            self.assertEqual(
+                TimelineDivisionPlace.objects.filter(timeline=self.timeline).count(),
+                0,
+                target,
+            )
+            self.assertFalse(TimelineSeason.objects.get(
+                timeline=self.timeline,
+                season_year=2002,
+            ).regular_season_simulated, target)
 
     def test_partial_and_changed_rows_stay_in_place(self):
         game = ScheduleGame.objects.filter(timeline=self.timeline).order_by('pk').first()
@@ -771,6 +833,205 @@ class DivisionPlaceStorageTests(TestCase):
         self.assertEqual(ScheduleGameResult.objects.count(), 0)
         self.assertEqual(TimelineDivisionPlace.objects.count(), 0)
 
+    def test_touchdown_totals_cannot_exceed_six_points_each(self):
+        game = ScheduleGame.objects.filter(timeline=self.timeline).first()
+        with writing_division_rows():
+            accepted = ScheduleGameResult(
+                timeline=self.timeline,
+                game=game,
+                season_year=2002,
+                home_score=6,
+                away_score=13,
+                home_touchdowns=1,
+                away_touchdowns=1,
+                source_key='project-result',
+            )
+            accepted.full_clean()
+            ScheduleGameResult.objects.bulk_create([accepted])
+        stored = ScheduleGameResult.objects.get(timeline=self.timeline, game=game)
+        self.assertEqual(stored.home_touchdowns, 1)
+        self.assertEqual(stored.home_score, 6)
+        self.assertEqual(stored.away_score, 13)
+        ScheduleGameResult.objects.filter(pk=stored.pk).delete()
+        for home_score, away_score, home_td, away_td in (
+            (0, 0, 1, 0),
+            (0, 0, 0, 1),
+            (5, 6, 1, 1),
+            (6, 5, 1, 1),
+        ):
+            with writing_division_rows():
+                row = ScheduleGameResult(
+                    timeline=self.timeline,
+                    game=game,
+                    season_year=2002,
+                    home_score=home_score,
+                    away_score=away_score,
+                    home_touchdowns=home_td,
+                    away_touchdowns=away_td,
+                    source_key='project-result',
+                )
+                with self.assertRaises(ValidationError):
+                    row.full_clean()
+        self.assertEqual(ScheduleGameResult.objects.filter(timeline=self.timeline).count(), 0)
+
+    def test_the_2002_flag_requires_the_stored_close(self):
+        season = TimelineSeason.objects.get(timeline=self.timeline, season_year=2002)
+        _lock_directives(self.timeline)
+        season.refresh_from_db()
+
+        def refuse_flag():
+            season.regular_season_simulated = True
+            with self.assertRaises(ValidationError):
+                season.save()
+            season.refresh_from_db()
+            self.assertFalse(season.regular_season_simulated)
+
+        refuse_flag()
+
+        game = ScheduleGame.objects.filter(timeline=self.timeline).order_by('pk').first()
+        with writing_division_rows():
+            partial = ScheduleGameResult(
+                timeline=self.timeline,
+                game=game,
+                season_year=2002,
+                home_score=6,
+                away_score=0,
+                home_touchdowns=1,
+                away_touchdowns=0,
+                source_key='partial',
+            )
+            partial.full_clean()
+            ScheduleGameResult.objects.bulk_create([partial])
+        refuse_flag()
+        self.assertEqual(ScheduleGameResult.objects.get(pk=partial.pk).home_score, 6)
+
+        ScheduleGameResult.objects.filter(pk=partial.pk).delete()
+        with writing_division_rows():
+            rows = [
+                ScheduleGameResult(
+                    timeline=self.timeline,
+                    game=fixture,
+                    season_year=2002,
+                    home_score=6,
+                    away_score=6,
+                    home_touchdowns=1,
+                    away_touchdowns=1,
+                    source_key='project-result',
+                )
+                for fixture in ScheduleGame.objects.filter(timeline=self.timeline)
+            ]
+            for row in rows:
+                row.full_clean()
+            ScheduleGameResult.objects.bulk_create(rows)
+        membership = FranchiseSeasonMembership.objects.filter(
+            franchise__release=self.release,
+            season_year=2002,
+        ).first()
+        with writing_division_rows():
+            one_place = TimelineDivisionPlace(
+                timeline=self.timeline,
+                franchise_id=membership.franchise_id,
+                season_year=2002,
+                division_place=1,
+                conference_slug=membership.conference_slug,
+                division_slug=membership.division_slug,
+                resolved_by='winning_percentage',
+            )
+            one_place.full_clean()
+            TimelineDivisionPlace.objects.bulk_create([one_place])
+        refuse_flag()
+        self.assertEqual(TimelineDivisionPlace.objects.filter(timeline=self.timeline).count(), 1)
+        self.assertEqual(ScheduleGameResult.objects.filter(timeline=self.timeline).count(), 256)
+
+        TimelineDivisionPlace.objects.filter(timeline=self.timeline).delete()
+        memberships = list(FranchiseSeasonMembership.objects.filter(
+            franchise__release=self.release,
+            season_year=2002,
+        ))
+        grouped = {}
+        for row in memberships:
+            grouped.setdefault((row.conference_slug, row.division_slug), []).append(row)
+        moved_key = sorted(grouped)[0]
+        invalid = []
+        for key, members in grouped.items():
+            division = 'dx' if key == moved_key else key[1]
+            for index, row in enumerate(sorted(members, key=lambda item: item.franchise_id), start=1):
+                invalid.append(TimelineDivisionPlace(
+                    timeline=self.timeline,
+                    franchise_id=row.franchise_id,
+                    season_year=2002,
+                    division_place=index,
+                    conference_slug=key[0],
+                    division_slug=division,
+                    resolved_by='winning_percentage',
+                ))
+        TimelineDivisionPlace.objects.bulk_create(invalid)
+        refuse_flag()
+        self.assertEqual(TimelineDivisionPlace.objects.filter(timeline=self.timeline).count(), 32)
+
+        TimelineDivisionPlace.objects.filter(timeline=self.timeline).delete()
+        ScheduleGameResult.objects.filter(timeline=self.timeline).delete()
+        close_2002_regular_season(
+            timeline_id=self.timeline.pk,
+            results=_tied_results(self.timeline),
+        )
+        season.refresh_from_db()
+        self.assertTrue(season.regular_season_simulated)
+        outcome, writes = _writes_during(lambda: close_2002_regular_season(
+            timeline_id=self.timeline.pk,
+            results=_tied_results(self.timeline),
+        ))
+        self.assertEqual(outcome, 'unchanged')
+        self.assertEqual(writes, [])
+
+    def test_an_already_simulated_incomplete_season_is_refused(self):
+        _lock_directives(self.timeline)
+        game = ScheduleGame.objects.filter(timeline=self.timeline).order_by('pk').first()
+        with writing_division_rows():
+            row = ScheduleGameResult(
+                timeline=self.timeline,
+                game=game,
+                season_year=2002,
+                home_score=6,
+                away_score=0,
+                home_touchdowns=1,
+                away_touchdowns=0,
+                source_key='partial',
+            )
+            row.full_clean()
+            ScheduleGameResult.objects.bulk_create([row])
+        TimelineSeason.objects.filter(timeline=self.timeline, season_year=2002).update(
+            regular_season_simulated=True,
+        )
+        with self.assertRaises(DivisionPlaceRefused):
+            close_2002_regular_season(
+                timeline_id=self.timeline.pk,
+                results=_tied_results(self.timeline),
+            )
+        self.assertEqual(ScheduleGameResult.objects.get(pk=row.pk).source_key, 'partial')
+        self.assertEqual(TimelineDivisionPlace.objects.filter(timeline=self.timeline).count(), 0)
+        self.assertTrue(TimelineSeason.objects.get(
+            timeline=self.timeline,
+            season_year=2002,
+        ).regular_season_simulated)
+
+    def test_a_2001_season_can_still_be_marked_simulated(self):
+        played = _timeline(self.release, '2001 still closes', self.profiles, 2001)
+        season = TimelineSeason.objects.get(timeline=played, season_year=2001)
+        self.assertFalse(season.regular_season_simulated)
+        season.setup_complete = True
+        season.directives_locked = True
+        season.regular_season_simulated = True
+        season.save()
+        season.refresh_from_db()
+        self.assertTrue(season.regular_season_simulated)
+        self.assertEqual(ScheduleGameResult.objects.filter(timeline=played).count(), 0)
+        self.assertEqual(TimelineDivisionPlace.objects.filter(timeline=played).count(), 0)
+        store_prior_finishes(timeline_id=played.pk, finishes=_default_finishes(self.release))
+        self.assertEqual(TimelinePriorFinish.objects.filter(timeline=played).count(), 31)
+        derive_scheduling_ranks(timeline_id=played.pk)
+        self.assertEqual(TimelineSchedulingRank.objects.filter(timeline=played).count(), 32)
+
     def test_a_played_2001_timeline_keeps_its_transition_rows(self):
         played = _timeline(self.release, 'played 2001', self.profiles, 2001, simulated_2001=True)
         store_prior_finishes(timeline_id=played.pk, finishes=_default_finishes(self.release))
@@ -839,9 +1100,17 @@ def _hex_digest(seed, message):
     ).hexdigest()
 
 
-def _tied_results(timeline):
+def _tied_results(timeline, home_score=6, away_score=6, home_td=1, away_td=1):
     return [
-        Result(game.home_id, game.away_id, 0, 0, 1, 1, 'project-result')
+        Result(
+            game.home_id,
+            game.away_id,
+            home_score,
+            away_score,
+            home_td,
+            away_td,
+            'project-result',
+        )
         for game in ScheduleGame.objects.filter(timeline=timeline, season_year=2002)
     ]
 

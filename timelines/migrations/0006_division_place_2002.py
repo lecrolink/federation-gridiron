@@ -67,7 +67,7 @@ class Migration(migrations.Migration):
             options={
                 'ordering': ['timeline', 'season_year', 'game'],
                 'indexes': [models.Index(fields=['timeline', 'season_year'], name='tl_result_season_idx')],
-                'constraints': [models.CheckConstraint(condition=models.Q(('season_year', 2002)), name='tl_schedule_result_year'), models.CheckConstraint(condition=models.Q(('source_key', ''), _negated=True), name='tl_schedule_result_source')],
+                'constraints': [models.CheckConstraint(condition=models.Q(('season_year', 2002)), name='tl_schedule_result_year'), models.CheckConstraint(condition=models.Q(('source_key', ''), _negated=True), name='tl_schedule_result_source'), models.CheckConstraint(condition=models.Q(('home_score__gte', models.F('home_touchdowns') * 6)), name='tl_schedule_result_home_td'), models.CheckConstraint(condition=models.Q(('away_score__gte', models.F('away_touchdowns') * 6)), name='tl_schedule_result_away_td')],
             },
         ),
         migrations.AddIndex(

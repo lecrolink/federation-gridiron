@@ -183,6 +183,13 @@ def _choices(values):
     return [(value, value) for value in values]
 
 
+def _touchdowns_exceed_score(score, touchdowns):
+    """Each stored touchdown is six points of that club's final score."""
+    if type(score) is not int or type(touchdowns) is not int:
+        return False
+    return touchdowns * 6 > score
+
+
 def _previous(instance):
     if not instance.pk:
         return None
@@ -997,6 +1004,101 @@ class TimelineSeason(TimelineChild):
                 errors['directives_locked'] = (
                     'An unlocked owner directive cannot remain after the season locks directives.'
                 )
+        if (
+            self.season_year == 2002
+            and self.regular_season_simulated
+            and (previous is None or not previous.regular_season_simulated)
+            and not self._stored_2002_close_is_complete()
+        ):
+            errors['regular_season_simulated'] = (
+                'The 2002 regular season is marked complete only after its '
+                'results and division places are stored.'
+            )
+
+    def _stored_2002_close_is_complete(self):
+        """Return whether this timeline already has a full 2002 close.
+
+        A queryset update or a direct database write can still flip the flag.
+        ``save()`` is the guard.
+        """
+        if not self.timeline_id:
+            return False
+        games = ScheduleGame.objects.filter(
+            timeline_id=self.timeline_id,
+            season_year=2002,
+            kind=ScheduleGame.Kind.REGULAR,
+        )
+        results = ScheduleGameResult.objects.filter(
+            timeline_id=self.timeline_id,
+            season_year=2002,
+            game__timeline_id=self.timeline_id,
+            game__season_year=2002,
+            game__kind=ScheduleGame.Kind.REGULAR,
+        )
+        if games.count() != 256 or results.count() != 256:
+            return False
+        from universe.models import FranchiseSeasonMembership
+        memberships = list(FranchiseSeasonMembership.objects.filter(
+            franchise__release_id=self.timeline.release_id,
+            season_year=2002,
+        ).select_related('franchise'))
+        if len(memberships) != 32:
+            return False
+        by_franchise = {row.franchise_id: row for row in memberships}
+        if len(by_franchise) != 32:
+            return False
+        places = list(TimelineDivisionPlace.objects.filter(
+            timeline_id=self.timeline_id,
+            season_year=2002,
+        ).select_related('franchise', 'draw'))
+        if len(places) != 32:
+            return False
+        grouped = {}
+        seen = set()
+        for place in places:
+            if place.franchise_id in seen or place.franchise_id not in by_franchise:
+                return False
+            seen.add(place.franchise_id)
+            membership = by_franchise[place.franchise_id]
+            if (
+                place.conference_slug != membership.conference_slug
+                or place.division_slug != membership.division_slug
+                or place.division_place < 1
+                or place.division_place > 4
+            ):
+                return False
+            if place.resolved_by == 'draw':
+                draw = place.draw
+                if (
+                    draw is None
+                    or draw.timeline_id != self.timeline_id
+                    or draw.season_year != 2002
+                    or draw.conference_slug != place.conference_slug
+                    or draw.division_slug != place.division_slug
+                    or draw.chosen_slug != place.franchise.placeholder_slug
+                ):
+                    return False
+            elif place.draw_id is not None:
+                return False
+            grouped.setdefault(
+                (place.conference_slug, place.division_slug),
+                set(),
+            ).add(place.division_place)
+        if seen != set(by_franchise):
+            return False
+        membership_divisions = {}
+        for row in memberships:
+            membership_divisions.setdefault(
+                (row.conference_slug, row.division_slug),
+                0,
+            )
+            membership_divisions[(row.conference_slug, row.division_slug)] += 1
+        if len(membership_divisions) != 8:
+            return False
+        for key, count in membership_divisions.items():
+            if count != 4 or grouped.get(key) != {1, 2, 3, 4}:
+                return False
+        return True
 
 
 class OwnerDirective(TimelineChild):
@@ -3023,6 +3125,14 @@ class ScheduleGameResult(TimelineChild):
                 condition=~models.Q(source_key=''),
                 name='tl_schedule_result_source',
             ),
+            models.CheckConstraint(
+                condition=models.Q(home_score__gte=models.F('home_touchdowns') * 6),
+                name='tl_schedule_result_home_td',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(away_score__gte=models.F('away_touchdowns') * 6),
+                name='tl_schedule_result_away_td',
+            ),
         ]
 
     def __str__(self):
@@ -3049,6 +3159,14 @@ class ScheduleGameResult(TimelineChild):
             return
         if not self.source_key:
             errors['source_key'] = 'A result names its producing source.'
+        if _touchdowns_exceed_score(self.home_score, self.home_touchdowns):
+            errors['home_touchdowns'] = (
+                'Touchdowns cannot account for more points than the final score.'
+            )
+        if _touchdowns_exceed_score(self.away_score, self.away_touchdowns):
+            errors['away_touchdowns'] = (
+                'Touchdowns cannot account for more points than the final score.'
+            )
         if not self.timeline_id or not self.game_id:
             return
         game = self.game
