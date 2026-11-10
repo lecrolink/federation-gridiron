@@ -770,6 +770,20 @@ The search is a complete 1-factorization, not a sequential greedy pass. It force
 
 These rows are not part of either release fingerprint. Kickoff dates and times, scoring, standings, and simulation stay out of this writer. The 1978–1994 weeks are a separate project rule.
 
+### 2001 finishes and 2002 scheduling ranks
+
+A played 2001 place stays on the stored 2001 division. `TimelinePriorFinish` stores that place with the club's wins, losses, and ties. Conference-1 `d1` uses places 1 through 6. Each other 2001 division uses places 1 through 5. The service copies the conference and division from the 2001 membership. `expansion-2002-01` has no 2001 membership and no 2001 finish.
+
+The records are accepted only after the verified-result service has completed the 2001 season and set `TimelineSeason.regular_season_simulated`. This slice does not implement results, and it does not set that flag. If the 2001 season row is missing or the flag is false, the writer stores nothing. Every club's wins, losses, and ties must equal the stored 2001 `schedule_length`. The whole league is one atomic set: every 2001 membership once, and each division's places exactly 1 through that division's size. One new row cannot be saved on its own. An exact rerun writes nothing. A partial or different stored set is left as it is.
+
+Winning percentage orders the played clubs. A tie counts as half a win, compared as a fraction. A strictly better percentage has the better 2001 place. Equal percentages may be filed in either place order, because the historical 2001 tiebreak service is outside this slice. Inside one 2001 division, equal percentages keep that resolved place order when the 2002 rank is derived.
+
+`TimelineSchedulingRank` is the derived rank, 1 through 4, inside each stored 2002 division. It requires the complete immutable 2001 finish set. Clubs are ordered by exact 2001 winning percentage. Equal percentages from the same 2001 division keep place order. Equal percentages from different 2001 divisions use one uniform interleaving draw over those place-ordered chains. `expansion-2002-01` ranks after every club that played in 2001. The derivation does not change the finishes, the memberships, franchise identity, or `slot_order`.
+
+Each cross-division tie that needs a draw stores one `TimelineSchedulingDraw` on the timeline, in the same transaction as the ranks. The row records the 2002 conference and division, the draw step, the ordered candidate chains, the coordinate, the SHA-256 digest, the chosen chain and franchise, and the resulting order. The coordinate is `scheduling-rank-2002:{2002 conference}:{2002 division}:{step}:{sorted remaining slugs}:{attempt}` and is hashed with the release seed. The timeline id is not part of that input, so identical inputs under one release produce the same transition ranks. The database row still belongs to the timeline. An exact rerun reads the stored draw, checks the digest and the chosen outcome, and does not sample or insert another draw. A partial, missing, or mismatched draw or rank set is left as it is.
+
+These rows are not part of either release fingerprint. `OpponentPairing` and `OpponentWeekAssignment` stay as they are.
+
 The schedule is shared universe data and is versioned with the release. Every timeline on that release activates the same franchises in the same seasons, in the same conferences and divisions. A timeline cannot vote a club into the league or change `N(year)`. After publish, editing the schedule means a new release. Timelines already pinned to the old release keep the old schedule.
 
 The years, franchise counts, and alignment shapes above are the confirmed release. They are release data. The tables store `origin` and `owner_selectable` as their own columns, and they store conference and division as slugs. They do not hardcode 1970, 1976, 1995, 1999, 2002, 2029, 26 founding clubs, 60 seasons, or the era shapes as database checks. A later release with a different horizon does not need a migration to change those numbers.
