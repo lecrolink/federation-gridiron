@@ -926,6 +926,48 @@ A bid. Acceptance creates `TimelineContract` and a `RosterStint`. The offer row 
 
 Free-agent offers are optional during an expansion offseason. An accepted offer may take a roster spot that would otherwise have gone to a reserved undrafted prospect. A timeline with no acceptable free agents still fills each new active roster from the shared veteran picks, rookie picks, and reserved undrafted prospects. Taxi signings, if any, come after that active roster is full.
 
+### TimelinePriorFinish
+
+The played 2001 division place and record. The place stays on the franchise's stored 2001 division and runs from 1 through that division's membership. Conference-1 `d1` is six clubs. Each other 2001 division is five. `expansion-2002-01` has no row.
+
+- Ownership: timeline.
+- Primary key: `BigAutoField`.
+- Foreign keys: `timeline` `CASCADE`; `franchise` to `UniverseFranchise`, `PROTECT`.
+- Fields: `season_year` 2001; `wins`, `losses`, `ties`; `division_place`; `conference_slug`; `division_slug`. The conference and division are copied from the 2001 membership.
+- Unique: one finish per franchise; one place per timeline, 2001 conference, 2001 division, and place.
+- Checks: the season is 2001; the place is at least 1; at least one of wins, losses, or ties is positive; the slugs are non-empty. The service also requires `TimelineSeason.regular_season_simulated` and wins + losses + ties equal to the stored 2001 `schedule_length`. This model does not store a game result and does not set `regular_season_simulated`.
+- Immutable: the whole row. A new row is not saved on its own. The service validates the complete league, then `bulk_create` writes it.
+- Rows: 31 per timeline that has a completed 2001 season.
+- Created by the prior-finish service after the verified-result service has completed 2001.
+
+### TimelineSchedulingDraw
+
+One resolving step of the transition draw that orders clubs from different 2001 divisions with the same winning percentage.
+
+- Ownership: timeline. The hashed coordinate does not include the timeline id.
+- Primary key: `BigAutoField`.
+- Foreign keys: `timeline` `CASCADE`.
+- Fields: `season_year` 2002; the 2002 `conference_slug` and `division_slug`; `draw_step`; `candidates` as ordered chains of franchise keys; `coordinate`; `digest` as the 64-character SHA-256 hex of that coordinate under the release seed; `chosen_slug`; `chosen_chain`; `outcome` as the order resolved by that step.
+- Unique: one step per timeline, transition year, 2002 conference, and 2002 division.
+- Checks: the season is 2002; the coordinate, candidates, choice, and outcome are non-empty.
+- Immutable: the whole row. Draw rows and scheduling ranks are written in one transaction. An exact rerun reads the row and does not sample another draw.
+- Rows: one per cross-division tie that needs a draw. A single-chain step stores no row.
+- Created with the 2002 scheduling ranks.
+
+### TimelineSchedulingRank
+
+The derived rank, 1 through 4, inside one stored 2002 division. Same-place games for 2002 will read it. Deriving it requires the complete 2001 finish set. It does not change that set.
+
+- Ownership: timeline.
+- Primary key: `BigAutoField`.
+- Foreign keys: `timeline` `CASCADE`; `franchise` to `UniverseFranchise`, `PROTECT`.
+- Fields: `season_year` 2002; `scheduling_rank`; the 2002 `conference_slug` and `division_slug`.
+- Unique: one rank per franchise; one rank value per 2002 division.
+- Checks: the season is 2002; the rank is 1 through 4.
+- Immutable: the whole row. A new row is stored with the rest of its division and any draw rows for that derivation.
+- Rows: 32 per timeline once the 2002 ranks exist, including `expansion-2002-01` in last place among the clubs in its division when every other club played in 2001.
+- Created by the scheduling-rank service from the stored 2001 finishes.
+
 ### ScheduleGame
 
 The fixture. Its identity is the replay game id.

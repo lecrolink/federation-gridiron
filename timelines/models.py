@@ -19,10 +19,10 @@ active participant whose user is then null is no longer a playable human,
 and that franchise is treated as bot-controlled until a later recovery
 service reassigns it. Phase 4 does not implement that service.
 
-Random draws are not stored. A later service recomputes them from the
-universe seed and the stable coordinates. The timeline id, the participant,
-and owner decisions are not inputs to that draw. This module does not
-simulate, and it does not insert campaigns.
+The 2001-to-2002 scheduling draw is stored on the timeline that owns the
+derived ranks. Its random input is the release seed and the scheduling
+coordinate. The timeline id is not an input. Other random draws are not
+stored. This module does not simulate, and it does not insert campaigns.
 """
 
 import contextvars
@@ -124,6 +124,23 @@ RESERVE_BLOCKED_PHASES = (
 )
 
 _deferred_players = contextvars.ContextVar('tl_deferred_players', default=None)
+_transition_rows = contextvars.ContextVar('tl_transition_rows', default=False)
+
+
+@contextmanager
+def writing_transition_rows():
+    """Allow the prior-finish service to validate a complete batch.
+
+    ``save()`` on a new finish, draw, or rank stays refused. The service
+    validates every row, then ``bulk_create`` writes the batch. A new row
+    whose ``full_clean`` runs outside this block is refused, so one row
+    cannot freeze a partial division.
+    """
+    token = _transition_rows.set(True)
+    try:
+        yield
+    finally:
+        _transition_rows.reset(token)
 
 
 def _choices(values):
@@ -2244,3 +2261,439 @@ class TimelineDraftSelection(TimelineChild):
         previous = _previous(self)
         if previous is not None and _changed(previous, self, _stored_names(self)):
             errors['overall_pick'] = 'A draft selection is written once.'
+
+
+class TimelinePriorFinish(TimelineChild):
+    """Played 2001 division place and record, on the stored 2001 division.
+
+    The place runs from 1 through that division's membership. It is not a
+    2002 scheduling rank. The whole 2001 league is stored together by the
+    prior-finish service after the verified-result service has completed
+    that season. This model does not store a game result.
+    """
+
+    timeline = models.ForeignKey(
+        Timeline,
+        on_delete=models.CASCADE,
+        related_name='prior_finishes',
+    )
+    franchise = models.ForeignKey(
+        'universe.UniverseFranchise',
+        on_delete=models.PROTECT,
+        related_name='timeline_prior_finishes',
+    )
+    season_year = models.PositiveSmallIntegerField()
+    wins = models.PositiveSmallIntegerField()
+    losses = models.PositiveSmallIntegerField()
+    ties = models.PositiveSmallIntegerField()
+    division_place = models.PositiveSmallIntegerField()
+    conference_slug = models.CharField(max_length=32)
+    division_slug = models.CharField(max_length=32)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = [
+            'timeline',
+            'season_year',
+            'conference_slug',
+            'division_slug',
+            'division_place',
+        ]
+        indexes = [
+            models.Index(
+                fields=['timeline', 'season_year'],
+                name='tl_prior_finish_season_idx',
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['timeline', 'franchise', 'season_year'],
+                name='unique_tl_prior_finish_franchise',
+            ),
+            models.UniqueConstraint(
+                fields=[
+                    'timeline',
+                    'season_year',
+                    'conference_slug',
+                    'division_slug',
+                    'division_place',
+                ],
+                name='unique_tl_prior_finish_place',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(season_year=2001),
+                name='tl_prior_finish_year',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(division_place__gte=1),
+                name='tl_prior_finish_place',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(wins__gte=1)
+                    | models.Q(losses__gte=1)
+                    | models.Q(ties__gte=1)
+                ),
+                name='tl_prior_finish_played',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(conference_slug=''),
+                name='tl_prior_finish_conference',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(division_slug=''),
+                name='tl_prior_finish_division',
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f'{self.timeline_id} {self.franchise_id} '
+            f'2001 place {self.division_place}'
+        )
+
+    def bound_timeline(self):
+        if not self.timeline_id:
+            return None
+        return self.timeline
+
+    def save(self, *args, **kwargs):
+        if not self.pk:
+            raise ValidationError({
+                'timeline': 'A 2001 finish is stored with the whole league.',
+            })
+        super().save(*args, **kwargs)
+
+    def extra_clean(self, errors):
+        if not self.pk and not _transition_rows.get():
+            errors['timeline'] = 'A 2001 finish is stored with the whole league.'
+            return
+        if self.season_year != 2001:
+            errors['season_year'] = 'A prior finish records the 2001 division.'
+            return
+        if self.division_place < 1:
+            errors['division_place'] = 'The 2001 place starts at 1.'
+        if self.wins + self.losses + self.ties < 1:
+            errors['wins'] = 'A played 2001 club has at least one game.'
+        if not self.timeline_id or not self.franchise_id:
+            return
+        timeline = self.timeline
+        franchise = self.franchise
+        if franchise.release_id != timeline.release_id:
+            errors['franchise'] = (
+                'The franchise belongs to this timeline\'s release.'
+            )
+            return
+        from universe.models import FranchiseSeasonMembership
+        season = (
+            TimelineSeason.objects.filter(
+                timeline_id=timeline.id,
+                season_year=2001,
+            )
+            .select_related('profile')
+            .first()
+        )
+        if season is None or not season.regular_season_simulated:
+            errors['season_year'] = 'The 2001 regular season is not complete.'
+            return
+        if self.wins + self.losses + self.ties != season.profile.schedule_length:
+            errors['wins'] = 'The record uses the stored 2001 schedule length.'
+        membership = FranchiseSeasonMembership.objects.filter(
+            franchise_id=self.franchise_id,
+            season_year=2001,
+        ).first()
+        if membership is None:
+            errors['franchise'] = 'The franchise has no 2001 membership.'
+            return
+        if (
+            membership.conference_slug != self.conference_slug
+            or membership.division_slug != self.division_slug
+        ):
+            errors['division_slug'] = (
+                'The 2001 place uses the franchise\'s stored 2001 division.'
+            )
+            return
+        size = FranchiseSeasonMembership.objects.filter(
+            franchise__release_id=timeline.release_id,
+            season_year=2001,
+            conference_slug=self.conference_slug,
+            division_slug=self.division_slug,
+        ).count()
+        if self.division_place > size:
+            errors['division_place'] = (
+                'The 2001 place is inside that division\'s size.'
+            )
+            return
+        clash = TimelinePriorFinish.objects.filter(
+            timeline_id=self.timeline_id,
+            season_year=self.season_year,
+            conference_slug=self.conference_slug,
+            division_slug=self.division_slug,
+            division_place=self.division_place,
+        )
+        if self.pk:
+            clash = clash.exclude(pk=self.pk)
+        if clash.exists():
+            errors['division_place'] = (
+                'That 2001 place is already stored in this division.'
+            )
+        previous = _previous(self)
+        if previous is not None and _changed(previous, self, _stored_names(self)):
+            errors['division_place'] = 'A 2001 finish is written once.'
+
+
+class TimelineSchedulingDraw(TimelineChild):
+    """One resolving step of the 2001-to-2002 scheduling draw.
+
+    The row belongs to the timeline. The coordinate hashed under the
+    release seed does not include the timeline id, so the same inputs
+    produce the same choice on every timeline of that release. An exact
+    rerun reads this row and does not sample another draw.
+    """
+
+    timeline = models.ForeignKey(
+        Timeline,
+        on_delete=models.CASCADE,
+        related_name='scheduling_draws',
+    )
+    season_year = models.PositiveSmallIntegerField()
+    conference_slug = models.CharField(max_length=32)
+    division_slug = models.CharField(max_length=32)
+    draw_step = models.PositiveSmallIntegerField()
+    candidates = models.TextField()
+    coordinate = models.TextField()
+    digest = models.CharField(max_length=64)
+    chosen_slug = models.CharField(max_length=64)
+    chosen_chain = models.CharField(max_length=64)
+    outcome = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = [
+            'timeline',
+            'season_year',
+            'conference_slug',
+            'division_slug',
+            'draw_step',
+        ]
+        indexes = [
+            models.Index(
+                fields=['timeline', 'season_year'],
+                name='tl_sched_draw_season_idx',
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    'timeline',
+                    'season_year',
+                    'conference_slug',
+                    'division_slug',
+                    'draw_step',
+                ],
+                name='unique_tl_sched_draw_step',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(season_year=2002),
+                name='tl_sched_draw_year',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(conference_slug=''),
+                name='tl_sched_draw_conference',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(division_slug=''),
+                name='tl_sched_draw_division',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(candidates=''),
+                name='tl_sched_draw_candidates',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(coordinate=''),
+                name='tl_sched_draw_coordinate',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(chosen_slug=''),
+                name='tl_sched_draw_chosen',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(chosen_chain=''),
+                name='tl_sched_draw_chain',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(outcome=''),
+                name='tl_sched_draw_outcome',
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f'{self.timeline_id} {self.conference_slug} '
+            f'{self.division_slug} step {self.draw_step}'
+        )
+
+    def bound_timeline(self):
+        if not self.timeline_id:
+            return None
+        return self.timeline
+
+    def save(self, *args, **kwargs):
+        if not self.pk:
+            raise ValidationError({
+                'timeline': 'A scheduling draw is stored with its division ranks.',
+            })
+        super().save(*args, **kwargs)
+
+    def extra_clean(self, errors):
+        if not self.pk and not _transition_rows.get():
+            errors['timeline'] = (
+                'A scheduling draw is stored with its division ranks.'
+            )
+            return
+        if self.season_year != 2002:
+            errors['season_year'] = 'A scheduling draw belongs to the 2002 transition.'
+        if len(self.digest) != 64 or any(
+            character not in '0123456789abcdef' for character in self.digest
+        ):
+            errors['digest'] = 'The scheduling draw digest is 64 hex characters.'
+        previous = _previous(self)
+        if previous is not None and _changed(previous, self, _stored_names(self)):
+            errors['digest'] = 'A scheduling draw is written once.'
+
+
+class TimelineSchedulingRank(TimelineChild):
+    """Derived rank, 1 through 4, inside one stored 2002 division.
+
+    The rank orders 2002 same-place games. It does not replace the 2001
+    division place, and it does not record a played 2002 standing.
+    """
+
+    timeline = models.ForeignKey(
+        Timeline,
+        on_delete=models.CASCADE,
+        related_name='scheduling_ranks',
+    )
+    franchise = models.ForeignKey(
+        'universe.UniverseFranchise',
+        on_delete=models.PROTECT,
+        related_name='timeline_scheduling_ranks',
+    )
+    season_year = models.PositiveSmallIntegerField()
+    scheduling_rank = models.PositiveSmallIntegerField()
+    conference_slug = models.CharField(max_length=32)
+    division_slug = models.CharField(max_length=32)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = [
+            'timeline',
+            'season_year',
+            'conference_slug',
+            'division_slug',
+            'scheduling_rank',
+        ]
+        indexes = [
+            models.Index(
+                fields=['timeline', 'season_year'],
+                name='tl_scheduling_rank_season_idx',
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['timeline', 'franchise', 'season_year'],
+                name='unique_tl_scheduling_rank_franchise',
+            ),
+            models.UniqueConstraint(
+                fields=[
+                    'timeline',
+                    'season_year',
+                    'conference_slug',
+                    'division_slug',
+                    'scheduling_rank',
+                ],
+                name='unique_tl_scheduling_rank_value',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(season_year=2002),
+                name='tl_scheduling_rank_year',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(scheduling_rank__gte=1, scheduling_rank__lte=4),
+                name='tl_scheduling_rank_span',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(conference_slug=''),
+                name='tl_scheduling_rank_conference',
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(division_slug=''),
+                name='tl_scheduling_rank_division',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.timeline_id} {self.franchise_id} rank {self.scheduling_rank}'
+
+    def bound_timeline(self):
+        if not self.timeline_id:
+            return None
+        return self.timeline
+
+    def save(self, *args, **kwargs):
+        if not self.pk:
+            raise ValidationError({
+                'timeline': 'A scheduling rank is stored with its division.',
+            })
+        super().save(*args, **kwargs)
+
+    def extra_clean(self, errors):
+        if not self.pk and not _transition_rows.get():
+            errors['timeline'] = 'A scheduling rank is stored with its division.'
+            return
+        if self.season_year != 2002:
+            errors['season_year'] = 'A scheduling rank belongs to the 2002 division.'
+            return
+        if self.scheduling_rank < 1 or self.scheduling_rank > 4:
+            errors['scheduling_rank'] = 'The scheduling rank runs from 1 through 4.'
+        if not self.timeline_id or not self.franchise_id:
+            return
+        timeline = self.timeline
+        franchise = self.franchise
+        if franchise.release_id != timeline.release_id:
+            errors['franchise'] = (
+                'The franchise belongs to this timeline\'s release.'
+            )
+            return
+        from universe.models import FranchiseSeasonMembership
+        membership = FranchiseSeasonMembership.objects.filter(
+            franchise_id=self.franchise_id,
+            season_year=2002,
+        ).first()
+        if membership is None:
+            errors['franchise'] = 'The franchise has no 2002 membership.'
+            return
+        if (
+            membership.conference_slug != self.conference_slug
+            or membership.division_slug != self.division_slug
+        ):
+            errors['division_slug'] = (
+                'The scheduling rank uses the franchise\'s stored 2002 division.'
+            )
+            return
+        clash = TimelineSchedulingRank.objects.filter(
+            timeline_id=self.timeline_id,
+            season_year=self.season_year,
+            conference_slug=self.conference_slug,
+            division_slug=self.division_slug,
+            scheduling_rank=self.scheduling_rank,
+        )
+        if self.pk:
+            clash = clash.exclude(pk=self.pk)
+        if clash.exists():
+            errors['scheduling_rank'] = (
+                'That scheduling rank is already stored in this division.'
+            )
+        previous = _previous(self)
+        if previous is not None and _changed(previous, self, _stored_names(self)):
+            errors['scheduling_rank'] = 'A scheduling rank is written once.'
