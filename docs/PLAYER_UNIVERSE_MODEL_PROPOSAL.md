@@ -977,11 +977,11 @@ One 2002 regular-season fixture owned by one timeline. The clubs and the categor
 - Foreign keys: `timeline` `CASCADE`; `home` and `away` to `UniverseFranchise`, `PROTECT`.
 - Fields: `season_year`; `kind` `regular`; `category` one of `division`, `conference`, `interconference`, `same_place`.
 - Unique: `(timeline, season_year, home, away)`.
-- Checks: home and away differ; the season is 2002 through 2020; the kind is regular; the category is one of those four. Model validation also requires the timeline season and both 2002 memberships. The service writes 2002 only. A request for 2003–2020 is refused because those seasons need the prior season's verified results and historical tiebreak resolution.
+- Checks: home and away differ; the season is 2002 through 2020; the kind is regular; the category is one of those four. Model validation also requires the timeline season and both clubs' memberships for that season. The service writes 2002, and 2003 after the played 2002 close still verifies. A request for 2004–2020 is refused because those seasons need the prior season's verified results and division places. A timeline that starts in 2003 or later is refused for 2003, because no opening 2002 scheduling-place seed is approved.
 - Indexes: `(timeline, season_year)`.
 - Immutable once written.
-- Rows: 256 for one timeline's 2002 season. Every club plays 16 and finishes 8 home and 8 away. 2003–2020 are not generated.
-- Created by the 2002 timeline-schedule service. An exact rerun writes nothing.
+- Rows: 256 for one timeline's 2002 season, and 256 for 2003 once that season's `TimelineSeason` already exists and the 2002 places recompute. Every club plays 16 and finishes 8 home and 8 away. 2004–2020 are not generated. The 2003 same-place games use `TimelineDivisionPlace`, not a scheduling rank or a new seed. `k3` is 1 and `k4` is 1. Same-conference pairs are `d1`–`d3` and `d2`–`d4`. Interconference pairs are conference-1 `d1`, `d2`, `d3`, and `d4` with conference-2 `d1`, `d4`, `d3`, and `d2`. The 2003 sites are the first meeting: rotating slot pairs host their matching pair, and same-place homes are `d1` over `d2`, `d2` over `d3`, `d3` over `d4`, and `d4` over `d1`.
+- Created by the timeline-schedule service. An exact 2002 or 2003 rerun writes nothing. A partial or different 2003 set is left unchanged. The service does not create the 2003 season, 2003 results, or a 2003 close.
 
 ### TimelineScheduleSeed
 
