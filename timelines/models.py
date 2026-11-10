@@ -1008,97 +1008,10 @@ class TimelineSeason(TimelineChild):
             self.season_year == 2002
             and self.regular_season_simulated
             and (previous is None or not previous.regular_season_simulated)
-            and not self._stored_2002_close_is_complete()
         ):
             errors['regular_season_simulated'] = (
-                'The 2002 regular season is marked complete only after its '
-                'results and division places are stored.'
+                'The 2002 regular season is marked complete only by its close.'
             )
-
-    def _stored_2002_close_is_complete(self):
-        """Return whether this timeline already has a full 2002 close.
-
-        A queryset update or a direct database write can still flip the flag.
-        ``save()`` is the guard.
-        """
-        if not self.timeline_id:
-            return False
-        games = ScheduleGame.objects.filter(
-            timeline_id=self.timeline_id,
-            season_year=2002,
-            kind=ScheduleGame.Kind.REGULAR,
-        )
-        results = ScheduleGameResult.objects.filter(
-            timeline_id=self.timeline_id,
-            season_year=2002,
-            game__timeline_id=self.timeline_id,
-            game__season_year=2002,
-            game__kind=ScheduleGame.Kind.REGULAR,
-        )
-        if games.count() != 256 or results.count() != 256:
-            return False
-        from universe.models import FranchiseSeasonMembership
-        memberships = list(FranchiseSeasonMembership.objects.filter(
-            franchise__release_id=self.timeline.release_id,
-            season_year=2002,
-        ).select_related('franchise'))
-        if len(memberships) != 32:
-            return False
-        by_franchise = {row.franchise_id: row for row in memberships}
-        if len(by_franchise) != 32:
-            return False
-        places = list(TimelineDivisionPlace.objects.filter(
-            timeline_id=self.timeline_id,
-            season_year=2002,
-        ).select_related('franchise', 'draw'))
-        if len(places) != 32:
-            return False
-        grouped = {}
-        seen = set()
-        for place in places:
-            if place.franchise_id in seen or place.franchise_id not in by_franchise:
-                return False
-            seen.add(place.franchise_id)
-            membership = by_franchise[place.franchise_id]
-            if (
-                place.conference_slug != membership.conference_slug
-                or place.division_slug != membership.division_slug
-                or place.division_place < 1
-                or place.division_place > 4
-            ):
-                return False
-            if place.resolved_by == 'draw':
-                draw = place.draw
-                if (
-                    draw is None
-                    or draw.timeline_id != self.timeline_id
-                    or draw.season_year != 2002
-                    or draw.conference_slug != place.conference_slug
-                    or draw.division_slug != place.division_slug
-                    or draw.chosen_slug != place.franchise.placeholder_slug
-                ):
-                    return False
-            elif place.draw_id is not None:
-                return False
-            grouped.setdefault(
-                (place.conference_slug, place.division_slug),
-                set(),
-            ).add(place.division_place)
-        if seen != set(by_franchise):
-            return False
-        membership_divisions = {}
-        for row in memberships:
-            membership_divisions.setdefault(
-                (row.conference_slug, row.division_slug),
-                0,
-            )
-            membership_divisions[(row.conference_slug, row.division_slug)] += 1
-        if len(membership_divisions) != 8:
-            return False
-        for key, count in membership_divisions.items():
-            if count != 4 or grouped.get(key) != {1, 2, 3, 4}:
-                return False
-        return True
 
 
 class OwnerDirective(TimelineChild):
@@ -3087,7 +3000,10 @@ class ScheduleGameResult(TimelineChild):
     The row is a project timeline result. It is not a historical NFL score
     and it does not record an overtime procedure. Home and away clubs stay
     on the fixture. Touchdown counts are stored beside the scores because a
-    score does not determine how many touchdowns were scored.
+    score does not determine how many touchdowns were scored. The result
+    season equals the fixture season, and both rows share a timeline. A
+    database check cannot read the fixture table, so model validation and
+    the 2002 close enforce that link.
     """
 
     timeline = models.ForeignKey(
@@ -3174,7 +3090,9 @@ class ScheduleGameResult(TimelineChild):
             errors['game'] = 'The result belongs to the fixture\'s timeline.'
             return
         if game.season_year != 2002 or self.season_year != game.season_year:
-            errors['game'] = 'The result is a 2002 regular-season fixture.'
+            errors['game'] = (
+                'The result season must match its 2002 fixture.'
+            )
             return
         if game.kind != ScheduleGame.Kind.REGULAR:
             errors['game'] = 'The result is a regular-season fixture.'

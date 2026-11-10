@@ -2,8 +2,9 @@
 
 The stored fixture list stays as it is. This service reads those 256 games,
 stores one project result for each, ranks every 2002 division, and only then
-sets ``regular_season_simulated``. It does not generate 2003 fixtures, and it
-does not play an overtime period.
+sets ``regular_season_simulated``. That flag change is one queryset update of
+the locked season row. ``TimelineSeason.save()`` cannot make it. The service
+does not generate 2003 fixtures, and it does not play an overtime period.
 
 An equal final score is a tie. A higher score is a win. Touchdown counts are
 taken from the result row. The 2002–2003 Official Playing Rules were not
@@ -163,8 +164,13 @@ def close_2002_regular_season(*, timeline_id, results):
     """Store 2002 results and division places. Return ``created`` or ``unchanged``.
 
     The release, the timeline, and the 2002 season are locked in that order.
-    The stored 256 fixtures must already exist. An exact rerun writes nothing.
-    A partial, mismatched, or changed result or place set is left as it is.
+    The stored 256 fixtures must already exist. An exact rerun recomputes the
+    tiebreak, verifies the stored draws, and writes nothing. A partial,
+    extra, altered, or inconsistent result, draw, or place set is left as it
+    is. The completion flag is a queryset update inside this transaction.
+    It runs after the rows are inserted, or after a stored set with the flag
+    still false has been recomputed and accepted. An already complete exact
+    rerun writes nothing.
     """
     _require_id(timeline_id)
     probe = Timeline.objects.filter(pk=timeline_id).only('pk', 'release_id').first()
@@ -282,9 +288,9 @@ def _close_locked(release, timeline_id, results):
     stored_results = list(
         ScheduleGameResult.objects.select_for_update().filter(
             timeline_id=timeline.pk,
-            season_year=SEASON_YEAR,
         ).select_related('game')
     )
+    _require_result_fixtures(stored_results, games, timeline.pk)
     stored_draws = list(
         TimelineDivisionDraw.objects.select_for_update().filter(
             timeline_id=timeline.pk,
@@ -315,11 +321,10 @@ def _close_locked(release, timeline_id, results):
             raise DivisionPlaceRefused(
                 'Stored 2002 division places do not match this set.'
             )
-        if not season.regular_season_simulated:
-            raise DivisionPlaceRefused(
-                'Stored 2002 results do not match this set.'
-            )
-        return 'unchanged'
+        if season.regular_season_simulated:
+            return 'unchanged'
+        _mark_season_complete(season)
+        return 'created'
     if stored_places or stored_draws or season.regular_season_simulated:
         raise DivisionPlaceRefused('Stored 2002 results do not match this set.')
     places, draws, pending = _rank_new(
@@ -1111,8 +1116,7 @@ def _insert_season(timeline, season, games, submitted, memberships, places, draw
                     ))
                 _clean_rows(place_rows, 'A 2002 division place failed validation.')
                 TimelineDivisionPlace.objects.bulk_create(place_rows)
-                season.regular_season_simulated = True
-                season.save(update_fields=['regular_season_simulated'])
+                _mark_season_complete(season)
     except IntegrityError as exc:
         raise DivisionPlaceRefused('The 2002 division insert failed.') from exc
     except ValidationError as exc:
@@ -1134,6 +1138,48 @@ def _load_memberships(release_id):
             season_year=SEASON_YEAR,
         ).select_related('franchise')
     )
+
+
+def _mark_season_complete(season):
+    """Mark the locked 2002 season complete from inside the close.
+
+    ``TimelineSeason.save()`` refuses this false-to-true change. This
+    queryset update is the close's own transition: the locked primary key,
+    the flag still false, and that one column. Any count other than one
+    rolls the open transaction back. A general queryset update outside this
+    function is not a supported completion path.
+    """
+    updated = TimelineSeason.objects.filter(
+        pk=season.pk,
+        regular_season_simulated=False,
+    ).update(regular_season_simulated=True)
+    if updated != 1:
+        raise DivisionPlaceRefused('The 2002 season cannot be marked complete.')
+    season.refresh_from_db()
+    if not season.regular_season_simulated:
+        raise DivisionPlaceRefused('The 2002 season cannot be marked complete.')
+
+
+def _require_result_fixtures(rows, games, timeline_id):
+    """Require every stored result to be one 2002 fixture on this timeline.
+
+    The result season and the fixture season are different columns. SQLite
+    and MySQL check constraints cannot compare them, so the close does.
+    """
+    allowed = {game.pk for game in games}
+    for row in rows:
+        game = row.game
+        if (
+            row.timeline_id != timeline_id
+            or game.timeline_id != timeline_id
+            or game.pk not in allowed
+            or row.season_year != SEASON_YEAR
+            or game.season_year != row.season_year
+            or game.kind != ScheduleGame.Kind.REGULAR
+        ):
+            raise DivisionPlaceRefused(
+                'A 2002 result must belong to a 2002 fixture on the same timeline.'
+            )
 
 
 def _stored_result_key(row):

@@ -3,7 +3,8 @@ import hmac
 from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, connection
+from django.db import IntegrityError, connection, transaction
+from django.db.models.query import QuerySet
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
@@ -720,7 +721,6 @@ class DivisionPlaceStorageTests(TestCase):
             'timelines.services.division_place_2002.ScheduleGameResult.objects.bulk_create',
             'timelines.services.division_place_2002.TimelineDivisionDraw.objects.bulk_create',
             'timelines.services.division_place_2002.TimelineDivisionPlace.objects.bulk_create',
-            'timelines.services.division_place_2002.TimelineSeason.save',
         )
         for target in targets:
             with patch(target, side_effect=IntegrityError('forced')):
@@ -729,25 +729,56 @@ class DivisionPlaceStorageTests(TestCase):
                         timeline_id=self.timeline.pk,
                         results=results,
                     )
-            self.assertEqual(
-                ScheduleGameResult.objects.filter(timeline=self.timeline).count(),
-                0,
-                target,
-            )
-            self.assertEqual(
-                TimelineDivisionDraw.objects.filter(timeline=self.timeline).count(),
-                0,
-                target,
-            )
-            self.assertEqual(
-                TimelineDivisionPlace.objects.filter(timeline=self.timeline).count(),
-                0,
-                target,
-            )
-            self.assertFalse(TimelineSeason.objects.get(
-                timeline=self.timeline,
-                season_year=2002,
-            ).regular_season_simulated, target)
+            self._assert_close_rolled_back(target)
+        real_update = QuerySet.update
+
+        def fail_flag(self, **kwargs):
+            if 'regular_season_simulated' in kwargs:
+                raise IntegrityError('forced')
+            return real_update(self, **kwargs)
+
+        with patch.object(QuerySet, 'update', fail_flag):
+            with self.assertRaises(DivisionPlaceRefused):
+                close_2002_regular_season(
+                    timeline_id=self.timeline.pk,
+                    results=results,
+                )
+        self._assert_close_rolled_back('flag update')
+        for count in (0, 2):
+            def wrong_count(self, count=count, **kwargs):
+                if 'regular_season_simulated' in kwargs:
+                    real_update(self, **kwargs)
+                    return count
+                return real_update(self, **kwargs)
+
+            with patch.object(QuerySet, 'update', wrong_count):
+                with self.assertRaises(DivisionPlaceRefused):
+                    close_2002_regular_season(
+                        timeline_id=self.timeline.pk,
+                        results=results,
+                    )
+            self._assert_close_rolled_back(f'flag count {count}')
+
+    def _assert_close_rolled_back(self, label):
+        self.assertEqual(
+            ScheduleGameResult.objects.filter(timeline=self.timeline).count(),
+            0,
+            label,
+        )
+        self.assertEqual(
+            TimelineDivisionDraw.objects.filter(timeline=self.timeline).count(),
+            0,
+            label,
+        )
+        self.assertEqual(
+            TimelineDivisionPlace.objects.filter(timeline=self.timeline).count(),
+            0,
+            label,
+        )
+        self.assertFalse(TimelineSeason.objects.get(
+            timeline=self.timeline,
+            season_year=2002,
+        ).regular_season_simulated, label)
 
     def test_partial_and_changed_rows_stay_in_place(self):
         game = ScheduleGame.objects.filter(timeline=self.timeline).order_by('pk').first()
@@ -874,115 +905,299 @@ class DivisionPlaceStorageTests(TestCase):
                     row.full_clean()
         self.assertEqual(ScheduleGameResult.objects.filter(timeline=self.timeline).count(), 0)
 
-    def test_the_2002_flag_requires_the_stored_close(self):
+    def test_ordinary_save_never_completes_2002(self):
         season = TimelineSeason.objects.get(timeline=self.timeline, season_year=2002)
         _lock_directives(self.timeline)
         season.refresh_from_db()
 
         def refuse_flag():
             season.regular_season_simulated = True
-            with self.assertRaises(ValidationError):
+            with self.assertRaisesMessage(
+                ValidationError,
+                'The 2002 regular season is marked complete only by its close.',
+            ):
                 season.save()
             season.refresh_from_db()
             self.assertFalse(season.regular_season_simulated)
 
         refuse_flag()
+        self.assertEqual(ScheduleGameResult.objects.filter(timeline=self.timeline).count(), 0)
 
-        game = ScheduleGame.objects.filter(timeline=self.timeline).order_by('pk').first()
-        with writing_division_rows():
-            partial = ScheduleGameResult(
-                timeline=self.timeline,
-                game=game,
-                season_year=2002,
-                home_score=6,
-                away_score=0,
-                home_touchdowns=1,
-                away_touchdowns=0,
-                source_key='partial',
-            )
-            partial.full_clean()
-            ScheduleGameResult.objects.bulk_create([partial])
-        refuse_flag()
-        self.assertEqual(ScheduleGameResult.objects.get(pk=partial.pk).home_score, 6)
+        profile = next(item for item in self.profiles if item.profile_key == 'y2002')
+        later = TimelineSeason(
+            timeline=self.timeline,
+            profile=profile,
+            season_year=2003,
+            season_index=2,
+            phase=Timeline.Phase.DIRECTION,
+            setup_complete=True,
+            directives_locked=True,
+            regular_season_simulated=True,
+        )
+        later.save()
+        later.refresh_from_db()
+        self.assertTrue(later.regular_season_simulated)
+        season.refresh_from_db()
+        self.assertFalse(season.regular_season_simulated)
 
-        ScheduleGameResult.objects.filter(pk=partial.pk).delete()
-        with writing_division_rows():
-            rows = [
-                ScheduleGameResult(
-                    timeline=self.timeline,
-                    game=fixture,
-                    season_year=2002,
-                    home_score=6,
-                    away_score=6,
-                    home_touchdowns=1,
-                    away_touchdowns=1,
-                    source_key='project-result',
-                )
-                for fixture in ScheduleGame.objects.filter(timeline=self.timeline)
-            ]
-            for row in rows:
-                row.full_clean()
-            ScheduleGameResult.objects.bulk_create(rows)
-        membership = FranchiseSeasonMembership.objects.filter(
-            franchise__release=self.release,
-            season_year=2002,
-        ).first()
-        with writing_division_rows():
-            one_place = TimelineDivisionPlace(
-                timeline=self.timeline,
-                franchise_id=membership.franchise_id,
-                season_year=2002,
-                division_place=1,
-                conference_slug=membership.conference_slug,
-                division_slug=membership.division_slug,
-                resolved_by='winning_percentage',
-            )
-            one_place.full_clean()
-            TimelineDivisionPlace.objects.bulk_create([one_place])
-        refuse_flag()
-        self.assertEqual(TimelineDivisionPlace.objects.filter(timeline=self.timeline).count(), 1)
-        self.assertEqual(ScheduleGameResult.objects.filter(timeline=self.timeline).count(), 256)
-
-        TimelineDivisionPlace.objects.filter(timeline=self.timeline).delete()
-        memberships = list(FranchiseSeasonMembership.objects.filter(
-            franchise__release=self.release,
-            season_year=2002,
-        ))
-        grouped = {}
-        for row in memberships:
-            grouped.setdefault((row.conference_slug, row.division_slug), []).append(row)
-        moved_key = sorted(grouped)[0]
-        invalid = []
-        for key, members in grouped.items():
-            division = 'dx' if key == moved_key else key[1]
-            for index, row in enumerate(sorted(members, key=lambda item: item.franchise_id), start=1):
-                invalid.append(TimelineDivisionPlace(
-                    timeline=self.timeline,
-                    franchise_id=row.franchise_id,
-                    season_year=2002,
-                    division_place=index,
-                    conference_slug=key[0],
-                    division_slug=division,
-                    resolved_by='winning_percentage',
-                ))
-        TimelineDivisionPlace.objects.bulk_create(invalid)
-        refuse_flag()
-        self.assertEqual(TimelineDivisionPlace.objects.filter(timeline=self.timeline).count(), 32)
-
-        TimelineDivisionPlace.objects.filter(timeline=self.timeline).delete()
-        ScheduleGameResult.objects.filter(timeline=self.timeline).delete()
         close_2002_regular_season(
             timeline_id=self.timeline.pk,
             results=_tied_results(self.timeline),
         )
         season.refresh_from_db()
         self.assertTrue(season.regular_season_simulated)
+        season.phase = Timeline.Phase.REGULAR
+        season.save()
+        season.refresh_from_db()
+        self.assertEqual(season.phase, Timeline.Phase.REGULAR)
+        self.assertTrue(season.regular_season_simulated)
+
+        TimelineSeason.objects.filter(pk=season.pk).update(regular_season_simulated=False)
+        season.refresh_from_db()
+        self.assertEqual(ScheduleGameResult.objects.filter(timeline=self.timeline).count(), 256)
+        self.assertEqual(TimelineDivisionPlace.objects.filter(timeline=self.timeline).count(), 32)
+        self.assertGreater(TimelineDivisionDraw.objects.filter(timeline=self.timeline).count(), 0)
+        refuse_flag()
+        self.assertEqual(ScheduleGameResult.objects.filter(timeline=self.timeline).count(), 256)
+        self.assertEqual(TimelineDivisionPlace.objects.filter(timeline=self.timeline).count(), 32)
+        outcome, writes = _writes_during(lambda: close_2002_regular_season(
+            timeline_id=self.timeline.pk,
+            results=_tied_results(self.timeline),
+        ))
+        self.assertEqual(outcome, 'created')
+        season.refresh_from_db()
+        self.assertTrue(season.regular_season_simulated)
+        self.assertEqual(
+            [sql.lstrip().split(None, 1)[0].strip('"').upper() for sql in writes],
+            ['UPDATE'],
+        )
+
+    def test_the_close_updates_one_locked_season(self):
+        _lock_directives(self.timeline)
+        season = TimelineSeason.objects.get(timeline=self.timeline, season_year=2002)
+        profile = next(item for item in self.profiles if item.profile_key == 'y2002')
+        TimelineSeason(
+            timeline=self.timeline,
+            profile=profile,
+            season_year=2003,
+            season_index=2,
+            phase=Timeline.Phase.DIRECTION,
+        ).save()
+        statements = []
+
+        def wrap(execute, sql, params, many, context):
+            statements.append((sql, params))
+            return execute(sql, params, many, context)
+
+        connection.execute_wrappers.append(wrap)
+        try:
+            outcome = close_2002_regular_season(
+                timeline_id=self.timeline.pk,
+                results=_tied_results(self.timeline),
+            )
+        finally:
+            connection.execute_wrappers.remove(wrap)
+        self.assertEqual(outcome, 'created')
+        season.refresh_from_db()
+        self.assertTrue(season.regular_season_simulated)
+        self.assertFalse(TimelineSeason.objects.get(
+            timeline=self.timeline,
+            season_year=2003,
+        ).regular_season_simulated)
+        updates = [
+            (sql, params)
+            for sql, params in statements
+            if sql.lstrip().split(None, 1)[0].strip('"').upper() == 'UPDATE'
+        ]
+        self.assertEqual(len(updates), 1)
+        sql, params = updates[0]
+        self.assertIn('regular_season_simulated', sql)
+        self.assertNotIn('directives_locked', sql)
+        self.assertNotIn('phase', sql)
+        self.assertIn('id', sql)
+        self.assertIn(season.pk, params)
+        self.assertTrue(any(value in (True, 1) for value in params))
         outcome, writes = _writes_during(lambda: close_2002_regular_season(
             timeline_id=self.timeline.pk,
             results=_tied_results(self.timeline),
         ))
         self.assertEqual(outcome, 'unchanged')
         self.assertEqual(writes, [])
+
+    def test_a_result_must_match_its_fixture_season(self):
+        fixture = ScheduleGame.objects.filter(timeline=self.timeline).order_by('pk').first()
+        ScheduleGame.objects.bulk_create([ScheduleGame(
+            timeline=self.timeline,
+            season_year=2003,
+            home_id=fixture.home_id,
+            away_id=fixture.away_id,
+            kind=ScheduleGame.Kind.REGULAR,
+            category=ScheduleGame.Category.DIVISION,
+        )])
+        later = ScheduleGame.objects.get(
+            timeline=self.timeline,
+            season_year=2003,
+            home_id=fixture.home_id,
+            away_id=fixture.away_id,
+        )
+        with writing_division_rows():
+            mismatched = ScheduleGameResult(
+                timeline=self.timeline,
+                game=later,
+                season_year=2002,
+                home_score=6,
+                away_score=0,
+                home_touchdowns=1,
+                away_touchdowns=0,
+                source_key='project-result',
+            )
+            with self.assertRaisesMessage(
+                ValidationError,
+                'The result season must match its 2002 fixture.',
+            ):
+                mismatched.full_clean()
+        ScheduleGameResult.objects.bulk_create([ScheduleGameResult(
+            timeline=self.timeline,
+            game=later,
+            season_year=2002,
+            home_score=6,
+            away_score=0,
+            home_touchdowns=1,
+            away_touchdowns=0,
+            source_key='project-result',
+        )])
+        _lock_directives(self.timeline)
+        with self.assertRaisesMessage(
+            DivisionPlaceRefused,
+            'A 2002 result must belong to a 2002 fixture on the same timeline.',
+        ):
+            close_2002_regular_season(
+                timeline_id=self.timeline.pk,
+                results=_tied_results(self.timeline),
+            )
+        self.assertEqual(ScheduleGameResult.objects.filter(timeline=self.timeline).count(), 1)
+        self.assertEqual(TimelineDivisionPlace.objects.filter(timeline=self.timeline).count(), 0)
+        self.assertFalse(TimelineSeason.objects.get(
+            timeline=self.timeline,
+            season_year=2002,
+        ).regular_season_simulated)
+
+        other = _timeline(self.release, 'other timeline', self.profiles, 2002)
+        ScheduleGame.objects.bulk_create([ScheduleGame(
+            timeline=other,
+            season_year=2002,
+            home_id=fixture.home_id,
+            away_id=fixture.away_id,
+            kind=ScheduleGame.Kind.REGULAR,
+            category=ScheduleGame.Category.DIVISION,
+        )])
+        foreign = ScheduleGame.objects.get(timeline=other, season_year=2002)
+        with writing_division_rows():
+            crossed = ScheduleGameResult(
+                timeline=self.timeline,
+                game=foreign,
+                season_year=2002,
+                home_score=6,
+                away_score=0,
+                home_touchdowns=1,
+                away_touchdowns=0,
+                source_key='project-result',
+            )
+            with self.assertRaisesMessage(
+                ValidationError,
+                'The result belongs to the fixture\'s timeline.',
+            ):
+                crossed.full_clean()
+
+    def test_a_completed_season_refuses_semantic_changes(self):
+        _lock_directives(self.timeline)
+        results = _tied_results(self.timeline)
+        close_2002_regular_season(timeline_id=self.timeline.pk, results=results)
+        season = TimelineSeason.objects.get(timeline=self.timeline, season_year=2002)
+        self.assertTrue(season.regular_season_simulated)
+
+        def refuse(submitted=results):
+            before = _division_snapshot(self.timeline)
+            with self.assertRaises(DivisionPlaceRefused):
+                close_2002_regular_season(
+                    timeline_id=self.timeline.pk,
+                    results=submitted,
+                )
+            self.assertEqual(_division_snapshot(self.timeline), before)
+            self.assertTrue(TimelineSeason.objects.get(pk=season.pk).regular_season_simulated)
+
+        place = TimelineDivisionPlace.objects.filter(
+            timeline=self.timeline,
+            resolved_by='sole_remaining',
+        ).order_by('pk').first()
+        with transaction.atomic():
+            TimelineDivisionPlace.objects.filter(pk=place.pk).update(
+                resolved_by='winning_percentage',
+            )
+            refuse()
+            transaction.set_rollback(True)
+
+        draw = TimelineDivisionDraw.objects.filter(timeline=self.timeline).order_by('pk').first()
+        for field, value in (
+            ('coordinate', f'{draw.coordinate}-altered'),
+            ('candidates', 'altered-candidates'),
+            ('digest', 'a' * 64),
+            ('chosen_slug', 'not-the-club'),
+            ('outcome', f'{draw.outcome}-altered'),
+        ):
+            with transaction.atomic():
+                TimelineDivisionDraw.objects.filter(pk=draw.pk).update(**{field: value})
+                refuse()
+                self.assertEqual(
+                    TimelineDivisionDraw.objects.values_list(field, flat=True).get(pk=draw.pk),
+                    value,
+                )
+                transaction.set_rollback(True)
+
+        with transaction.atomic():
+            TimelineDivisionDraw.objects.filter(pk=draw.pk).delete()
+            refuse()
+            self.assertFalse(TimelineDivisionDraw.objects.filter(pk=draw.pk).exists())
+            transaction.set_rollback(True)
+
+        with transaction.atomic():
+            TimelineDivisionDraw.objects.bulk_create([TimelineDivisionDraw(
+                timeline=self.timeline,
+                season_year=2002,
+                conference_slug=draw.conference_slug,
+                division_slug=draw.division_slug,
+                draw_index=99,
+                candidates=draw.candidates,
+                coordinate=f'{draw.coordinate}:extra',
+                digest='b' * 64,
+                chosen_slug=draw.chosen_slug,
+                outcome='extra',
+            )])
+            refuse()
+            self.assertTrue(TimelineDivisionDraw.objects.filter(
+                timeline=self.timeline,
+                draw_index=99,
+            ).exists())
+            transaction.set_rollback(True)
+
+        stored = ScheduleGameResult.objects.filter(timeline=self.timeline).order_by('pk').first()
+        ScheduleGameResult.objects.filter(pk=stored.pk).update(home_score=13)
+        altered = [
+            Result(
+                row.game.home_id,
+                row.game.away_id,
+                row.home_score,
+                row.away_score,
+                row.home_touchdowns,
+                row.away_touchdowns,
+                row.source_key,
+            )
+            for row in ScheduleGameResult.objects.filter(
+                timeline=self.timeline,
+            ).select_related('game')
+        ]
+        refuse(altered)
+        self.assertEqual(ScheduleGameResult.objects.get(pk=stored.pk).home_score, 13)
 
     def test_an_already_simulated_incomplete_season_is_refused(self):
         _lock_directives(self.timeline)
@@ -1090,6 +1305,41 @@ class DivisionPlaceStorageTests(TestCase):
                 results=_tied_results(timeline),
             )
         self.assertEqual(ScheduleGameResult.objects.filter(timeline=timeline).count(), 0)
+
+
+def _division_snapshot(timeline):
+    return (
+        list(ScheduleGameResult.objects.filter(timeline=timeline).order_by('pk').values_list(
+            'pk',
+            'game_id',
+            'season_year',
+            'home_score',
+            'away_score',
+            'home_touchdowns',
+            'away_touchdowns',
+            'source_key',
+        )),
+        list(TimelineDivisionDraw.objects.filter(timeline=timeline).order_by('pk').values_list(
+            'pk',
+            'conference_slug',
+            'division_slug',
+            'draw_index',
+            'candidates',
+            'coordinate',
+            'digest',
+            'chosen_slug',
+            'outcome',
+        )),
+        list(TimelineDivisionPlace.objects.filter(timeline=timeline).order_by('pk').values_list(
+            'pk',
+            'franchise_id',
+            'division_place',
+            'conference_slug',
+            'division_slug',
+            'resolved_by',
+            'draw_id',
+        )),
+    )
 
 
 def _hex_digest(seed, message):
