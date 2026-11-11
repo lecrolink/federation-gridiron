@@ -16,10 +16,13 @@ from timelines.models import (
     TimelineSeason,
 )
 from timelines.services.division_place_2002 import (
+    DivisionPlaceRefused,
     Result,
     close_2002_regular_season,
     close_2003_regular_season,
     close_2004_regular_season,
+    close_regular_season,
+    verify_played_places,
 )
 from timelines.services.schedule_2002 import (
     AFC_SIDE,
@@ -32,6 +35,7 @@ from timelines.services.schedule_2002 import (
     planned_games,
 )
 from universe.generation.prospects import later_profile_values
+from universe.release_guard import holding_release_lock
 from universe.generation.schedule import generate_schedule_release
 from universe.models import (
     FranchiseSeasonMembership,
@@ -388,6 +392,79 @@ class Schedule2005StorageTests(TestCase):
         self.assertFalse(TimelineSeason.objects.get(
             timeline=self.timeline,
             season_year=2006,
+        ).regular_season_simulated)
+
+    def test_supported_closes_rerun_and_later_years_stay_closed(self):
+        before = _kept(self.release, self.timeline)
+        for year in (2002, 2003, 2004):
+            outcome, writes = _writes_during(
+                lambda year=year: close_regular_season(
+                    timeline_id=self.timeline.pk,
+                    results=_ranked_results(self.timeline, year),
+                    season_year=year,
+                ),
+            )
+            self.assertEqual(outcome, 'unchanged')
+            self.assertEqual(writes, [])
+        with holding_release_lock(self.release.pk):
+            for year in (2002, 2003, 2004):
+                self.assertEqual(
+                    verify_played_places(self.timeline, year),
+                    _place_map(self.timeline, year),
+                )
+        season = TimelineSeason.objects.get(timeline=self.timeline, season_year=2005)
+        season.setup_complete = True
+        season.directives_locked = True
+        season.regular_season_simulated = True
+        season.save()
+        for year in (2005, 2012, 2020):
+            statements = []
+
+            def wrap(execute, sql, params, many, context):
+                statements.append(sql)
+                return execute(sql, params, many, context)
+
+            connection.execute_wrappers.append(wrap)
+            try:
+                with self.assertRaisesMessage(DivisionPlaceRefused, 'outside 2002–2004'):
+                    close_regular_season(
+                        timeline_id=self.timeline.pk,
+                        results=(),
+                        season_year=year,
+                    )
+                with self.assertRaisesMessage(DivisionPlaceRefused, 'outside 2002–2004'):
+                    verify_played_places(self.timeline, year)
+            finally:
+                connection.execute_wrappers.remove(wrap)
+            writes = [
+                sql for sql in statements
+                if sql.lstrip().split(None, 1)[0].strip('"').upper() in WRITE_WORDS
+            ]
+            self.assertEqual(writes, [])
+            self.assertEqual(
+                ScheduleGameResult.objects.filter(
+                    timeline=self.timeline,
+                    season_year=year,
+                ).count(),
+                0,
+            )
+            self.assertEqual(
+                TimelineDivisionPlace.objects.filter(
+                    timeline=self.timeline,
+                    season_year=year,
+                ).count(),
+                0,
+            )
+        with self.assertRaisesMessage(TimelineScheduleRefused, LATER_SEASON):
+            generate_timeline_schedule(timeline_id=self.timeline.pk, season_year=2006)
+        self.assertEqual(
+            ScheduleGame.objects.filter(timeline=self.timeline, season_year=2006).count(),
+            0,
+        )
+        self.assertEqual(_kept(self.release, self.timeline), before)
+        self.assertTrue(TimelineSeason.objects.get(
+            timeline=self.timeline,
+            season_year=2005,
         ).regular_season_simulated)
 
     def test_different_2004_places_change_only_same_place_games(self):

@@ -52,8 +52,9 @@ This service writes the 2002 fixtures on their own path. Seasons 2003
 through 2020 use one later path. Its prior year is ``season_year - 1``,
 and its fixtures come from ``planned_games``. That path stores a season
 only when the prior year already has a read-only division-place check.
-Those checks exist for 2002, 2003, and 2004, so the service stores 2003,
-2004, and 2005. A later year whose prior season has no check is refused
+Those checks are the supported close, 2002 through 2004, so the service
+stores 2003, 2004, and 2005. A later year whose prior season has no check
+is refused
 before any insert. ``planned_games`` can still project 2006–2020. Same-place
 games read ``TimelineDivisionPlace`` from that prior played season. They
 do not read ``TimelineSchedulingRank``,
@@ -96,10 +97,9 @@ from timelines.services.prior_finish import (
     derive_scheduling_ranks,
 )
 from timelines.services.division_place_2002 import (
+    SUPPORTED_SEASONS,
     DivisionPlaceRefused,
-    verify_played_2002_places,
-    verify_played_2003_places,
-    verify_played_2004_places,
+    verify_played_places,
 )
 from universe.generation.founding import hmac_int
 from universe.models import FranchiseSeasonMembership
@@ -294,10 +294,14 @@ def _generate_locked(release, timeline_id):
     return 'created'
 
 
+def _prior_place_verifier(season_year):
+    def verify(timeline, year=season_year):
+        return verify_played_places(timeline, year)
+    return verify
+
+
 _PRIOR_PLACE_VERIFIERS = {
-    2002: verify_played_2002_places,
-    2003: verify_played_2003_places,
-    2004: verify_played_2004_places,
+    year: _prior_place_verifier(year) for year in SUPPORTED_SEASONS
 }
 
 
