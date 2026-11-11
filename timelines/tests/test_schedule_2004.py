@@ -22,7 +22,6 @@ from timelines.services.division_place_2002 import (
 )
 from timelines.services.schedule_2002 import (
     AFC_SIDE,
-    LATER_SEASON,
     NFC_SIDE,
     POSITIONS,
     Seat,
@@ -311,7 +310,10 @@ class Schedule2004StorageTests(TestCase):
         ))
         self.assertEqual(again, 'unchanged')
         self.assertEqual(writes, [])
-        with self.assertRaisesMessage(TimelineScheduleRefused, LATER_SEASON):
+        with self.assertRaisesMessage(
+            TimelineScheduleRefused,
+            'The timeline has no season for this year.',
+        ):
             generate_timeline_schedule(timeline_id=self.timeline.pk, season_year=2005)
         self.assertEqual(
             ScheduleGame.objects.filter(timeline=self.timeline, season_year=2005).count(),
