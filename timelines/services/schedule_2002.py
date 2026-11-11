@@ -48,16 +48,15 @@ home and one away. The next repeat of that intraconference pairing reverses
 all four sites. Position order is the seat order ``d1``, ``d2``, ``d3``,
 ``d4``.
 
-This service writes the 2002 fixtures, the 2003 fixtures once the 2002
-close still verifies, the 2004 fixtures once the 2003 close still
-verifies, and the 2005 fixtures once the 2004 close still verifies. The
-rotation tables above also describe 2006–2020. ``planned_games`` can
-project those years, but generating them is refused. They need the prior
-season's verified results and its division places. Same-place games for
-2003 read ``TimelineDivisionPlace`` from the played 2002 season.
-Same-place games for 2004 read ``TimelineDivisionPlace`` from the played
-2003 season. Same-place games for 2005 read ``TimelineDivisionPlace``
-from the played 2004 season. They do not read ``TimelineSchedulingRank``,
+This service writes the 2002 fixtures on their own path. Seasons 2003
+through 2020 use one later path. Its prior year is ``season_year - 1``,
+and its fixtures come from ``planned_games``. That path stores a season
+only when the prior year already has a read-only division-place check.
+Those checks exist for 2002, 2003, and 2004, so the service stores 2003,
+2004, and 2005. A later year whose prior season has no check is refused
+before any insert. ``planned_games`` can still project 2006–2020. Same-place
+games read ``TimelineDivisionPlace`` from that prior played season. They
+do not read ``TimelineSchedulingRank``,
 ``TimelinePriorFinish``, ``slot_order`` as a place, slug order, draft
 order, or a new random seed. A timeline that starts in 2003 or later has
 no approved opening 2002 scheduling places, so this service does not
@@ -129,8 +128,7 @@ INTER_ROW = (
 )
 
 LATER_SEASON = (
-    'Seasons after 2005 require the prior season\'s verified results '
-    'and historical tiebreak resolution.'
+    'The prior season has no verified division-place check.'
 )
 NO_OPENING_2002_PLACES = (
     'A timeline that starts in 2003 or later has no approved 2002 '
@@ -154,21 +152,27 @@ class TimelineScheduleRefused(Exception):
 
 
 def generate_timeline_schedule(*, timeline_id, season_year):
-    """Write the 2002, 2003, 2004, or 2005 fixtures. Return ``created`` or ``unchanged``."""
+    """Write one 2002–2020 season. Return ``created`` or ``unchanged``.
+
+    2002 keeps its opening path. 2003–2020 use the prior season's verified
+    places when that check exists. A later year without one is refused
+    before the release lock.
+    """
     _require_id(timeline_id)
     if isinstance(season_year, bool) or not isinstance(season_year, int):
         raise TimelineScheduleRefused('The season is outside 2002–2020.')
-    if season_year == 2003:
-        return _generate_for(timeline_id, _generate_2003_locked)
-    if season_year == 2004:
-        return _generate_for(timeline_id, _generate_2004_locked)
-    if season_year == 2005:
-        return _generate_for(timeline_id, _generate_2005_locked)
+    if season_year == FIRST_SEASON:
+        return _generate_for(timeline_id, _generate_locked)
     if FIRST_SEASON < season_year <= LAST_SEASON:
-        raise TimelineScheduleRefused(LATER_SEASON)
-    if season_year != FIRST_SEASON:
-        raise TimelineScheduleRefused('The season is outside 2002–2020.')
-    return _generate_for(timeline_id, _generate_locked)
+        if (season_year - 1) not in _PRIOR_PLACE_VERIFIERS:
+            raise TimelineScheduleRefused(LATER_SEASON)
+        return _generate_for(
+            timeline_id,
+            lambda release, locked_id, year=season_year: (
+                _generate_verified_prior(release, locked_id, year)
+            ),
+        )
+    raise TimelineScheduleRefused('The season is outside 2002–2020.')
 
 
 def _generate_for(timeline_id, writer):
@@ -200,9 +204,9 @@ def opening_places(seed, seats):
 def planned_games(season_year, seats, places):
     """Return the 256 fixtures for one documented season.
 
-    ``generate_timeline_schedule`` stores 2002, 2003, 2004, and 2005 once
-    the prior close verifies. This function still projects the later
-    rotation so the formula can be checked without writing those seasons.
+    ``generate_timeline_schedule`` stores 2002, and stores 2003–2020 when
+    the prior year has a read-only division-place check. This function
+    still projects every year in that span.
     """
     _require_formula_year(season_year)
     groups = _groups(seats)
@@ -290,42 +294,27 @@ def _generate_locked(release, timeline_id):
     return 'created'
 
 
-def _generate_2003_locked(release, timeline_id):
-    """Write the 2003 fixtures from the verified 2002 division places."""
+_PRIOR_PLACE_VERIFIERS = {
+    2002: verify_played_2002_places,
+    2003: verify_played_2003_places,
+    2004: verify_played_2004_places,
+}
+
+
+def _generate_verified_prior(release, timeline_id, season_year):
+    """Write one later season from the prior year's verified places."""
+    prior_year = season_year - 1
+    verify_places = _PRIOR_PLACE_VERIFIERS.get(prior_year)
+    if verify_places is None:
+        raise TimelineScheduleRefused(LATER_SEASON)
     return _generate_from_prior_places(
         release,
         timeline_id,
-        season_year=2003,
-        prior_year=2002,
-        verify_places=verify_played_2002_places,
-        missing_prior='The timeline has no 2002 season.',
-        require_start_before=2003,
-    )
-
-
-def _generate_2004_locked(release, timeline_id):
-    """Write the 2004 fixtures from the verified 2003 division places."""
-    return _generate_from_prior_places(
-        release,
-        timeline_id,
-        season_year=2004,
-        prior_year=2003,
-        verify_places=verify_played_2003_places,
-        missing_prior='The timeline has no 2003 season.',
-        require_start_before=None,
-    )
-
-
-def _generate_2005_locked(release, timeline_id):
-    """Write the 2005 fixtures from the verified 2004 division places."""
-    return _generate_from_prior_places(
-        release,
-        timeline_id,
-        season_year=2005,
-        prior_year=2004,
-        verify_places=verify_played_2004_places,
-        missing_prior='The timeline has no 2004 season.',
-        require_start_before=None,
+        season_year=season_year,
+        prior_year=prior_year,
+        verify_places=verify_places,
+        missing_prior=f'The timeline has no {prior_year} season.',
+        require_start_before=2003 if season_year == 2003 else None,
     )
 
 
