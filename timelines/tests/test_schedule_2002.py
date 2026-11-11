@@ -24,7 +24,6 @@ from timelines.services.prior_finish import (
 from timelines.services.schedule_2002 import (
     AFC_SIDE,
     FIRST_SEASON,
-    LATER_SEASON,
     NFC_SIDE,
     POSITIONS,
     Fixture,
@@ -552,7 +551,10 @@ class TimelineScheduleTests(TestCase):
             'The 2002 regular season is not complete.',
         ):
             generate_timeline_schedule(timeline_id=timeline.pk, season_year=2003)
-        with self.assertRaisesMessage(TimelineScheduleRefused, LATER_SEASON):
+        with self.assertRaisesMessage(
+            TimelineScheduleRefused,
+            'The timeline has no 2019 season.',
+        ):
             generate_timeline_schedule(timeline_id=timeline.pk, season_year=2020)
         with self.assertRaisesMessage(TimelineScheduleRefused, 'outside 2002'):
             generate_timeline_schedule(timeline_id=timeline.pk, season_year=2021)

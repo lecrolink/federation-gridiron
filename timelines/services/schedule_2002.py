@@ -52,10 +52,10 @@ This service writes the 2002 fixtures on their own path. Seasons 2003
 through 2020 use one later path. Its prior year is ``season_year - 1``,
 and its fixtures come from ``planned_games``. That path stores a season
 only when the prior year already has a read-only division-place check.
-Those checks are the supported close, 2002 through 2004, so the service
-stores 2003, 2004, and 2005. A later year whose prior season has no check
-is refused
-before any insert. ``planned_games`` can still project 2006–2020. Same-place
+Those checks are the supported close, 2002 through 2020, so a closed prior
+year unlocks the next season through 2020. Closing one year does not write
+a later season. A 2021 request is outside this 16-game planner and is refused
+before any insert. Same-place
 games read ``TimelineDivisionPlace`` from that prior played season. They
 do not read ``TimelineSchedulingRank``,
 ``TimelinePriorFinish``, ``slot_order`` as a place, slug order, draft
@@ -154,9 +154,8 @@ class TimelineScheduleRefused(Exception):
 def generate_timeline_schedule(*, timeline_id, season_year):
     """Write one 2002–2020 season. Return ``created`` or ``unchanged``.
 
-    2002 keeps its opening path. 2003–2020 use the prior season's verified
-    places when that check exists. A later year without one is refused
-    before the release lock.
+    2002 keeps its opening path. 2003–2020 use the immediately preceding
+    season's verified places. 2021 is outside this 16-game planner.
     """
     _require_id(timeline_id)
     if isinstance(season_year, bool) or not isinstance(season_year, int):

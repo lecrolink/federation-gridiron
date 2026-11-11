@@ -5,21 +5,23 @@ names call it. They share one tiebreak. Each reads that season's 256 games,
 stores one project result for each, ranks every division, and only then sets
 ``regular_season_simulated``.
 
-The supported span is 2002 through 2004, and the sources are not the same
-sentence. The 2002 text supplies the two-club restart and says a reduction
-from four clubs to three continues at the next step. The December 13, 2003
-published NFL procedure supports that same two-club restart, so the 2003
-close uses it. The 2004 close keeps that documented procedure. No primary
-source in this repository gives the later three-club restart an effective
-season, and none gives the later combined-rank method an effective season.
-Fact-book publication years are not effective seasons. A season outside
-2002–2004 is refused before the release lock. The next season's schedule
-stays gated on a verifier for a closed year, so 2006 and later stay refused.
+The supported span is 2002 through 2020. The sources are not one sentence.
+The 2002 text, the December 13, 2003 procedure, and the 2004 continuation
+govern 2002, 2003, and 2004. The 2005 and 2010 official record books keep
+that two-club restart and do not restart three clubs, so 2005 through 2010
+use it. The 2011 official record book adds the three-club restart, and the
+2012, 2014, 2019, and 2020 books keep it, so 2011 through 2020 use it.
+Combined-rank ties use the competition rank printed in the 2010 book. Applying
+that arithmetic to 2005 through 2009, where the 2005 book names the step and
+does not print the tie rule, is an approved project rule. Repeating the
+procedure for places 2 through 4 is also an approved project rule: the books
+say the steps run until a champion is determined and that one club advances
+at a time. A season outside 2002–2020 is refused before the release lock.
+Closing one year unlocks only the next schedule.
 
 The completion flag change is one queryset update of the locked season row.
-``TimelineSeason.save()`` cannot make it for those years. The 2002 close does
-not generate 2003 fixtures, the 2003 close does not generate 2004, and the
-2004 close does not generate 2005. None of them plays an overtime period.
+``TimelineSeason.save()`` cannot make it for 2002 through 2020. No close
+generates the next season's fixtures. None of them plays an overtime period.
 
 An equal final score is a tie. A higher score is a win. Touchdown counts are
 taken from the result row. The 2002–2003 Official Playing Rules were not
@@ -39,24 +41,26 @@ multiplication. Common games are the opponents shared by every club still
 tied for that step. There is no minimum-game count. An empty shared set does
 not separate the clubs. Strength of victory and strength of schedule add each
 opponent's final record once per counted appearance, including a repeat.
-Combined ranks use the later published method as a project adaptation: points
+Combined ranks use the competition rank printed in the 2010 book: points
 scored and points allowed are ranked separately, tied values share the best
-competition rank, the next rank is skipped, and the lower sum wins.
+competition rank, the next rank is skipped, and the lower sum wins. Using
+that arithmetic for 2005 through 2009 is an approved project rule.
 
 Inside one place, a step that leaves three or more clubs sharing the best
 value drops the others and continues at the next step. When that step leaves
 exactly two clubs, the tiebreaker restarts at two-club head-to-head. That
 restart is the 2002 rule, and the December 13, 2003 published NFL procedure
-uses the same two-club restart. A reduction from four clubs to three does
-not restart; the later three-club restart is not part of this procedure.
+uses the same two-club restart. Through 2010, a reduction from four clubs
+to three does not restart. From 2011, three clubs left from four restart at
+head-to-head, and a pair that then remains still restarts the two-club
+procedure.
 The formulas above stay project rules where the historical text names a step
 and does not define the calculation. After a place is stored, the same
 procedure runs again on every club that does not yet have a place. The last
 remaining club is ``sole_remaining``. Each touchdown stored on a result
-counts as six points of that club's final score. A 2003 draw uses the same
-coordinate fields as 2002, with the season set to 2003. A 2004 draw uses
-that same template with the season set to 2004. The 2002 coordinate keeps
-its original text. The timeline id is not an input.
+counts as six points of that club's final score. A draw uses the 2002
+coordinate fields with that season's year. The omitted season stays 2002.
+The timeline id is not an input.
 """
 
 import hashlib
@@ -83,9 +87,11 @@ from universe.release_guard import assert_release_lock_held, holding_release_loc
 
 
 SEASON_YEAR = 2002
-SUPPORTED_SEASONS = (2002, 2003, 2004)
-# One arithmetic procedure. The source that authorizes each season differs.
-# ``closes`` is false where this repository has no effective season.
+LAST_SEASON = 2020
+THREE_CLUB_RESTART_YEAR = 2011
+SUPPORTED_SEASONS = tuple(range(SEASON_YEAR, LAST_SEASON + 1))
+# The step order is shared. The restart that each window authorizes differs.
+# Places 2–4 repeat that window's procedure. That repeat is a project rule.
 RULE_WINDOWS = (
     {
         'seasons': (2002,),
@@ -117,16 +123,30 @@ RULE_WINDOWS = (
         ),
     },
     {
-        'seasons': tuple(range(2005, 2021)),
-        'closes': False,
-        'procedure': 'unestablished',
+        'seasons': tuple(range(2005, THREE_CLUB_RESTART_YEAR)),
+        'closes': True,
+        'procedure': 'two-club-restart',
         'source': (
-            'The later three-club restart has no effective season here. '
-            'Combined ranking remains a project adaptation of a later '
-            'published method, and that method\'s historical effective '
-            'season is not established. The 2005, 2010, 2012, 2014, and '
-            '2019 fact books print the same step order; a publication year '
-            'is not an effective season.'
+            '2005 Official NFL Record & Fact Book, Tie-Breaking Procedures, '
+            'p. 37, and the 2010 book, p. 33. Two clubs left after a third '
+            'club restart at head-to-head. Four clubs reduced to three '
+            'continue. The 2006–2009 editions were not opened; both '
+            'bracketing books omit a three-club restart. Combined-rank ties '
+            'use the competition rank printed in the 2010 book, p. 34. Using '
+            'it for 2005–2009 is an approved project rule.'
+        ),
+    },
+    {
+        'seasons': tuple(range(THREE_CLUB_RESTART_YEAR, LAST_SEASON + 1)),
+        'closes': True,
+        'procedure': 'three-club-restart',
+        'source': (
+            '2011 Official NFL Record & Fact Book, Tie-Breaking Procedures, '
+            'pp. 11–12. Kept in the 2012 book, pp. 34–35, the 2014 book, '
+            'p. 34, the 2019 book, p. 26, and the 2020 book, p. 26. Three '
+            'clubs left from four restart at head-to-head, and a remaining '
+            'pair restarts the two-club procedure. Places 2–4 repeat the '
+            'procedure as the approved project rule for the scheduling order.'
         ),
     },
 )
@@ -232,13 +252,13 @@ def verify_played_places(timeline, season_year):
     """Return each club's division place after the close's own checks.
 
     The caller holds the release lock inside the open transaction. A season
-    outside 2002–2004 is refused before that lock is required. This reads
+    outside 2002–2020 is refused before that lock is required. This reads
     the stored results, draws, and places. It recomputes the tiebreak with
     the close's stored-draw ranker and accepts the rows only when the stored
     places match. It does not write.
     """
     if season_year not in SUPPORTED_SEASONS:
-        raise DivisionPlaceRefused('The season is outside 2002–2004.')
+        raise DivisionPlaceRefused('The season is outside 2002–2020.')
     return _verify_played_places(timeline, season_year)
 
 
@@ -357,8 +377,8 @@ def _result_from_stored(row):
 def close_regular_season(*, timeline_id, results, season_year):
     """Store one supported season. Return ``created`` or ``unchanged``.
 
-    2002, 2003, and 2004 use the documented procedure. Any other season is
-    refused before the release lock. The stored 256 fixtures must already
+    2002 through 2020 use the documented procedure for that season. Any other
+    season is refused before the release lock. The stored 256 fixtures must already
     exist. An exact rerun recomputes the tiebreak and writes nothing.
     """
     return _close_regular_season(timeline_id, results, season_year)
@@ -413,7 +433,7 @@ def close_2004_regular_season(*, timeline_id, results):
 def _close_regular_season(timeline_id, results, season_year):
     _require_id(timeline_id)
     if season_year not in SUPPORTED_SEASONS:
-        raise DivisionPlaceRefused('The season is outside 2002–2004.')
+        raise DivisionPlaceRefused('The season is outside 2002–2020.')
     probe = Timeline.objects.filter(pk=timeline_id).only('pk', 'release_id').first()
     if probe is None:
         raise DivisionPlaceRefused('The timeline is missing.')
@@ -422,12 +442,16 @@ def _close_regular_season(timeline_id, results, season_year):
             return _close_locked(release, timeline_id, results, season_year)
 
 
-def rank_places(clubs, games, choose):
+def rank_places(clubs, games, choose, season_year=SEASON_YEAR):
     """Return ``(places, draws)`` for every division in ``clubs``.
 
     ``choose(draw_index, conference, division, keys)`` returns an index into
     the sorted franchise keys when the draw step is reached. Places 1 through
-    the division size each start that procedure again on the clubs that remain.
+    the division size each start that season's procedure again on the clubs
+    that remain. Repeating it for places 2 through 4 is the approved project
+    rule that produces the scheduling order. From 2011, four clubs reduced
+    to three restart at head-to-head. Earlier seasons continue at the next
+    step.
     """
     if not isinstance(clubs, (list, tuple)) or not clubs:
         raise DivisionPlaceRefused('A division place needs a club.')
@@ -456,6 +480,7 @@ def rank_places(clubs, games, choose):
                 conference,
                 division,
                 place_number,
+                _restarts_three_clubs(season_year),
             )
             if step not in DIVISION_PLACE_STEPS:
                 raise DivisionPlaceRefused(
@@ -479,7 +504,9 @@ def competition_rank(items, key, *, higher_better):
 
     Tied values share the best rank. The next distinct value skips the tied
     count, so two clubs tied for first are 1 and 1 and the next club is 3.
-    This is the project adaptation of the later published combined-rank method.
+    That is the method printed in the 2010 official record book. The step
+    names are sourced. This arithmetic is the approved project rule where a
+    season's book names the step and does not print the tie.
     """
     if isinstance(items, str) or not isinstance(items, (list, tuple)):
         raise DivisionPlaceRefused('A ranking needs the clubs being compared.')
@@ -507,11 +534,11 @@ def division_draw_label(conference, division, keys, draw_index, season_year=SEAS
 
     The 2002 call, with the season omitted, keeps
     ``division-place:2002:{conference}:{division}:{keys}:{index}``.
-    A 2003 draw uses the same fields with season 2003. A 2004 draw uses
-    the same fields with season 2004.
+    A later season uses the same fields with that year. The omitted season
+    stays 2002.
     """
     if season_year not in SUPPORTED_SEASONS:
-        raise DivisionPlaceRefused('The season is outside 2002–2004.')
+        raise DivisionPlaceRefused('The season is outside 2002–2020.')
     joined = ','.join(keys)
     return (
         f'{_PROCEDURE}:{season_year}:{conference}:{division}:'
@@ -606,7 +633,7 @@ def _rank_new(seed, memberships, games, submitted, season_year=SEASON_YEAR):
         return choice
 
     clubs, scored = _views(memberships, games, submitted, season_year)
-    places, draws = rank_places(clubs, scored, choose)
+    places, draws = rank_places(clubs, scored, choose, season_year)
     if len(pending) != len(draws):
         raise DivisionPlaceRefused('The division draw did not resolve.')
     for draw, (message, digest, choice) in zip(draws, pending):
@@ -666,12 +693,16 @@ def _rank_stored(
         return choice
 
     clubs, scored = _views(memberships, games, submitted, season_year)
-    places, draws = rank_places(clubs, scored, choose)
+    places, draws = rank_places(clubs, scored, choose, season_year)
     if seen != set(by_index):
         raise DivisionPlaceRefused(
             'A stored division draw does not match this season.'
         )
     return places, draws
+
+
+def _restarts_three_clubs(season_year):
+    return THREE_CLUB_RESTART_YEAR <= season_year <= LAST_SEASON
 
 
 def _next_club(
@@ -683,6 +714,7 @@ def _next_club(
     conference,
     division,
     place_number,
+    three_club_restart,
 ):
     if len(remaining) == 1:
         return remaining[0], SOLE_REMAINING, None
@@ -701,6 +733,7 @@ def _next_club(
         conference,
         division,
         place_number,
+        three_club_restart,
     )
 
 
@@ -713,11 +746,13 @@ def _tiebreak(
     conference,
     division,
     place_number,
+    three_club_restart,
 ):
-    """Apply the 2002 steps to the clubs tied for this place.
+    """Apply one season's division steps to the clubs tied for this place.
 
-    Three or more clubs that remain tied move to the next step. Exactly two
-    clubs left from a larger group start again at head-to-head.
+    Three or more clubs that remain tied move to the next step, except from
+    2011, when four clubs reduced to three restart at head-to-head. Exactly
+    two clubs left from a larger group start again at head-to-head.
     """
     current = list(group)
     step_index = 0
@@ -730,9 +765,11 @@ def _tiebreak(
             continue
         if len(kept) == 1:
             return kept[0], step, None
+        if three_club_restart and len(kept) == 3 and len(current) > 3:
+            current = kept
+            step_index = 0
+            continue
         if len(kept) == 2 and len(current) > 2:
-            # 2002: two clubs left from a larger tie start again at head-to-head.
-            # Four clubs reduced to three stay on the following step.
             current = kept
             step_index = 0
             continue
@@ -1629,9 +1666,9 @@ def _results_for_season(rows, season_year):
 def _season_text(season_year, text_2002, text_2003):
     if season_year == 2003:
         return text_2003
-    if season_year == 2004:
-        return text_2002.replace('2002', '2004')
-    return text_2002
+    if season_year == 2002:
+        return text_2002
+    return text_2002.replace('2002', str(season_year))
 
 
 def _alignment_message(season_year):

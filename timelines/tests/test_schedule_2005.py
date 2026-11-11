@@ -1,7 +1,9 @@
 from collections import Counter
 from unittest.mock import patch
 
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, connection
+from django.db.models import QuerySet
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
@@ -26,7 +28,6 @@ from timelines.services.division_place_2002 import (
 )
 from timelines.services.schedule_2002 import (
     AFC_SIDE,
-    LATER_SEASON,
     NFC_SIDE,
     POSITIONS,
     Seat,
@@ -49,7 +50,7 @@ from universe.rules import EraRuleProfile
 
 
 WRITE_WORDS = ('INSERT', 'UPDATE', 'DELETE', 'REPLACE')
-PROFILE_KEYS = {'y2002', 'y2004'}
+PROFILE_KEYS = {'y2002', 'y2004', 'y2014'}
 SAME_PLACE_HOME = {'d1': 'd3', 'd2': 'd1', 'd3': 'd4', 'd4': 'd2'}
 
 
@@ -322,7 +323,11 @@ class Schedule2005StorageTests(TestCase):
         ))
         self.assertEqual(again, 'unchanged')
         self.assertEqual(writes, [])
-        with self.assertRaisesMessage(TimelineScheduleRefused, LATER_SEASON):
+        _season(self.timeline, self.profiles, 2006)
+        with self.assertRaisesMessage(
+            TimelineScheduleRefused,
+            'The 2005 regular season is not complete.',
+        ):
             generate_timeline_schedule(timeline_id=self.timeline.pk, season_year=2006)
         self.assertEqual(
             ScheduleGame.objects.filter(timeline=self.timeline, season_year=2006).count(),
@@ -360,7 +365,12 @@ class Schedule2005StorageTests(TestCase):
     def test_a_year_without_a_prior_verifier_refuses_before_writing(self):
         before = _kept(self.release, self.timeline)
         _season(self.timeline, self.profiles, 2006)
-        for year in (2006, 2012, 2020):
+        expected = {
+            2006: 'The 2005 regular season is not complete.',
+            2012: 'The timeline has no 2011 season.',
+            2020: 'The timeline has no 2019 season.',
+        }
+        for year, message in expected.items():
             statements = []
 
             def wrap(execute, sql, params, many, context):
@@ -369,7 +379,7 @@ class Schedule2005StorageTests(TestCase):
 
             connection.execute_wrappers.append(wrap)
             try:
-                with self.assertRaisesMessage(TimelineScheduleRefused, LATER_SEASON):
+                with self.assertRaisesMessage(TimelineScheduleRefused, message):
                     generate_timeline_schedule(
                         timeline_id=self.timeline.pk,
                         season_year=year,
@@ -415,9 +425,16 @@ class Schedule2005StorageTests(TestCase):
         season = TimelineSeason.objects.get(timeline=self.timeline, season_year=2005)
         season.setup_complete = True
         season.directives_locked = True
-        season.regular_season_simulated = True
         season.save()
-        for year in (2005, 2012, 2020):
+        season.regular_season_simulated = True
+        with self.assertRaisesMessage(
+            ValidationError,
+            'The 2005 regular season is marked complete only by its close.',
+        ):
+            season.save()
+        season.refresh_from_db()
+        self.assertFalse(season.regular_season_simulated)
+        for year in (2021,):
             statements = []
 
             def wrap(execute, sql, params, many, context):
@@ -426,14 +443,19 @@ class Schedule2005StorageTests(TestCase):
 
             connection.execute_wrappers.append(wrap)
             try:
-                with self.assertRaisesMessage(DivisionPlaceRefused, 'outside 2002–2004'):
+                with self.assertRaisesMessage(DivisionPlaceRefused, 'outside 2002–2020'):
                     close_regular_season(
                         timeline_id=self.timeline.pk,
                         results=(),
                         season_year=year,
                     )
-                with self.assertRaisesMessage(DivisionPlaceRefused, 'outside 2002–2004'):
+                with self.assertRaisesMessage(DivisionPlaceRefused, 'outside 2002–2020'):
                     verify_played_places(self.timeline, year)
+                with self.assertRaisesMessage(TimelineScheduleRefused, 'outside 2002–2020'):
+                    generate_timeline_schedule(
+                        timeline_id=self.timeline.pk,
+                        season_year=year,
+                    )
             finally:
                 connection.execute_wrappers.remove(wrap)
             writes = [
@@ -441,28 +463,8 @@ class Schedule2005StorageTests(TestCase):
                 if sql.lstrip().split(None, 1)[0].strip('"').upper() in WRITE_WORDS
             ]
             self.assertEqual(writes, [])
-            self.assertEqual(
-                ScheduleGameResult.objects.filter(
-                    timeline=self.timeline,
-                    season_year=year,
-                ).count(),
-                0,
-            )
-            self.assertEqual(
-                TimelineDivisionPlace.objects.filter(
-                    timeline=self.timeline,
-                    season_year=year,
-                ).count(),
-                0,
-            )
-        with self.assertRaisesMessage(TimelineScheduleRefused, LATER_SEASON):
-            generate_timeline_schedule(timeline_id=self.timeline.pk, season_year=2006)
-        self.assertEqual(
-            ScheduleGame.objects.filter(timeline=self.timeline, season_year=2006).count(),
-            0,
-        )
         self.assertEqual(_kept(self.release, self.timeline), before)
-        self.assertTrue(TimelineSeason.objects.get(
+        self.assertFalse(TimelineSeason.objects.get(
             timeline=self.timeline,
             season_year=2005,
         ).regular_season_simulated)
@@ -634,6 +636,217 @@ class Schedule2005StorageTests(TestCase):
                 found[row.franchise_id],
                 {('home', hosted), ('away', visited)},
             )
+
+    def test_closed_2005_unlocks_only_2006(self):
+        before = _kept(self.release, self.timeline)
+        self.assertEqual(
+            ScheduleGame.objects.filter(timeline=self.timeline, season_year=2006).count(),
+            0,
+        )
+        generate_timeline_schedule(timeline_id=self.timeline.pk, season_year=2005)
+        _lock(self.timeline, 2005)
+        outcome = close_regular_season(
+            timeline_id=self.timeline.pk,
+            results=_ranked_results(self.timeline, 2005),
+            season_year=2005,
+        )
+        self.assertEqual(outcome, 'created')
+        self.assertEqual(
+            ScheduleGame.objects.filter(timeline=self.timeline, season_year=2006).count(),
+            0,
+        )
+        with holding_release_lock(self.release.pk):
+            verified, writes = _writes_during(
+                lambda: verify_played_places(self.timeline, 2005),
+            )
+        self.assertEqual(writes, [])
+        self.assertEqual(verified, _place_map(self.timeline, 2005))
+        self.assertEqual(set(verified.values()), {1, 2, 3, 4})
+        again, writes = _writes_during(lambda: close_regular_season(
+            timeline_id=self.timeline.pk,
+            results=_ranked_results(self.timeline, 2005),
+            season_year=2005,
+        ))
+        self.assertEqual(again, 'unchanged')
+        self.assertEqual(writes, [])
+        _season(self.timeline, self.profiles, 2006)
+        self.assertEqual(
+            generate_timeline_schedule(timeline_id=self.timeline.pk, season_year=2006),
+            'created',
+        )
+        self.assertEqual(
+            ScheduleGame.objects.filter(timeline=self.timeline, season_year=2006).count(),
+            256,
+        )
+        _season(self.timeline, self.profiles, 2007)
+        with self.assertRaisesMessage(
+            TimelineScheduleRefused,
+            'The 2006 regular season is not complete.',
+        ):
+            generate_timeline_schedule(timeline_id=self.timeline.pk, season_year=2007)
+        self.assertEqual(
+            ScheduleGame.objects.filter(timeline=self.timeline, season_year=2007).count(),
+            0,
+        )
+        self.assertEqual(_kept(self.release, self.timeline), before)
+
+    def test_partial_and_altered_2005_results_are_refused(self):
+        before = _kept(self.release, self.timeline)
+        generate_timeline_schedule(timeline_id=self.timeline.pk, season_year=2005)
+        _lock(self.timeline, 2005)
+        results = _ranked_results(self.timeline, 2005)
+        with self.assertRaises(DivisionPlaceRefused):
+            close_regular_season(
+                timeline_id=self.timeline.pk,
+                results=results[:-1],
+                season_year=2005,
+            )
+        self.assertEqual(
+            ScheduleGameResult.objects.filter(timeline=self.timeline, season_year=2005).count(),
+            0,
+        )
+        self.assertFalse(TimelineSeason.objects.get(
+            timeline=self.timeline,
+            season_year=2005,
+        ).regular_season_simulated)
+        close_regular_season(
+            timeline_id=self.timeline.pk,
+            results=results,
+            season_year=2005,
+        )
+        stored = ScheduleGameResult.objects.filter(
+            timeline=self.timeline,
+            season_year=2005,
+        ).order_by('pk').first()
+        ScheduleGameResult.objects.filter(pk=stored.pk).update(home_score=stored.home_score + 1)
+        with self.assertRaisesMessage(DivisionPlaceRefused, 'do not match'):
+            close_regular_season(
+                timeline_id=self.timeline.pk,
+                results=results,
+                season_year=2005,
+            )
+        self.assertEqual(
+            ScheduleGameResult.objects.get(pk=stored.pk).home_score,
+            stored.home_score + 1,
+        )
+        self.assertTrue(TimelineSeason.objects.get(
+            timeline=self.timeline,
+            season_year=2005,
+        ).regular_season_simulated)
+        self.assertEqual(_kept(self.release, self.timeline), before)
+
+    def test_2005_insert_and_completion_roll_back(self):
+        generate_timeline_schedule(timeline_id=self.timeline.pk, season_year=2005)
+        _lock(self.timeline, 2005)
+        results = _tied_results(self.timeline, 2005)
+        before = _kept(self.release, self.timeline)
+        targets = (
+            'timelines.services.division_place_2002.ScheduleGameResult.objects.bulk_create',
+            'timelines.services.division_place_2002.TimelineDivisionDraw.objects.bulk_create',
+            'timelines.services.division_place_2002.TimelineDivisionPlace.objects.bulk_create',
+        )
+        for target in targets:
+            with patch(target, side_effect=IntegrityError('forced')):
+                with self.assertRaises(DivisionPlaceRefused):
+                    close_regular_season(
+                        timeline_id=self.timeline.pk,
+                        results=results,
+                        season_year=2005,
+                    )
+            self._assert_2005_rolled_back(before)
+        real_update = QuerySet.update
+
+        def fail_flag(queryset, **kwargs):
+            if 'regular_season_simulated' in kwargs:
+                raise IntegrityError('forced')
+            return real_update(queryset, **kwargs)
+
+        with patch.object(QuerySet, 'update', fail_flag):
+            with self.assertRaises(DivisionPlaceRefused):
+                close_regular_season(
+                    timeline_id=self.timeline.pk,
+                    results=results,
+                    season_year=2005,
+                )
+        self._assert_2005_rolled_back(before)
+        for count in (0, 2):
+            def wrong_count(queryset, count=count, **kwargs):
+                if 'regular_season_simulated' in kwargs:
+                    real_update(queryset, **kwargs)
+                    return count
+                return real_update(queryset, **kwargs)
+
+            with patch.object(QuerySet, 'update', wrong_count):
+                with self.assertRaises(DivisionPlaceRefused):
+                    close_regular_season(
+                        timeline_id=self.timeline.pk,
+                        results=results,
+                        season_year=2005,
+                    )
+            self._assert_2005_rolled_back(before)
+
+    def test_2011_and_2020_close_and_verify_without_rewriting_earlier_rows(self):
+        before = _kept(self.release, self.timeline)
+        for year in (2011, 2020):
+            _season(self.timeline, self.profiles, year)
+            _copy_season_games(self.timeline, 2004, year)
+            _lock(self.timeline, year)
+            outcome = close_regular_season(
+                timeline_id=self.timeline.pk,
+                results=_ranked_results(self.timeline, year),
+                season_year=year,
+            )
+            self.assertEqual(outcome, 'created')
+            places = _place_map(self.timeline, year)
+            self.assertEqual(len(places), 32)
+            self.assertEqual(set(places.values()), {1, 2, 3, 4})
+            with holding_release_lock(self.release.pk):
+                verified, writes = _writes_during(
+                    lambda year=year: verify_played_places(self.timeline, year),
+                )
+            self.assertEqual(writes, [])
+            self.assertEqual(verified, places)
+            again, writes = _writes_during(lambda year=year: close_regular_season(
+                timeline_id=self.timeline.pk,
+                results=_ranked_results(self.timeline, year),
+                season_year=year,
+            ))
+            self.assertEqual(again, 'unchanged')
+            self.assertEqual(writes, [])
+        self.assertEqual(_kept(self.release, self.timeline), before)
+
+    def _assert_2005_rolled_back(self, before):
+        self.assertEqual(
+            ScheduleGameResult.objects.filter(timeline=self.timeline, season_year=2005).count(),
+            0,
+        )
+        self.assertEqual(
+            TimelineDivisionDraw.objects.filter(timeline=self.timeline, season_year=2005).count(),
+            0,
+        )
+        self.assertEqual(
+            TimelineDivisionPlace.objects.filter(timeline=self.timeline, season_year=2005).count(),
+            0,
+        )
+        self.assertFalse(TimelineSeason.objects.get(
+            timeline=self.timeline,
+            season_year=2005,
+        ).regular_season_simulated)
+        self.assertEqual(_kept(self.release, self.timeline), before)
+
+
+def _copy_season_games(timeline, source_year, year):
+    ScheduleGame.objects.bulk_create([
+        ScheduleGame(
+            timeline=timeline,
+            season_year=year,
+            home_id=game.home_id,
+            away_id=game.away_id,
+            kind=game.kind,
+            category=game.category,
+        )
+        for game in ScheduleGame.objects.filter(timeline=timeline, season_year=source_year)
+    ])
 
 
 def _rotated_home(seat, opponent):
