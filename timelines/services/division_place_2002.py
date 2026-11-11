@@ -160,6 +160,85 @@ class DivisionPlaceRefused(Exception):
     """The 2002 results or division places cannot be written."""
 
 
+def verify_played_2002_places(timeline):
+    """Return each club's 2002 division place after the close's own checks.
+
+    The caller holds the release lock inside the open transaction. This
+    reads the stored results, draws, and places. It recomputes the tiebreak
+    with the close's stored-draw ranker and accepts the rows only when the
+    stored places match that recomputation and the place shape is 1 through
+    4 once in every division. It does not write. The completion flag alone
+    is not a 2002 close.
+    """
+    assert_release_lock_held(timeline.release_id)
+    season = _lock_season(timeline)
+    if not season.regular_season_simulated:
+        raise DivisionPlaceRefused('The 2002 regular season is not complete.')
+    memberships = _load_memberships(timeline.release_id)
+    games = list(
+        ScheduleGame.objects.select_for_update().filter(
+            timeline_id=timeline.pk,
+            season_year=SEASON_YEAR,
+        ).order_by('pk')
+    )
+    stored_results = list(
+        ScheduleGameResult.objects.select_for_update().filter(
+            timeline_id=timeline.pk,
+        ).select_related('game')
+    )
+    _require_result_fixtures(stored_results, games, timeline.pk)
+    if len(stored_results) != 256:
+        raise DivisionPlaceRefused('The 2002 regular season is not complete.')
+    submitted = _validated_results(
+        tuple(_result_from_stored(row) for row in stored_results),
+        games,
+        memberships,
+    )
+    stored_result_keys = {_stored_result_key(row) for row in stored_results}
+    if stored_result_keys != {_submitted_key(row) for row in submitted}:
+        raise DivisionPlaceRefused('Stored 2002 results do not match this set.')
+    stored_draws = list(
+        TimelineDivisionDraw.objects.select_for_update().filter(
+            timeline_id=timeline.pk,
+            season_year=SEASON_YEAR,
+        )
+    )
+    stored_places = list(
+        TimelineDivisionPlace.objects.select_for_update().filter(
+            timeline_id=timeline.pk,
+            season_year=SEASON_YEAR,
+        ).select_related('franchise')
+    )
+    places, draws = _rank_stored(
+        timeline.release.seed,
+        memberships,
+        games,
+        submitted,
+        stored_draws,
+    )
+    if not _places_match(stored_places, stored_draws, places, draws):
+        raise DivisionPlaceRefused(
+            'Stored 2002 division places do not match this set.'
+        )
+    _require_place_shape(memberships, places, draws)
+    return {
+        row.franchise_id: row.division_place
+        for row in stored_places
+    }
+
+
+def _result_from_stored(row):
+    return Result(
+        row.game.home_id,
+        row.game.away_id,
+        row.home_score,
+        row.away_score,
+        row.home_touchdowns,
+        row.away_touchdowns,
+        row.source_key,
+    )
+
+
 def close_2002_regular_season(*, timeline_id, results):
     """Store 2002 results and division places. Return ``created`` or ``unchanged``.
 

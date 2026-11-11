@@ -547,9 +547,13 @@ class TimelineScheduleTests(TestCase):
         timeline = _timeline(self.release, 'later seasons', self.profiles, 2002)
         _season(timeline, self.profiles, 2003)
         _season(timeline, self.profiles, 2020)
-        for year in (2003, 2020):
-            with self.assertRaisesMessage(TimelineScheduleRefused, LATER_SEASON):
-                generate_timeline_schedule(timeline_id=timeline.pk, season_year=year)
+        with self.assertRaisesMessage(
+            TimelineScheduleRefused,
+            'The 2002 regular season is not complete.',
+        ):
+            generate_timeline_schedule(timeline_id=timeline.pk, season_year=2003)
+        with self.assertRaisesMessage(TimelineScheduleRefused, LATER_SEASON):
+            generate_timeline_schedule(timeline_id=timeline.pk, season_year=2020)
         with self.assertRaisesMessage(TimelineScheduleRefused, 'outside 2002'):
             generate_timeline_schedule(timeline_id=timeline.pk, season_year=2021)
         self.assertEqual(ScheduleGame.objects.count(), 0)
