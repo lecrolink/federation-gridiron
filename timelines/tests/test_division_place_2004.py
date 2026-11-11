@@ -97,8 +97,9 @@ class SharedProcedureTests(DivisionProcedureTests):
         self.assertNotIn('timeline', later.split(':'))
         named = division_draw_label(*arguments, 2005)
         self.assertIn(':2005:', named)
-        with self.assertRaisesMessage(DivisionPlaceRefused, 'outside 2002–2020'):
-            division_draw_label(*arguments, 2021)
+        self.assertIn(':2021:', division_draw_label(*arguments, 2021))
+        with self.assertRaisesMessage(DivisionPlaceRefused, 'outside 2002–2029'):
+            division_draw_label(*arguments, 2030)
 
     def test_four_clubs_reduced_to_three_continue_at_the_next_step(self):
         clubs = [_club(name) for name in 'abcd']

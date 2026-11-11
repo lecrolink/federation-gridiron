@@ -4,9 +4,12 @@ from django.test import SimpleTestCase
 
 from timelines.services.schedule_2002 import (
     AFC_SIDE,
+    INTER_ROW,
+    INTRA_PAIRS,
     NFC_SIDE,
     POSITIONS,
     Seat,
+    TimelineScheduleRefused,
     planned_games,
 )
 
@@ -175,6 +178,193 @@ def _first_meeting_home(seat, opponent):
     if seat_is_first:
         return same_pair
     return not same_pair
+
+
+# NFC division for AFC East, North, South, West.
+# 2021: NFL.com, "NFL season to feature 17 regular-season games per team".
+# 2022: the league rotation reprinted with that season's opponents.
+PUBLISHED_INTER = {
+    2021: (2, 1, 3, 0),
+    2022: (1, 2, 0, 3),
+}
+# 2021 AFC hosts NFC East, West, South, North. 2022 NFC hosts the next row.
+PUBLISHED_SEVENTEENTH = {
+    2021: (0, 3, 2, 1),
+    2022: (3, 0, 1, 2),
+}
+# NFC West 17th-game AFC division, and whether that NFC club is at home.
+# 2021–2024 is the Rams cycle. 2025–2029 is the Cardinals list in the 2024
+# Official NFL Record & Fact Book, future opponents.
+NFC_WEST_SEVENTEENTH = {
+    2021: ('d2', False),
+    2022: ('d1', True),
+    2023: ('d3', False),
+    2024: ('d4', True),
+    2025: ('d2', False),
+    2026: ('d1', True),
+    2027: ('d3', False),
+    2028: ('d4', True),
+    2029: ('d2', False),
+}
+# Cardinals rotating divisions in that same 2024 book, 2025–2029.
+NFC_WEST_ROTATION = {
+    2025: ('d3', 'd3'),
+    2026: ('d1', 'd4'),
+    2027: ('d2', 'd2'),
+    2028: ('d3', 'd1'),
+    2029: ('d1', 'd3'),
+}
+
+
+class SeventeenGameFormulaTests(SimpleTestCase):
+    def test_every_season_from_2021_through_2029(self):
+        seats = _synthetic_seats()
+        places = {seat.franchise_id: seat.slot for seat in seats}
+        by_id = {seat.franchise_id: seat for seat in seats}
+        self.assertEqual(len(planned_games(2020, seats, places)), 256)
+        for year in range(2021, 2030):
+            games = planned_games(year, seats, places)
+            self.assertEqual(len(games), 272)
+            self.assertEqual(len({(game.home_id, game.away_id) for game in games}), 272)
+            self.assertEqual(Counter(game.category for game in games), {
+                'division': 96,
+                'conference': 64,
+                'interconference': 64,
+                'same_place': 48,
+            })
+            self._assert_rotation(year, games, by_id, places)
+            self._assert_counts(year, games, seats)
+        with self.assertRaisesMessage(TimelineScheduleRefused, 'outside 2002–2029'):
+            planned_games(2030, seats, places)
+
+    def _assert_counts(self, year, games, seats):
+        afc_hosts = (year - 2021) % 2 == 0
+        for seat in seats:
+            played = [
+                game for game in games
+                if seat.franchise_id in (game.home_id, game.away_id)
+            ]
+            homes = [game for game in played if game.home_id == seat.franchise_id]
+            self.assertEqual(len(played), 17)
+            expected_homes = 9 if (seat.conference == AFC_SIDE) == afc_hosts else 8
+            self.assertEqual(len(homes), expected_homes)
+            intra_homes = [
+                game for game in homes
+                if game.category == 'same_place'
+                and _conference(game.away_id, seats) == seat.conference
+            ]
+            self.assertEqual(len(intra_homes), 1)
+
+    def _assert_rotation(self, year, games, by_id, places):
+        k3 = (year - 2002) % 3
+        k4 = (year - 2002) % 4
+        conference_pairs = {
+            frozenset((
+                by_id[game.home_id].division,
+                by_id[game.away_id].division,
+            ))
+            for game in games
+            if game.category == 'conference'
+        }
+        self.assertEqual(conference_pairs, {
+            frozenset((POSITIONS[left], POSITIONS[right]))
+            for left, right in INTRA_PAIRS[k3]
+        })
+        inter_row = INTER_ROW[k4]
+        if year in PUBLISHED_INTER:
+            self.assertEqual(inter_row, PUBLISHED_INTER[year])
+        seventeenth_row = INTER_ROW[(year - 2004) % 4]
+        if year in PUBLISHED_SEVENTEENTH:
+            self.assertEqual(seventeenth_row, PUBLISHED_SEVENTEENTH[year])
+        self.assertNotEqual(inter_row, seventeenth_row)
+        for game in games:
+            if game.category != 'interconference':
+                continue
+            home = by_id[game.home_id]
+            away = by_id[game.away_id]
+            afc = home if home.conference == AFC_SIDE else away
+            nfc = away if afc is home else home
+            self.assertEqual(
+                nfc.division,
+                POSITIONS[inter_row[POSITIONS.index(afc.division)]],
+            )
+        directed = {(game.home_id, game.away_id) for game in games}
+        conference_flipped = ((year - (2002 + k3)) // 3) % 2 == 1
+        inter_flipped = ((year - (2002 + k4)) // 4) % 2 == 1
+        for seat in by_id.values():
+            for game in games:
+                if game.category not in ('conference', 'interconference'):
+                    continue
+                if seat.franchise_id not in (game.home_id, game.away_id):
+                    continue
+                other_id = (
+                    game.away_id if game.home_id == seat.franchise_id
+                    else game.home_id
+                )
+                self.assertEqual(
+                    (seat.franchise_id, other_id) in directed,
+                    _expected_home(
+                        seat,
+                        by_id[other_id],
+                        conference_flipped,
+                        inter_flipped,
+                    ),
+                )
+        cross = []
+        for game in games:
+            if game.category != 'same_place':
+                continue
+            home = by_id[game.home_id]
+            away = by_id[game.away_id]
+            if home.conference == away.conference:
+                continue
+            cross.append(game)
+            self.assertEqual(places[home.franchise_id], places[away.franchise_id])
+            afc = home if home.conference == AFC_SIDE else away
+            nfc = away if afc is home else home
+            self.assertEqual(
+                nfc.division,
+                POSITIONS[seventeenth_row[POSITIONS.index(afc.division)]],
+            )
+            if (year - 2021) % 2 == 0:
+                self.assertEqual(home.conference, AFC_SIDE)
+            else:
+                self.assertEqual(home.conference, NFC_SIDE)
+        self.assertEqual(len(cross), 16)
+        west = next(
+            seat for seat in by_id.values()
+            if seat.conference == NFC_SIDE and seat.division == 'd4' and seat.slot == 1
+        )
+        opponent_division, nfc_home = NFC_WEST_SEVENTEENTH[year]
+        matched = [
+            game for game in cross
+            if west.franchise_id in (game.home_id, game.away_id)
+        ]
+        self.assertEqual(len(matched), 1)
+        game = matched[0]
+        other = by_id[game.away_id if game.home_id == west.franchise_id else game.home_id]
+        self.assertEqual(other.division, opponent_division)
+        self.assertEqual(other.conference, AFC_SIDE)
+        self.assertEqual(game.home_id == west.franchise_id, nfc_home)
+        if year in NFC_WEST_ROTATION:
+            intra, inter = NFC_WEST_ROTATION[year]
+            self.assertEqual(_partner(games, by_id, west, 'conference'), intra)
+            self.assertEqual(_partner(games, by_id, west, 'interconference'), inter)
+
+
+def _conference(franchise_id, seats):
+    return next(seat.conference for seat in seats if seat.franchise_id == franchise_id)
+
+
+def _partner(games, by_id, seat, category):
+    divisions = {
+        by_id[game.away_id if game.home_id == seat.franchise_id else game.home_id].division
+        for game in games
+        if game.category == category and seat.franchise_id in (game.home_id, game.away_id)
+    }
+    if len(divisions) != 1:
+        raise AssertionError(divisions)
+    return next(iter(divisions))
 
 
 def _synthetic_seats():
