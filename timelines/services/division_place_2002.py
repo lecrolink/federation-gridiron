@@ -1,10 +1,12 @@
-"""Close one timeline's 2002 regular season and store division places.
+"""Close a 2002 or 2003 regular season and store division places.
 
-The stored fixture list stays as it is. This service reads those 256 games,
-stores one project result for each, ranks every 2002 division, and only then
-sets ``regular_season_simulated``. That flag change is one queryset update of
-the locked season row. ``TimelineSeason.save()`` cannot make it. The service
-does not generate 2003 fixtures, and it does not play an overtime period.
+The stored fixture list stays as it is. ``close_2002_regular_season`` and
+``close_2003_regular_season`` share this tiebreak. Each reads that season's
+256 games, stores one project result for each, ranks every division, and
+only then sets ``regular_season_simulated``. That flag change is one
+queryset update of the locked season row. ``TimelineSeason.save()`` cannot
+make it for either year. The 2002 close does not generate 2003 fixtures, and
+the 2003 close does not generate 2004. Neither plays an overtime period.
 
 An equal final score is a tie. A higher score is a win. Touchdown counts are
 taken from the result row. The 2002–2003 Official Playing Rules were not
@@ -31,11 +33,16 @@ competition rank, the next rank is skipped, and the lower sum wins.
 Inside one place, a step that leaves three or more clubs sharing the best
 value drops the others and continues at the next step. When that step leaves
 exactly two clubs, the tiebreaker restarts at two-club head-to-head. That
-restart is the 2002 rule. A reduction from four clubs to three does not
-restart; the later three-club restart is not a 2002 rule. After a place is
-stored, the same procedure runs again on every club that does not yet have a
-place. The last remaining club is ``sole_remaining``. Each touchdown stored
-on a result counts as six points of that club's final score.
+restart is the 2002 rule, and the December 13, 2003 published NFL procedure
+uses the same two-club restart. A reduction from four clubs to three does
+not restart; the later three-club restart is not part of this procedure.
+The formulas above stay project rules where the historical text names a step
+and does not define the calculation. After a place is stored, the same
+procedure runs again on every club that does not yet have a place. The last
+remaining club is ``sole_remaining``. Each touchdown stored on a result
+counts as six points of that club's final score. A 2003 draw uses the same
+coordinate fields as 2002, with the season set to 2003. The 2002 coordinate
+keeps its original text.
 """
 
 import hashlib
@@ -62,6 +69,7 @@ from universe.release_guard import assert_release_lock_held, holding_release_loc
 
 
 SEASON_YEAR = 2002
+SUPPORTED_SEASONS = (2002, 2003)
 DRAW_LIMIT = 8
 _DRAW_SPAN = 1 << 64
 _PROCEDURE = 'division-place'
@@ -170,55 +178,79 @@ def verify_played_2002_places(timeline):
     4 once in every division. It does not write. The completion flag alone
     is not a 2002 close.
     """
+    return _verify_played_places(timeline, SEASON_YEAR)
+
+
+def verify_played_2003_places(timeline):
+    """Return each club's 2003 division place after the same read-only checks.
+
+    The caller holds the release lock inside the open transaction. This
+    does not write and does not generate a later schedule.
+    """
+    return _verify_played_places(timeline, 2003)
+
+
+def _verify_played_places(timeline, season_year):
     assert_release_lock_held(timeline.release_id)
-    season = _lock_season(timeline)
+    season = _lock_season(timeline, season_year)
     if not season.regular_season_simulated:
-        raise DivisionPlaceRefused('The 2002 regular season is not complete.')
-    memberships = _load_memberships(timeline.release_id)
+        raise DivisionPlaceRefused(
+            _season_text(
+                season_year,
+                'The 2002 regular season is not complete.',
+                'The 2003 regular season is not complete.',
+            )
+        )
+    memberships = _load_memberships(timeline.release_id, season_year)
     games = list(
         ScheduleGame.objects.select_for_update().filter(
             timeline_id=timeline.pk,
-            season_year=SEASON_YEAR,
+            season_year=season_year,
         ).order_by('pk')
     )
-    stored_results = list(
-        ScheduleGameResult.objects.select_for_update().filter(
-            timeline_id=timeline.pk,
-        ).select_related('game')
-    )
-    _require_result_fixtures(stored_results, games, timeline.pk)
+    stored_results = _load_results(timeline.pk)
+    _require_result_fixtures(stored_results, games, timeline.pk, season_year)
+    stored_results = _results_for_season(stored_results, season_year)
     if len(stored_results) != 256:
-        raise DivisionPlaceRefused('The 2002 regular season is not complete.')
+        raise DivisionPlaceRefused(
+            _season_text(
+                season_year,
+                'The 2002 regular season is not complete.',
+                'The 2003 regular season is not complete.',
+            )
+        )
     submitted = _validated_results(
         tuple(_result_from_stored(row) for row in stored_results),
         games,
         memberships,
+        season_year,
     )
     stored_result_keys = {_stored_result_key(row) for row in stored_results}
     if stored_result_keys != {_submitted_key(row) for row in submitted}:
-        raise DivisionPlaceRefused('Stored 2002 results do not match this set.')
-    stored_draws = list(
-        TimelineDivisionDraw.objects.select_for_update().filter(
-            timeline_id=timeline.pk,
-            season_year=SEASON_YEAR,
+        raise DivisionPlaceRefused(
+            _season_text(
+                season_year,
+                'Stored 2002 results do not match this set.',
+                'Stored 2003 results do not match this set.',
+            )
         )
-    )
-    stored_places = list(
-        TimelineDivisionPlace.objects.select_for_update().filter(
-            timeline_id=timeline.pk,
-            season_year=SEASON_YEAR,
-        ).select_related('franchise')
-    )
+    stored_draws = _load_draws(timeline.pk, season_year)
+    stored_places = _load_places(timeline.pk, season_year)
     places, draws = _rank_stored(
         timeline.release.seed,
         memberships,
         games,
         submitted,
         stored_draws,
+        season_year,
     )
     if not _places_match(stored_places, stored_draws, places, draws):
         raise DivisionPlaceRefused(
-            'Stored 2002 division places do not match this set.'
+            _season_text(
+                season_year,
+                'Stored 2002 division places do not match this set.',
+                'Stored 2003 division places do not match this set.',
+            )
         )
     _require_place_shape(memberships, places, draws)
     return {
@@ -251,13 +283,28 @@ def close_2002_regular_season(*, timeline_id, results):
     still false has been recomputed and accepted. An already complete exact
     rerun writes nothing.
     """
+    return _close_regular_season(timeline_id, results, SEASON_YEAR)
+
+
+def close_2003_regular_season(*, timeline_id, results):
+    """Store 2003 results and division places. Return ``created`` or ``unchanged``.
+
+    This uses the same tiebreak, draw verification, and locked flag update
+    as the 2002 close. It does not simulate games or generate 2004 fixtures.
+    """
+    return _close_regular_season(timeline_id, results, 2003)
+
+
+def _close_regular_season(timeline_id, results, season_year):
     _require_id(timeline_id)
+    if season_year not in SUPPORTED_SEASONS:
+        raise DivisionPlaceRefused('The season is outside 2002–2003.')
     probe = Timeline.objects.filter(pk=timeline_id).only('pk', 'release_id').first()
     if probe is None:
         raise DivisionPlaceRefused('The timeline is missing.')
     with transaction.atomic():
         with holding_release_lock(probe.release_id) as release:
-            return _close_locked(release, timeline_id, results)
+            return _close_locked(release, timeline_id, results, season_year)
 
 
 def rank_places(clubs, games, choose):
@@ -340,77 +387,86 @@ def competition_rank(items, key, *, higher_better):
     return ranks
 
 
-def division_draw_label(conference, division, keys, draw_index):
-    """Coordinate prefix. The timeline id is not included."""
+def division_draw_label(conference, division, keys, draw_index, season_year=SEASON_YEAR):
+    """Coordinate prefix. The timeline id is not included.
+
+    The 2002 call, with the season omitted, keeps
+    ``division-place:2002:{conference}:{division}:{keys}:{index}``.
+    A 2003 draw uses the same fields with season 2003.
+    """
+    if season_year not in SUPPORTED_SEASONS:
+        raise DivisionPlaceRefused('The season is outside 2002–2003.')
     joined = ','.join(keys)
     return (
-        f'{_PROCEDURE}:{SEASON_YEAR}:{conference}:{division}:'
+        f'{_PROCEDURE}:{season_year}:{conference}:{division}:'
         f'{joined}:{draw_index}'
     )
 
 
-def _close_locked(release, timeline_id, results):
+def _close_locked(release, timeline_id, results, season_year):
     if release.status != release.Status.PUBLISHED:
         raise DivisionPlaceRefused('The release is not published.')
     timeline = _lock_timeline(timeline_id, release.pk)
-    season = _lock_season(timeline)
-    if not season.directives_locked:
-        raise DivisionPlaceRefused('The 2002 directives are not locked.')
-    memberships = _load_memberships(release.pk)
+    season = _lock_season(timeline, season_year)
+    if not season.setup_complete or not season.directives_locked:
+        raise DivisionPlaceRefused(
+            _season_text(
+                season_year,
+                'The 2002 directives are not locked.',
+                'The 2003 directives are not locked.',
+            )
+        )
+    memberships = _load_memberships(release.pk, season_year)
     games = list(
         ScheduleGame.objects.select_for_update().filter(
             timeline_id=timeline.pk,
-            season_year=SEASON_YEAR,
+            season_year=season_year,
         ).order_by('pk')
     )
-    submitted = _validated_results(results, games, memberships)
-    stored_results = list(
-        ScheduleGameResult.objects.select_for_update().filter(
-            timeline_id=timeline.pk,
-        ).select_related('game')
-    )
-    _require_result_fixtures(stored_results, games, timeline.pk)
-    stored_draws = list(
-        TimelineDivisionDraw.objects.select_for_update().filter(
-            timeline_id=timeline.pk,
-            season_year=SEASON_YEAR,
-        )
-    )
-    stored_places = list(
-        TimelineDivisionPlace.objects.select_for_update().filter(
-            timeline_id=timeline.pk,
-            season_year=SEASON_YEAR,
-        ).select_related('franchise')
-    )
+    submitted = _validated_results(results, games, memberships, season_year)
+    stored_results = _load_results(timeline.pk)
+    _require_result_fixtures(stored_results, games, timeline.pk, season_year)
+    stored_results = _results_for_season(stored_results, season_year)
+    stored_draws = _load_draws(timeline.pk, season_year)
+    stored_places = _load_places(timeline.pk, season_year)
     stored_result_keys = {_stored_result_key(row) for row in stored_results}
     submitted_keys = {_submitted_key(row) for row in submitted}
+    mismatch = _season_text(
+        season_year,
+        'Stored 2002 results do not match this set.',
+        'Stored 2003 results do not match this set.',
+    )
     if stored_results:
         if stored_result_keys != submitted_keys:
-            raise DivisionPlaceRefused(
-                'Stored 2002 results do not match this set.'
-            )
+            raise DivisionPlaceRefused(mismatch)
         places, draws = _rank_stored(
             release.seed,
             memberships,
             games,
             submitted,
             stored_draws,
+            season_year,
         )
         if not _places_match(stored_places, stored_draws, places, draws):
             raise DivisionPlaceRefused(
-                'Stored 2002 division places do not match this set.'
+                _season_text(
+                    season_year,
+                    'Stored 2002 division places do not match this set.',
+                    'Stored 2003 division places do not match this set.',
+                )
             )
         if season.regular_season_simulated:
             return 'unchanged'
         _mark_season_complete(season)
         return 'created'
     if stored_places or stored_draws or season.regular_season_simulated:
-        raise DivisionPlaceRefused('Stored 2002 results do not match this set.')
+        raise DivisionPlaceRefused(mismatch)
     places, draws, pending = _rank_new(
         release.seed,
         memberships,
         games,
         submitted,
+        season_year,
     )
     _require_place_shape(memberships, places, draws)
     assert_release_lock_held(release.pk)
@@ -418,16 +474,22 @@ def _close_locked(release, timeline_id, results):
     return 'created'
 
 
-def _rank_new(seed, memberships, games, submitted):
+def _rank_new(seed, memberships, games, submitted, season_year=SEASON_YEAR):
     pending = []
 
     def choose(draw_index, conference, division, keys):
-        label = division_draw_label(conference, division, keys, draw_index)
+        label = division_draw_label(
+            conference,
+            division,
+            keys,
+            draw_index,
+            season_year,
+        )
         message, digest, choice = _resolving_draw(seed, label, len(keys))
         pending.append((message, digest, choice))
         return choice
 
-    clubs, scored = _views(memberships, games, submitted)
+    clubs, scored = _views(memberships, games, submitted, season_year)
     places, draws = rank_places(clubs, scored, choose)
     if len(pending) != len(draws):
         raise DivisionPlaceRefused('The division draw did not resolve.')
@@ -439,7 +501,14 @@ def _rank_new(seed, memberships, games, submitted):
     return places, draws, pending
 
 
-def _rank_stored(seed, memberships, games, submitted, stored_draws):
+def _rank_stored(
+    seed,
+    memberships,
+    games,
+    submitted,
+    stored_draws,
+    season_year=SEASON_YEAR,
+):
     by_index = {
         (row.conference_slug, row.division_slug, row.draw_index): row
         for row in stored_draws
@@ -450,7 +519,13 @@ def _rank_stored(seed, memberships, games, submitted, stored_draws):
         row = by_index.get((conference, division, draw_index))
         if row is None:
             raise DivisionPlaceRefused('A division draw is missing.')
-        label = division_draw_label(conference, division, keys, draw_index)
+        label = division_draw_label(
+            conference,
+            division,
+            keys,
+            draw_index,
+            season_year,
+        )
         prefix = f'{label}:'
         if not row.coordinate.startswith(prefix):
             raise DivisionPlaceRefused(
@@ -474,7 +549,7 @@ def _rank_stored(seed, memberships, games, submitted, stored_draws):
         seen.add((conference, division, draw_index))
         return choice
 
-    clubs, scored = _views(memberships, games, submitted)
+    clubs, scored = _views(memberships, games, submitted, season_year)
     places, draws = rank_places(clubs, scored, choose)
     if seen != set(by_index):
         raise DivisionPlaceRefused(
@@ -935,14 +1010,14 @@ def _append_appearance(appearances, club_key, opponent, scored, allowed, scored_
     ))
 
 
-def _views(memberships, games, submitted):
+def _views(memberships, games, submitted, season_year=SEASON_YEAR):
     by_pair = {(row.home_id, row.away_id): row for row in submitted}
     slug_of = {}
     clubs = []
     for row in memberships:
         slug = row.franchise.placeholder_slug
         if not slug or slug in slug_of.values():
-            raise DivisionPlaceRefused('The 2002 alignment is not eight divisions of four.')
+            raise DivisionPlaceRefused(_alignment_message(season_year))
         slug_of[row.franchise_id] = slug
         clubs.append(Club(slug, row.conference_slug, row.division_slug))
     scored = []
@@ -959,34 +1034,44 @@ def _views(memberships, games, submitted):
     return clubs, scored
 
 
-def _validated_results(results, games, memberships):
+def _validated_results(results, games, memberships, season_year=SEASON_YEAR):
+    fixture_message = _season_text(
+        season_year,
+        'The 2002 fixtures are incomplete.',
+        'The 2003 fixtures are incomplete.',
+    )
+    result_message = _season_text(
+        season_year,
+        'The 2002 results do not match the stored fixtures.',
+        'The 2003 results do not match the stored fixtures.',
+    )
     if not isinstance(results, (list, tuple)) or isinstance(results, str):
-        raise DivisionPlaceRefused('The 2002 results do not match the stored fixtures.')
+        raise DivisionPlaceRefused(result_message)
     if len(games) != 256:
-        raise DivisionPlaceRefused('The 2002 fixtures are incomplete.')
-    _require_alignment(memberships)
+        raise DivisionPlaceRefused(fixture_message)
+    _require_alignment(memberships, season_year)
     member_ids = {row.franchise_id for row in memberships}
     fixture_pairs = set()
     appearances = {franchise_id: 0 for franchise_id in member_ids}
     for game in games:
-        if game.season_year != SEASON_YEAR or game.kind != ScheduleGame.Kind.REGULAR:
-            raise DivisionPlaceRefused('The 2002 fixtures are incomplete.')
+        if game.season_year != season_year or game.kind != ScheduleGame.Kind.REGULAR:
+            raise DivisionPlaceRefused(fixture_message)
         if (
             game.home_id == game.away_id
             or game.home_id not in member_ids
             or game.away_id not in member_ids
         ):
-            raise DivisionPlaceRefused('The 2002 fixtures are incomplete.')
+            raise DivisionPlaceRefused(fixture_message)
         pair = (game.home_id, game.away_id)
         if pair in fixture_pairs:
-            raise DivisionPlaceRefused('The 2002 fixtures are incomplete.')
+            raise DivisionPlaceRefused(fixture_message)
         fixture_pairs.add(pair)
         appearances[game.home_id] += 1
         appearances[game.away_id] += 1
     if any(count != 16 for count in appearances.values()):
-        raise DivisionPlaceRefused('The 2002 fixtures are incomplete.')
+        raise DivisionPlaceRefused(fixture_message)
     if len(results) != 256:
-        raise DivisionPlaceRefused('The 2002 results do not match the stored fixtures.')
+        raise DivisionPlaceRefused(result_message)
     normalized = []
     seen = set()
     for result in results:
@@ -994,13 +1079,11 @@ def _validated_results(results, games, memberships):
             raise DivisionPlaceRefused(
                 'A result needs whole-number scores and touchdowns.'
             )
-        home_id = _require_identity(result.home_id)
-        away_id = _require_identity(result.away_id)
+        home_id = _require_identity(result.home_id, result_message)
+        away_id = _require_identity(result.away_id, result_message)
         pair = (home_id, away_id)
         if pair not in fixture_pairs or pair in seen:
-            raise DivisionPlaceRefused(
-                'The 2002 results do not match the stored fixtures.'
-            )
+            raise DivisionPlaceRefused(result_message)
         seen.add(pair)
         home_score = _require_count(result.home_score)
         away_score = _require_count(result.away_score)
@@ -1023,31 +1106,27 @@ def _validated_results(results, games, memberships):
             _require_source(result.source_key),
         ))
     if seen != fixture_pairs:
-        raise DivisionPlaceRefused('The 2002 results do not match the stored fixtures.')
+        raise DivisionPlaceRefused(result_message)
     return normalized
 
 
-def _require_alignment(memberships):
+def _require_alignment(memberships, season_year=SEASON_YEAR):
     if len(memberships) != 32:
-        raise DivisionPlaceRefused('The 2002 alignment is not eight divisions of four.')
+        raise DivisionPlaceRefused(_alignment_message(season_year))
     groups = {}
     seen = set()
     for row in memberships:
         if row.franchise_id in seen:
-            raise DivisionPlaceRefused(
-                'The 2002 alignment is not eight divisions of four.'
-            )
+            raise DivisionPlaceRefused(_alignment_message(season_year))
         seen.add(row.franchise_id)
         if (
             row.conference_slug not in ('conference-1', 'conference-2')
             or row.division_slug not in ('d1', 'd2', 'd3', 'd4')
         ):
-            raise DivisionPlaceRefused(
-                'The 2002 alignment is not eight divisions of four.'
-            )
+            raise DivisionPlaceRefused(_alignment_message(season_year))
         groups.setdefault((row.conference_slug, row.division_slug), []).append(row)
     if len(groups) != 8 or any(len(members) != 4 for members in groups.values()):
-        raise DivisionPlaceRefused('The 2002 alignment is not eight divisions of four.')
+        raise DivisionPlaceRefused(_alignment_message(season_year))
 
 
 def _require_place_shape(memberships, places, draws):
@@ -1138,7 +1217,7 @@ def _insert_season(timeline, season, games, submitted, memberships, places, draw
         result_rows.append(ScheduleGameResult(
             timeline=timeline,
             game=game,
-            season_year=SEASON_YEAR,
+            season_year=season.season_year,
             home_score=row.home_score,
             away_score=row.away_score,
             home_touchdowns=row.home_touchdowns,
@@ -1149,7 +1228,7 @@ def _insert_season(timeline, season, games, submitted, memberships, places, draw
     for draw, (message, digest, _choice) in zip(draws, pending):
         draw_rows.append(TimelineDivisionDraw(
             timeline=timeline,
-            season_year=SEASON_YEAR,
+            season_year=season.season_year,
             conference_slug=draw.conference,
             division_slug=draw.division,
             draw_index=draw.draw_index,
@@ -1163,7 +1242,14 @@ def _insert_season(timeline, season, games, submitted, memberships, places, draw
     try:
         with transaction.atomic():
             with writing_division_rows():
-                _clean_rows(result_rows, 'A 2002 result failed validation.')
+                _clean_rows(
+                    result_rows,
+                    _season_text(
+                        season.season_year,
+                        'A 2002 result failed validation.',
+                        'A 2003 result failed validation.',
+                    ),
+                )
                 ScheduleGameResult.objects.bulk_create(result_rows)
                 _clean_rows(draw_rows, 'A division draw failed validation.')
                 if draw_rows:
@@ -1172,7 +1258,7 @@ def _insert_season(timeline, season, games, submitted, memberships, places, draw
                     (row.conference_slug, row.division_slug, row.draw_index): row.pk
                     for row in TimelineDivisionDraw.objects.filter(
                         timeline=timeline,
-                        season_year=SEASON_YEAR,
+                        season_year=season.season_year,
                     )
                 }
                 if len(draw_ids) != len(draws):
@@ -1186,20 +1272,33 @@ def _insert_season(timeline, season, games, submitted, memberships, places, draw
                     place_rows.append(TimelineDivisionPlace(
                         timeline=timeline,
                         franchise_id=membership.franchise_id,
-                        season_year=SEASON_YEAR,
+                        season_year=season.season_year,
                         division_place=place.place,
                         conference_slug=place.conference,
                         division_slug=place.division,
                         resolved_by=place.resolved_by,
                         draw_id=draw_id,
                     ))
-                _clean_rows(place_rows, 'A 2002 division place failed validation.')
+                _clean_rows(
+                    place_rows,
+                    _season_text(
+                        season.season_year,
+                        'A 2002 division place failed validation.',
+                        'A 2003 division place failed validation.',
+                    ),
+                )
                 TimelineDivisionPlace.objects.bulk_create(place_rows)
                 _mark_season_complete(season)
     except IntegrityError as exc:
-        raise DivisionPlaceRefused('The 2002 division insert failed.') from exc
+        raise DivisionPlaceRefused(
+            _season_text(
+                season.season_year,
+                'The 2002 division insert failed.',
+                'The 2003 division insert failed.',
+            )
+        ) from exc
     except ValidationError as exc:
-        raise DivisionPlaceRefused('The 2002 season cannot be marked complete.') from exc
+        raise DivisionPlaceRefused(_completion_message(season.season_year)) from exc
 
 
 def _clean_rows(rows, message):
@@ -1210,11 +1309,11 @@ def _clean_rows(rows, message):
         raise DivisionPlaceRefused(message) from exc
 
 
-def _load_memberships(release_id):
+def _load_memberships(release_id, season_year=SEASON_YEAR):
     return list(
         FranchiseSeasonMembership.objects.filter(
             franchise__release_id=release_id,
-            season_year=SEASON_YEAR,
+            season_year=season_year,
         ).select_related('franchise')
     )
 
@@ -1233,32 +1332,37 @@ def _mark_season_complete(season):
         regular_season_simulated=False,
     ).update(regular_season_simulated=True)
     if updated != 1:
-        raise DivisionPlaceRefused('The 2002 season cannot be marked complete.')
+        raise DivisionPlaceRefused(_completion_message(season.season_year))
     season.refresh_from_db()
     if not season.regular_season_simulated:
-        raise DivisionPlaceRefused('The 2002 season cannot be marked complete.')
+        raise DivisionPlaceRefused(_completion_message(season.season_year))
 
 
-def _require_result_fixtures(rows, games, timeline_id):
-    """Require every stored result to be one 2002 fixture on this timeline.
+def _require_result_fixtures(rows, games, timeline_id, season_year=SEASON_YEAR):
+    """Require this season's results to match its fixtures.
 
-    The result season and the fixture season are different columns. SQLite
-    and MySQL check constraints cannot compare them, so the close does.
+    A well-formed result for the other supported season is left alone.
+    A result whose season does not equal its fixture's season, or which
+    crosses timelines, is refused. SQLite and MySQL check constraints
+    cannot compare the two tables, so the close does.
     """
     allowed = {game.pk for game in games}
+    message = _season_text(
+        season_year,
+        'A 2002 result must belong to a 2002 fixture on the same timeline.',
+        'A 2003 result must belong to a 2003 fixture on the same timeline.',
+    )
     for row in rows:
         game = row.game
-        if (
-            row.timeline_id != timeline_id
-            or game.timeline_id != timeline_id
-            or game.pk not in allowed
-            or row.season_year != SEASON_YEAR
-            or game.season_year != row.season_year
-            or game.kind != ScheduleGame.Kind.REGULAR
-        ):
-            raise DivisionPlaceRefused(
-                'A 2002 result must belong to a 2002 fixture on the same timeline.'
-            )
+        if row.timeline_id != timeline_id or game.timeline_id != timeline_id:
+            raise DivisionPlaceRefused(message)
+        if game.season_year != row.season_year or game.kind != ScheduleGame.Kind.REGULAR:
+            raise DivisionPlaceRefused(message)
+        if row.season_year == season_year:
+            if game.pk not in allowed:
+                raise DivisionPlaceRefused(message)
+        elif game.pk in allowed or row.season_year not in SUPPORTED_SEASONS:
+            raise DivisionPlaceRefused(message)
 
 
 def _stored_result_key(row):
@@ -1330,9 +1434,9 @@ def _require_count(value):
     return value
 
 
-def _require_identity(value):
+def _require_identity(value, message='The 2002 results do not match the stored fixtures.'):
     if type(value) is not int or isinstance(value, bool):
-        raise DivisionPlaceRefused('The 2002 results do not match the stored fixtures.')
+        raise DivisionPlaceRefused(message)
     return value
 
 
@@ -1359,12 +1463,70 @@ def _lock_timeline(timeline_id, release_id):
     return timeline
 
 
-def _lock_season(timeline):
+def _lock_season(timeline, season_year=SEASON_YEAR):
     try:
         season = TimelineSeason.objects.select_for_update().get(
             timeline_id=timeline.pk,
-            season_year=SEASON_YEAR,
+            season_year=season_year,
         )
     except TimelineSeason.DoesNotExist as exc:
-        raise DivisionPlaceRefused('The timeline has no 2002 season.') from exc
+        raise DivisionPlaceRefused(
+            _season_text(
+                season_year,
+                'The timeline has no 2002 season.',
+                'The timeline has no 2003 season.',
+            )
+        ) from exc
     return season
+
+
+def _load_results(timeline_id):
+    return list(
+        ScheduleGameResult.objects.select_for_update().filter(
+            timeline_id=timeline_id,
+        ).select_related('game')
+    )
+
+
+def _load_draws(timeline_id, season_year):
+    return list(
+        TimelineDivisionDraw.objects.select_for_update().filter(
+            timeline_id=timeline_id,
+            season_year=season_year,
+        )
+    )
+
+
+def _load_places(timeline_id, season_year):
+    return list(
+        TimelineDivisionPlace.objects.select_for_update().filter(
+            timeline_id=timeline_id,
+            season_year=season_year,
+        ).select_related('franchise')
+    )
+
+
+def _results_for_season(rows, season_year):
+    return [row for row in rows if row.season_year == season_year]
+
+
+def _season_text(season_year, text_2002, text_2003):
+    if season_year == 2003:
+        return text_2003
+    return text_2002
+
+
+def _alignment_message(season_year):
+    return _season_text(
+        season_year,
+        'The 2002 alignment is not eight divisions of four.',
+        'The 2003 alignment is not eight divisions of four.',
+    )
+
+
+def _completion_message(season_year):
+    return _season_text(
+        season_year,
+        'The 2002 season cannot be marked complete.',
+        'The 2003 season cannot be marked complete.',
+    )

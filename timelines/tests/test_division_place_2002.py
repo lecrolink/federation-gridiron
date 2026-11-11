@@ -932,11 +932,16 @@ class DivisionPlaceStorageTests(TestCase):
             phase=Timeline.Phase.DIRECTION,
             setup_complete=True,
             directives_locked=True,
-            regular_season_simulated=True,
         )
         later.save()
+        later.regular_season_simulated = True
+        with self.assertRaisesMessage(
+            ValidationError,
+            'The 2003 regular season is marked complete only by its close.',
+        ):
+            later.save()
         later.refresh_from_db()
-        self.assertTrue(later.regular_season_simulated)
+        self.assertFalse(later.regular_season_simulated)
         season.refresh_from_db()
         self.assertFalse(season.regular_season_simulated)
 

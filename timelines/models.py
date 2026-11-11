@@ -190,6 +190,12 @@ def _touchdowns_exceed_score(score, touchdowns):
     return touchdowns * 6 > score
 
 
+def _stored_with_season(season_year, text_2002, text_2003):
+    if season_year == 2003:
+        return text_2003
+    return text_2002
+
+
 def _previous(instance):
     if not instance.pk:
         return None
@@ -1005,12 +1011,12 @@ class TimelineSeason(TimelineChild):
                     'An unlocked owner directive cannot remain after the season locks directives.'
                 )
         if (
-            self.season_year == 2002
+            self.season_year in (2002, 2003)
             and self.regular_season_simulated
             and (previous is None or not previous.regular_season_simulated)
         ):
             errors['regular_season_simulated'] = (
-                'The 2002 regular season is marked complete only by its close.'
+                f'The {self.season_year} regular season is marked complete only by its close.'
             )
 
 
@@ -3034,7 +3040,7 @@ class ScheduleGameResult(TimelineChild):
         ]
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(season_year=2002),
+                condition=models.Q(season_year__gte=2002, season_year__lte=2003),
                 name='tl_schedule_result_year',
             ),
             models.CheckConstraint(
@@ -3062,16 +3068,24 @@ class ScheduleGameResult(TimelineChild):
     def save(self, *args, **kwargs):
         if not self.pk:
             raise ValidationError({
-                'timeline': 'A 2002 result is stored with the whole season.',
+                'timeline': _stored_with_season(
+                    self.season_year,
+                    'A 2002 result is stored with the whole season.',
+                    'A 2003 result is stored with the whole season.',
+                ),
             })
         super().save(*args, **kwargs)
 
     def extra_clean(self, errors):
         if not self.pk and not _division_rows.get():
-            errors['timeline'] = 'A 2002 result is stored with the whole season.'
+            errors['timeline'] = _stored_with_season(
+                self.season_year,
+                'A 2002 result is stored with the whole season.',
+                'A 2003 result is stored with the whole season.',
+            )
             return
-        if self.season_year != 2002:
-            errors['season_year'] = 'A schedule result records the 2002 season.'
+        if self.season_year not in (2002, 2003):
+            errors['season_year'] = 'A schedule result records the 2002 or 2003 season.'
             return
         if not self.source_key:
             errors['source_key'] = 'A result names its producing source.'
@@ -3089,24 +3103,32 @@ class ScheduleGameResult(TimelineChild):
         if game.timeline_id != self.timeline_id:
             errors['game'] = 'The result belongs to the fixture\'s timeline.'
             return
-        if game.season_year != 2002 or self.season_year != game.season_year:
+        if game.season_year != self.season_year or game.season_year not in (2002, 2003):
             errors['game'] = (
                 'The result season must match its 2002 fixture.'
+                if self.season_year == 2002 or game.season_year == 2002
+                else 'The result season must match its fixture.'
             )
             return
         if game.kind != ScheduleGame.Kind.REGULAR:
             errors['game'] = 'The result is a regular-season fixture.'
         season = TimelineSeason.objects.filter(
             timeline_id=self.timeline_id,
-            season_year=2002,
+            season_year=self.season_year,
         ).first()
         if season is None:
-            errors['season_year'] = 'The timeline has no 2002 season.'
+            errors['season_year'] = f'The timeline has no {self.season_year} season.'
         elif season.regular_season_simulated:
-            errors['season_year'] = 'The 2002 regular season is already complete.'
+            errors['season_year'] = (
+                f'The {self.season_year} regular season is already complete.'
+            )
         previous = _previous(self)
         if previous is not None and _changed(previous, self, _stored_names(self)):
-            errors['home_score'] = 'A 2002 result is written once.'
+            errors['home_score'] = (
+                'A 2002 result is written once.'
+                if self.season_year == 2002
+                else 'A 2003 result is written once.'
+            )
 
 
 class TimelineDivisionDraw(TimelineChild):
@@ -3160,7 +3182,7 @@ class TimelineDivisionDraw(TimelineChild):
                 name='unique_tl_division_draw',
             ),
             models.CheckConstraint(
-                condition=models.Q(season_year=2002),
+                condition=models.Q(season_year__gte=2002, season_year__lte=2003),
                 name='tl_division_draw_year',
             ),
             models.CheckConstraint(
@@ -3203,16 +3225,24 @@ class TimelineDivisionDraw(TimelineChild):
     def save(self, *args, **kwargs):
         if not self.pk:
             raise ValidationError({
-                'timeline': 'A division draw is stored with the 2002 places.',
+                'timeline': _stored_with_season(
+                    self.season_year,
+                    'A division draw is stored with the 2002 places.',
+                    'A division draw is stored with the 2003 places.',
+                ),
             })
         super().save(*args, **kwargs)
 
     def extra_clean(self, errors):
         if not self.pk and not _division_rows.get():
-            errors['timeline'] = 'A division draw is stored with the 2002 places.'
+            errors['timeline'] = _stored_with_season(
+                self.season_year,
+                'A division draw is stored with the 2002 places.',
+                'A division draw is stored with the 2003 places.',
+            )
             return
-        if self.season_year != 2002:
-            errors['season_year'] = 'A division draw belongs to the 2002 season.'
+        if self.season_year not in (2002, 2003):
+            errors['season_year'] = 'A division draw belongs to the 2002 or 2003 season.'
             return
         if len(self.digest) != 64 or any(
             character not in '0123456789abcdef' for character in self.digest
@@ -3222,12 +3252,14 @@ class TimelineDivisionDraw(TimelineChild):
             return
         season = TimelineSeason.objects.filter(
             timeline_id=self.timeline_id,
-            season_year=2002,
+            season_year=self.season_year,
         ).first()
         if season is None:
-            errors['season_year'] = 'The timeline has no 2002 season.'
+            errors['season_year'] = f'The timeline has no {self.season_year} season.'
         elif season.regular_season_simulated:
-            errors['season_year'] = 'The 2002 regular season is already complete.'
+            errors['season_year'] = (
+                f'The {self.season_year} regular season is already complete.'
+            )
         previous = _previous(self)
         if previous is not None and _changed(previous, self, _stored_names(self)):
             errors['digest'] = 'A division draw is written once.'
@@ -3296,7 +3328,7 @@ class TimelineDivisionPlace(TimelineChild):
                 name='unique_tl_division_place_value',
             ),
             models.CheckConstraint(
-                condition=models.Q(season_year=2002),
+                condition=models.Q(season_year__gte=2002, season_year__lte=2003),
                 name='tl_division_place_year',
             ),
             models.CheckConstraint(
@@ -3341,21 +3373,31 @@ class TimelineDivisionPlace(TimelineChild):
     def save(self, *args, **kwargs):
         if not self.pk:
             raise ValidationError({
-                'timeline': 'A 2002 division place is stored with its division.',
+                'timeline': _stored_with_season(
+                    self.season_year,
+                    'A 2002 division place is stored with its division.',
+                    'A 2003 division place is stored with its division.',
+                ),
             })
         super().save(*args, **kwargs)
 
     def extra_clean(self, errors):
         if not self.pk and not _division_rows.get():
-            errors['timeline'] = (
-                'A 2002 division place is stored with its division.'
+            errors['timeline'] = _stored_with_season(
+                self.season_year,
+                'A 2002 division place is stored with its division.',
+                'A 2003 division place is stored with its division.',
             )
             return
-        if self.season_year != 2002:
-            errors['season_year'] = 'A division place records the 2002 season.'
+        if self.season_year not in (2002, 2003):
+            errors['season_year'] = 'A division place records the 2002 or 2003 season.'
             return
         if self.division_place < 1 or self.division_place > 4:
-            errors['division_place'] = 'The 2002 place runs from 1 through 4.'
+            errors['division_place'] = (
+                'The 2002 place runs from 1 through 4.'
+                if self.season_year == 2002
+                else 'The division place runs from 1 through 4.'
+            )
         if self.resolved_by not in DIVISION_PLACE_STEPS:
             errors['resolved_by'] = 'The place names a division step or the draw.'
         if self.resolved_by == 'draw':
@@ -3375,20 +3417,26 @@ class TimelineDivisionPlace(TimelineChild):
         from universe.models import FranchiseSeasonMembership
         season = TimelineSeason.objects.filter(
             timeline_id=timeline.id,
-            season_year=2002,
+            season_year=self.season_year,
         ).first()
         if season is None:
-            errors['season_year'] = 'The timeline has no 2002 season.'
+            errors['season_year'] = f'The timeline has no {self.season_year} season.'
             return
         if season.regular_season_simulated:
-            errors['season_year'] = 'The 2002 regular season is already complete.'
+            errors['season_year'] = (
+                f'The {self.season_year} regular season is already complete.'
+            )
             return
         membership = FranchiseSeasonMembership.objects.filter(
             franchise_id=self.franchise_id,
-            season_year=2002,
+            season_year=self.season_year,
         ).first()
         if membership is None:
-            errors['franchise'] = 'The franchise has no 2002 membership.'
+            errors['franchise'] = (
+                'The franchise has no 2002 membership.'
+                if self.season_year == 2002
+                else f'The franchise has no {self.season_year} membership.'
+            )
             return
         if (
             membership.conference_slug != self.conference_slug
@@ -3396,13 +3444,15 @@ class TimelineDivisionPlace(TimelineChild):
         ):
             errors['division_slug'] = (
                 'The 2002 place uses the franchise\'s stored 2002 division.'
+                if self.season_year == 2002
+                else 'The place uses the franchise\'s stored division.'
             )
             return
         if self.draw_id:
             draw = self.draw
             if (
                 draw.timeline_id != self.timeline_id
-                or draw.season_year != 2002
+                or draw.season_year != self.season_year
                 or draw.conference_slug != self.conference_slug
                 or draw.division_slug != self.division_slug
                 or draw.chosen_slug != franchise.placeholder_slug
@@ -3421,7 +3471,13 @@ class TimelineDivisionPlace(TimelineChild):
         if clash.exists():
             errors['division_place'] = (
                 'That 2002 place is already stored in this division.'
+                if self.season_year == 2002
+                else 'That place is already stored in this division.'
             )
         previous = _previous(self)
         if previous is not None and _changed(previous, self, _stored_names(self)):
-            errors['division_place'] = 'A 2002 division place is written once.'
+            errors['division_place'] = (
+                'A 2002 division place is written once.'
+                if self.season_year == 2002
+                else 'A division place is written once.'
+            )
