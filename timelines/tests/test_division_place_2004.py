@@ -31,7 +31,6 @@ from timelines.services.division_place_2002 import (
     verify_played_2004_places,
 )
 from timelines.services.schedule_2002 import (
-    LATER_SEASON,
     TimelineScheduleRefused,
     generate_timeline_schedule,
 )
@@ -298,7 +297,10 @@ class DivisionPlace2004Tests(TestCase):
             ScheduleGame.objects.filter(timeline=self.timeline, season_year=2005).count(),
             0,
         )
-        with self.assertRaisesMessage(TimelineScheduleRefused, LATER_SEASON):
+        with self.assertRaisesMessage(
+            TimelineScheduleRefused,
+            'The timeline has no season for this year.',
+        ):
             generate_timeline_schedule(timeline_id=self.timeline.pk, season_year=2005)
         self.assertEqual(
             ScheduleGame.objects.filter(timeline=self.timeline, season_year=2005).count(),
