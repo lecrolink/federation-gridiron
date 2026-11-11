@@ -1,12 +1,13 @@
-"""Close a 2002 or 2003 regular season and store division places.
+"""Close a 2002, 2003, or 2004 regular season and store division places.
 
-The stored fixture list stays as it is. ``close_2002_regular_season`` and
-``close_2003_regular_season`` share this tiebreak. Each reads that season's
-256 games, stores one project result for each, ranks every division, and
-only then sets ``regular_season_simulated``. That flag change is one
-queryset update of the locked season row. ``TimelineSeason.save()`` cannot
-make it for either year. The 2002 close does not generate 2003 fixtures, and
-the 2003 close does not generate 2004. Neither plays an overtime period.
+The stored fixture list stays as it is. ``close_2002_regular_season``,
+``close_2003_regular_season``, and ``close_2004_regular_season`` share this
+tiebreak. Each reads that season's 256 games, stores one project result for
+each, ranks every division, and only then sets ``regular_season_simulated``.
+That flag change is one queryset update of the locked season row.
+``TimelineSeason.save()`` cannot make it for those years. The 2002 close does
+not generate 2003 fixtures, the 2003 close does not generate 2004, and the
+2004 close does not generate 2005. None of them plays an overtime period.
 
 An equal final score is a tie. A higher score is a win. Touchdown counts are
 taken from the result row. The 2002–2003 Official Playing Rules were not
@@ -41,8 +42,9 @@ and does not define the calculation. After a place is stored, the same
 procedure runs again on every club that does not yet have a place. The last
 remaining club is ``sole_remaining``. Each touchdown stored on a result
 counts as six points of that club's final score. A 2003 draw uses the same
-coordinate fields as 2002, with the season set to 2003. The 2002 coordinate
-keeps its original text.
+coordinate fields as 2002, with the season set to 2003. A 2004 draw uses
+that same template with the season set to 2004. The 2002 coordinate keeps
+its original text. The timeline id is not an input.
 """
 
 import hashlib
@@ -69,7 +71,7 @@ from universe.release_guard import assert_release_lock_held, holding_release_loc
 
 
 SEASON_YEAR = 2002
-SUPPORTED_SEASONS = (2002, 2003)
+SUPPORTED_SEASONS = (2002, 2003, 2004)
 DRAW_LIMIT = 8
 _DRAW_SPAN = 1 << 64
 _PROCEDURE = 'division-place'
@@ -190,6 +192,15 @@ def verify_played_2003_places(timeline):
     return _verify_played_places(timeline, 2003)
 
 
+def verify_played_2004_places(timeline):
+    """Return each club's 2004 division place after the same read-only checks.
+
+    The caller holds the release lock inside the open transaction. This
+    does not write and does not generate a later schedule.
+    """
+    return _verify_played_places(timeline, 2004)
+
+
 def _verify_played_places(timeline, season_year):
     assert_release_lock_held(timeline.release_id)
     season = _lock_season(timeline, season_year)
@@ -295,10 +306,20 @@ def close_2003_regular_season(*, timeline_id, results):
     return _close_regular_season(timeline_id, results, 2003)
 
 
+def close_2004_regular_season(*, timeline_id, results):
+    """Store 2004 results and division places. Return ``created`` or ``unchanged``.
+
+    This uses the same tiebreak, draw verification, and locked flag update
+    as the 2002 and 2003 closes. It does not simulate games or generate
+    2005 fixtures.
+    """
+    return _close_regular_season(timeline_id, results, 2004)
+
+
 def _close_regular_season(timeline_id, results, season_year):
     _require_id(timeline_id)
     if season_year not in SUPPORTED_SEASONS:
-        raise DivisionPlaceRefused('The season is outside 2002–2003.')
+        raise DivisionPlaceRefused('The season is outside 2002–2004.')
     probe = Timeline.objects.filter(pk=timeline_id).only('pk', 'release_id').first()
     if probe is None:
         raise DivisionPlaceRefused('The timeline is missing.')
@@ -392,10 +413,11 @@ def division_draw_label(conference, division, keys, draw_index, season_year=SEAS
 
     The 2002 call, with the season omitted, keeps
     ``division-place:2002:{conference}:{division}:{keys}:{index}``.
-    A 2003 draw uses the same fields with season 2003.
+    A 2003 draw uses the same fields with season 2003. A 2004 draw uses
+    the same fields with season 2004.
     """
     if season_year not in SUPPORTED_SEASONS:
-        raise DivisionPlaceRefused('The season is outside 2002–2003.')
+        raise DivisionPlaceRefused('The season is outside 2002–2004.')
     joined = ','.join(keys)
     return (
         f'{_PROCEDURE}:{season_year}:{conference}:{division}:'
@@ -1319,7 +1341,7 @@ def _load_memberships(release_id, season_year=SEASON_YEAR):
 
 
 def _mark_season_complete(season):
-    """Mark the locked 2002 season complete from inside the close.
+    """Mark the locked season complete from inside its close.
 
     ``TimelineSeason.save()`` refuses this false-to-true change. This
     queryset update is the close's own transition: the locked primary key,
@@ -1513,6 +1535,8 @@ def _results_for_season(rows, season_year):
 def _season_text(season_year, text_2002, text_2003):
     if season_year == 2003:
         return text_2003
+    if season_year == 2004:
+        return text_2002.replace('2002', '2004')
     return text_2002
 
 
