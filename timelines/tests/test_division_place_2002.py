@@ -86,11 +86,11 @@ def _game(home, away, home_score, away_score, home_td=0, away_td=0):
     return ScoredGame(home, away, home_score, away_score, home_td, away_td)
 
 
-def _rank(clubs, games, choose=None):
+def _rank(clubs, games, choose=None, season_year=2002):
     def refuse(*_args):
         raise AssertionError('This ranking reached the draw.')
 
-    return rank_places(clubs, games, choose or refuse)
+    return rank_places(clubs, games, choose or refuse, season_year=season_year)
 
 
 def _by_key(places):
@@ -238,17 +238,19 @@ class DivisionProcedureTests(SimpleTestCase):
             _game('x', 'b', 1, 0),
             _game('x', 'd', 1, 0),
         ]
-        places, _draws = _rank(clubs, games)
-        found = _by_key(places)
-        self.assertEqual(
-            [(found[name].place, found[name].resolved_by) for name in ('a', 'b', 'c', 'd')],
-            [
-                (1, HEAD_TO_HEAD),
-                (2, HEAD_TO_HEAD),
-                (3, 'winning_percentage'),
-                (4, 'sole_remaining'),
-            ],
-        )
+        expected = [
+            (1, HEAD_TO_HEAD),
+            (2, HEAD_TO_HEAD),
+            (3, 'winning_percentage'),
+            (4, 'sole_remaining'),
+        ]
+        for year in (2002, 2005, 2010, 2011, 2020):
+            places, _draws = _rank(clubs, games, season_year=year)
+            found = _by_key(places)
+            self.assertEqual(
+                [(found[name].place, found[name].resolved_by) for name in ('a', 'b', 'c', 'd')],
+                expected,
+            )
 
     def test_four_clubs_reduced_to_two_restart_at_head_to_head(self):
         clubs = [
@@ -276,17 +278,19 @@ class DivisionProcedureTests(SimpleTestCase):
             _game('c', 'z', 1, 0),
             _game('d', 'z', 1, 0),
         ]
-        places, _draws = _rank(clubs, games)
-        found = _by_key(places)
-        self.assertEqual(
-            [(found[name].place, found[name].resolved_by) for name in ('a', 'b', 'c', 'd')],
-            [
-                (1, HEAD_TO_HEAD),
-                (2, HEAD_TO_HEAD),
-                (3, 'strength_of_victory'),
-                (4, 'sole_remaining'),
-            ],
-        )
+        expected = [
+            (1, HEAD_TO_HEAD),
+            (2, HEAD_TO_HEAD),
+            (3, 'strength_of_victory'),
+            (4, 'sole_remaining'),
+        ]
+        for year in (2002, 2005, 2010, 2011, 2020):
+            places, _draws = _rank(clubs, games, season_year=year)
+            found = _by_key(places)
+            self.assertEqual(
+                [(found[name].place, found[name].resolved_by) for name in ('a', 'b', 'c', 'd')],
+                expected,
+            )
 
     def test_common_games_use_only_the_shared_opponents(self):
         clubs = [

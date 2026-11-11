@@ -95,8 +95,10 @@ class SharedProcedureTests(DivisionProcedureTests):
             'division-place:2004:conference-1:d1:founding-01,founding-02:2',
         )
         self.assertNotIn('timeline', later.split(':'))
-        with self.assertRaisesMessage(DivisionPlaceRefused, 'outside 2002–2004'):
-            division_draw_label(*arguments, 2005)
+        named = division_draw_label(*arguments, 2005)
+        self.assertIn(':2005:', named)
+        with self.assertRaisesMessage(DivisionPlaceRefused, 'outside 2002–2020'):
+            division_draw_label(*arguments, 2021)
 
     def test_four_clubs_reduced_to_three_continue_at_the_next_step(self):
         clubs = [_club(name) for name in 'abcd']
@@ -438,9 +440,13 @@ class DivisionPlace2004Tests(TestCase):
         )
         later.save()
         later.regular_season_simulated = True
-        later.save()
+        with self.assertRaisesMessage(
+            ValidationError,
+            'The 2005 regular season is marked complete only by its close.',
+        ):
+            later.save()
         later.refresh_from_db()
-        self.assertTrue(later.regular_season_simulated)
+        self.assertFalse(later.regular_season_simulated)
         self.assertEqual(
             ScheduleGameResult.objects.filter(timeline=self.timeline, season_year=2005).count(),
             0,
