@@ -165,7 +165,7 @@ def writing_transition_rows():
 
 @contextmanager
 def writing_division_rows():
-    """Allow the 2002 close to validate a complete result and place batch.
+    """Allow a supported close to validate a complete result and place batch.
 
     ``save()`` on a new result, division draw, or division place stays
     refused. The service validates every row, then ``bulk_create`` writes
@@ -193,6 +193,8 @@ def _touchdowns_exceed_score(score, touchdowns):
 def _stored_with_season(season_year, text_2002, text_2003):
     if season_year == 2003:
         return text_2003
+    if season_year == 2004:
+        return text_2002.replace('2002', '2004')
     return text_2002
 
 
@@ -1011,7 +1013,7 @@ class TimelineSeason(TimelineChild):
                     'An unlocked owner directive cannot remain after the season locks directives.'
                 )
         if (
-            self.season_year in (2002, 2003)
+            self.season_year in (2002, 2003, 2004)
             and self.regular_season_simulated
             and (previous is None or not previous.regular_season_simulated)
         ):
@@ -3001,7 +3003,7 @@ class TimelineScheduleSeed(TimelineChild):
 
 
 class ScheduleGameResult(TimelineChild):
-    """Final score of one stored 2002 fixture.
+    """Final score of one stored 2002, 2003, or 2004 fixture.
 
     The row is a project timeline result. It is not a historical NFL score
     and it does not record an overtime procedure. Home and away clubs stay
@@ -3009,7 +3011,7 @@ class ScheduleGameResult(TimelineChild):
     score does not determine how many touchdowns were scored. The result
     season equals the fixture season, and both rows share a timeline. A
     database check cannot read the fixture table, so model validation and
-    the 2002 close enforce that link.
+    the close enforce that link.
     """
 
     timeline = models.ForeignKey(
@@ -3040,7 +3042,7 @@ class ScheduleGameResult(TimelineChild):
         ]
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(season_year__gte=2002, season_year__lte=2003),
+                condition=models.Q(season_year__gte=2002, season_year__lte=2004),
                 name='tl_schedule_result_year',
             ),
             models.CheckConstraint(
@@ -3084,8 +3086,10 @@ class ScheduleGameResult(TimelineChild):
                 'A 2003 result is stored with the whole season.',
             )
             return
-        if self.season_year not in (2002, 2003):
-            errors['season_year'] = 'A schedule result records the 2002 or 2003 season.'
+        if self.season_year not in (2002, 2003, 2004):
+            errors['season_year'] = (
+                'A schedule result records the 2002, 2003, or 2004 season.'
+            )
             return
         if not self.source_key:
             errors['source_key'] = 'A result names its producing source.'
@@ -3103,7 +3107,7 @@ class ScheduleGameResult(TimelineChild):
         if game.timeline_id != self.timeline_id:
             errors['game'] = 'The result belongs to the fixture\'s timeline.'
             return
-        if game.season_year != self.season_year or game.season_year not in (2002, 2003):
+        if game.season_year != self.season_year or game.season_year not in (2002, 2003, 2004):
             errors['game'] = (
                 'The result season must match its 2002 fixture.'
                 if self.season_year == 2002 or game.season_year == 2002
@@ -3124,15 +3128,16 @@ class ScheduleGameResult(TimelineChild):
             )
         previous = _previous(self)
         if previous is not None and _changed(previous, self, _stored_names(self)):
-            errors['home_score'] = (
-                'A 2002 result is written once.'
-                if self.season_year == 2002
-                else 'A 2003 result is written once.'
-            )
+            if self.season_year == 2002:
+                errors['home_score'] = 'A 2002 result is written once.'
+            elif self.season_year == 2003:
+                errors['home_score'] = 'A 2003 result is written once.'
+            else:
+                errors['home_score'] = 'A 2004 result is written once.'
 
 
 class TimelineDivisionDraw(TimelineChild):
-    """One resolving draw for a 2002 division place.
+    """One resolving draw for a 2002, 2003, or 2004 division place.
 
     The coordinate is HMAC-SHA256 of the release seed. It names the
     procedure, the season, the division, the tied franchise keys, and the
@@ -3182,7 +3187,7 @@ class TimelineDivisionDraw(TimelineChild):
                 name='unique_tl_division_draw',
             ),
             models.CheckConstraint(
-                condition=models.Q(season_year__gte=2002, season_year__lte=2003),
+                condition=models.Q(season_year__gte=2002, season_year__lte=2004),
                 name='tl_division_draw_year',
             ),
             models.CheckConstraint(
@@ -3241,8 +3246,10 @@ class TimelineDivisionDraw(TimelineChild):
                 'A division draw is stored with the 2003 places.',
             )
             return
-        if self.season_year not in (2002, 2003):
-            errors['season_year'] = 'A division draw belongs to the 2002 or 2003 season.'
+        if self.season_year not in (2002, 2003, 2004):
+            errors['season_year'] = (
+                'A division draw belongs to the 2002, 2003, or 2004 season.'
+            )
             return
         if len(self.digest) != 64 or any(
             character not in '0123456789abcdef' for character in self.digest
@@ -3266,7 +3273,7 @@ class TimelineDivisionDraw(TimelineChild):
 
 
 class TimelineDivisionPlace(TimelineChild):
-    """Played 2002 division place, 1 through 4.
+    """Played 2002, 2003, or 2004 division place, 1 through 4.
 
     The conference and division are copied from the 2002 membership. The
     resolving step, or the draw that selected the club, is stored on the
@@ -3328,7 +3335,7 @@ class TimelineDivisionPlace(TimelineChild):
                 name='unique_tl_division_place_value',
             ),
             models.CheckConstraint(
-                condition=models.Q(season_year__gte=2002, season_year__lte=2003),
+                condition=models.Q(season_year__gte=2002, season_year__lte=2004),
                 name='tl_division_place_year',
             ),
             models.CheckConstraint(
@@ -3389,8 +3396,10 @@ class TimelineDivisionPlace(TimelineChild):
                 'A 2003 division place is stored with its division.',
             )
             return
-        if self.season_year not in (2002, 2003):
-            errors['season_year'] = 'A division place records the 2002 or 2003 season.'
+        if self.season_year not in (2002, 2003, 2004):
+            errors['season_year'] = (
+                'A division place records the 2002, 2003, or 2004 season.'
+            )
             return
         if self.division_place < 1 or self.division_place > 4:
             errors['division_place'] = (
