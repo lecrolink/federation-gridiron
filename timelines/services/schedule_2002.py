@@ -48,16 +48,18 @@ home and one away. The next repeat of that intraconference pairing reverses
 all four sites. Position order is the seat order ``d1``, ``d2``, ``d3``,
 ``d4``.
 
-This service writes the 2002 fixtures, and the 2003 fixtures once that
-season's timeline row exists and the 2002 close still verifies. The
-rotation tables above also describe 2004–2020. ``planned_games`` can
-project those years, but generating them is refused. They need the prior
-season's verified results and its division places. The 2003 same-place
-games read ``TimelineDivisionPlace`` from the played 2002 season. They do
-not read ``TimelineSchedulingRank``, ``TimelinePriorFinish``, ``slot_order``
-as a place, slug order, draft order, or a new random seed. A timeline that
-starts in 2003 or later has no approved opening 2002 scheduling places, so
-this service does not invent one.
+This service writes the 2002 fixtures, the 2003 fixtures once the 2002
+close still verifies, and the 2004 fixtures once the 2003 close still
+verifies. The rotation tables above also describe 2005–2020.
+``planned_games`` can project those years, but generating them is refused.
+They need the prior season's verified results and its division places.
+Same-place games for 2003 read ``TimelineDivisionPlace`` from the played
+2002 season. Same-place games for 2004 read ``TimelineDivisionPlace`` from
+the played 2003 season. They do not read ``TimelineSchedulingRank``,
+``TimelinePriorFinish``, ``slot_order`` as a place, slug order, draft
+order, or a new random seed. A timeline that starts in 2003 or later has
+no approved opening 2002 scheduling places, so this service does not
+invent one and does not schedule 2003 for that start.
 
 A timeline that starts in 2001 or earlier must already have a completed
 2001 season, the complete prior-finish set, and the complete scheduling-rank
@@ -95,6 +97,7 @@ from timelines.services.prior_finish import (
 from timelines.services.division_place_2002 import (
     DivisionPlaceRefused,
     verify_played_2002_places,
+    verify_played_2003_places,
 )
 from universe.generation.founding import hmac_int
 from universe.models import FranchiseSeasonMembership
@@ -123,7 +126,7 @@ INTER_ROW = (
 )
 
 LATER_SEASON = (
-    'Seasons after 2003 require the prior season\'s verified results '
+    'Seasons after 2004 require the prior season\'s verified results '
     'and historical tiebreak resolution.'
 )
 NO_OPENING_2002_PLACES = (
@@ -148,12 +151,14 @@ class TimelineScheduleRefused(Exception):
 
 
 def generate_timeline_schedule(*, timeline_id, season_year):
-    """Write the 2002 or 2003 fixtures. Return ``created`` or ``unchanged``."""
+    """Write the 2002, 2003, or 2004 fixtures. Return ``created`` or ``unchanged``."""
     _require_id(timeline_id)
     if isinstance(season_year, bool) or not isinstance(season_year, int):
         raise TimelineScheduleRefused('The season is outside 2002–2020.')
     if season_year == 2003:
         return _generate_for(timeline_id, _generate_2003_locked)
+    if season_year == 2004:
+        return _generate_for(timeline_id, _generate_2004_locked)
     if FIRST_SEASON < season_year <= LAST_SEASON:
         raise TimelineScheduleRefused(LATER_SEASON)
     if season_year != FIRST_SEASON:
@@ -190,9 +195,9 @@ def opening_places(seed, seats):
 def planned_games(season_year, seats, places):
     """Return the 256 fixtures for one documented season.
 
-    ``generate_timeline_schedule`` stores 2002 and, once 2002 is verified,
-    2003. This function still projects the later rotation so the formula
-    can be checked without writing those seasons.
+    ``generate_timeline_schedule`` stores 2002, 2003, and 2004 once the
+    prior close verifies. This function still projects the later rotation
+    so the formula can be checked without writing those seasons.
     """
     _require_formula_year(season_year)
     groups = _groups(seats)
@@ -282,6 +287,40 @@ def _generate_locked(release, timeline_id):
 
 def _generate_2003_locked(release, timeline_id):
     """Write the 2003 fixtures from the verified 2002 division places."""
+    return _generate_from_prior_places(
+        release,
+        timeline_id,
+        season_year=2003,
+        prior_year=2002,
+        verify_places=verify_played_2002_places,
+        missing_prior='The timeline has no 2002 season.',
+        require_start_before=2003,
+    )
+
+
+def _generate_2004_locked(release, timeline_id):
+    """Write the 2004 fixtures from the verified 2003 division places."""
+    return _generate_from_prior_places(
+        release,
+        timeline_id,
+        season_year=2004,
+        prior_year=2003,
+        verify_places=verify_played_2003_places,
+        missing_prior='The timeline has no 2003 season.',
+        require_start_before=None,
+    )
+
+
+def _generate_from_prior_places(
+    release,
+    timeline_id,
+    *,
+    season_year,
+    prior_year,
+    verify_places,
+    missing_prior,
+    require_start_before,
+):
     if release.status != release.Status.PUBLISHED:
         raise TimelineScheduleRefused('The release is not published.')
     try:
@@ -292,16 +331,19 @@ def _generate_2003_locked(release, timeline_id):
         raise TimelineScheduleRefused('The timeline is missing.')
     if timeline.status != Timeline.Status.ACTIVE:
         raise TimelineScheduleRefused('The timeline is not active.')
-    if timeline.start_season_year >= 2003:
+    if (
+        require_start_before is not None
+        and timeline.start_season_year >= require_start_before
+    ):
         raise TimelineScheduleRefused(NO_OPENING_2002_PLACES)
-    _lock_named_season(timeline, 2002, 'The timeline has no 2002 season.')
-    _lock_named_season(timeline, 2003, 'The timeline has no season for this year.')
+    _lock_named_season(timeline, prior_year, missing_prior)
+    _lock_named_season(timeline, season_year, 'The timeline has no season for this year.')
     try:
-        places = verify_played_2002_places(timeline)
+        places = verify_places(timeline)
     except DivisionPlaceRefused as exc:
         raise TimelineScheduleRefused(str(exc)) from exc
-    current = _load_seats(release.pk, 2003)
-    expected = planned_games(2003, current, places)
+    current = _load_seats(release.pk, season_year)
+    expected = planned_games(season_year, current, places)
     expected_games = {
         (game.home_id, game.away_id, game.category, ScheduleGame.Kind.REGULAR)
         for game in expected
@@ -309,7 +351,7 @@ def _generate_2003_locked(release, timeline_id):
     stored_games = list(
         ScheduleGame.objects.select_for_update().filter(
             timeline_id=timeline.pk,
-            season_year=2003,
+            season_year=season_year,
         ).order_by('pk')
     )
     found_games = {
@@ -321,7 +363,7 @@ def _generate_2003_locked(release, timeline_id):
     if found_games:
         raise TimelineScheduleRefused('Stored fixtures do not match this season.')
     assert_release_lock_held(release.pk)
-    _insert_games(timeline, 2003, expected)
+    _insert_games(timeline, season_year, expected)
     return 'created'
 
 

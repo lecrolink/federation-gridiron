@@ -21,7 +21,6 @@ from timelines.services.division_place_2002 import (
 )
 from timelines.services.schedule_2002 import (
     AFC_SIDE,
-    LATER_SEASON,
     NFC_SIDE,
     NO_OPENING_2002_PLACES,
     POSITIONS,
@@ -356,7 +355,10 @@ class Schedule2003StorageTests(TestCase):
         self.assertEqual(again_writes, [])
         with self.assertRaisesMessage(TimelineScheduleRefused, 'simulated'):
             generate_timeline_schedule(timeline_id=self.timeline.pk, season_year=2002)
-        with self.assertRaisesMessage(TimelineScheduleRefused, LATER_SEASON):
+        with self.assertRaisesMessage(
+            TimelineScheduleRefused,
+            'The timeline has no season for this year.',
+        ):
             generate_timeline_schedule(timeline_id=self.timeline.pk, season_year=2004)
         self.assertEqual(
             _kept_rows(self.release, self.timeline, self.pairing_id, self.week_id, self.standing_id),
