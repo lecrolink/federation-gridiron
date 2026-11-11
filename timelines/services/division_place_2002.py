@@ -1,10 +1,22 @@
-"""Close a 2002, 2003, or 2004 regular season and store division places.
+"""Close one supported regular season and store division places.
 
-The stored fixture list stays as it is. ``close_2002_regular_season``,
-``close_2003_regular_season``, and ``close_2004_regular_season`` share this
-tiebreak. Each reads that season's 256 games, stores one project result for
-each, ranks every division, and only then sets ``regular_season_simulated``.
-That flag change is one queryset update of the locked season row.
+``close_regular_season`` is the year-driven entry. The 2002, 2003, and 2004
+names call it. They share one tiebreak. Each reads that season's 256 games,
+stores one project result for each, ranks every division, and only then sets
+``regular_season_simulated``.
+
+The supported span is 2002 through 2004, and the sources are not the same
+sentence. The 2002 text supplies the two-club restart and says a reduction
+from four clubs to three continues at the next step. The December 13, 2003
+published NFL procedure supports that same two-club restart, so the 2003
+close uses it. The 2004 close keeps that documented procedure. No primary
+source in this repository gives the later three-club restart an effective
+season, and none gives the later combined-rank method an effective season.
+Fact-book publication years are not effective seasons. A season outside
+2002–2004 is refused before the release lock. The next season's schedule
+stays gated on a verifier for a closed year, so 2006 and later stay refused.
+
+The completion flag change is one queryset update of the locked season row.
 ``TimelineSeason.save()`` cannot make it for those years. The 2002 close does
 not generate 2003 fixtures, the 2003 close does not generate 2004, and the
 2004 close does not generate 2005. None of them plays an overtime period.
@@ -72,6 +84,52 @@ from universe.release_guard import assert_release_lock_held, holding_release_loc
 
 SEASON_YEAR = 2002
 SUPPORTED_SEASONS = (2002, 2003, 2004)
+# One arithmetic procedure. The source that authorizes each season differs.
+# ``closes`` is false where this repository has no effective season.
+RULE_WINDOWS = (
+    {
+        'seasons': (2002,),
+        'closes': True,
+        'procedure': 'two-club-restart',
+        'source': (
+            'The 2002 text. Two clubs left from a larger group restart at '
+            'head-to-head. Four clubs reduced to three continue at the next '
+            'step.'
+        ),
+    },
+    {
+        'seasons': (2003,),
+        'closes': True,
+        'procedure': 'two-club-restart',
+        'source': (
+            'The December 13, 2003 published NFL procedure supports that '
+            'two-club restart and governs the 2003 close. It does not state '
+            'a three-club restart.'
+        ),
+    },
+    {
+        'seasons': (2004,),
+        'closes': True,
+        'procedure': 'two-club-restart',
+        'source': (
+            'The 2004 close keeps the documented 2002–2003 procedure. This '
+            'repository cites no later change for 2004.'
+        ),
+    },
+    {
+        'seasons': tuple(range(2005, 2021)),
+        'closes': False,
+        'procedure': 'unestablished',
+        'source': (
+            'The later three-club restart has no effective season here. '
+            'Combined ranking remains a project adaptation of a later '
+            'published method, and that method\'s historical effective '
+            'season is not established. The 2005, 2010, 2012, 2014, and '
+            '2019 fact books print the same step order; a publication year '
+            'is not an effective season.'
+        ),
+    },
+)
 DRAW_LIMIT = 8
 _DRAW_SPAN = 1 << 64
 _PROCEDURE = 'division-place'
@@ -170,6 +228,20 @@ class DivisionPlaceRefused(Exception):
     """The 2002 results or division places cannot be written."""
 
 
+def verify_played_places(timeline, season_year):
+    """Return each club's division place after the close's own checks.
+
+    The caller holds the release lock inside the open transaction. A season
+    outside 2002–2004 is refused before that lock is required. This reads
+    the stored results, draws, and places. It recomputes the tiebreak with
+    the close's stored-draw ranker and accepts the rows only when the stored
+    places match. It does not write.
+    """
+    if season_year not in SUPPORTED_SEASONS:
+        raise DivisionPlaceRefused('The season is outside 2002–2004.')
+    return _verify_played_places(timeline, season_year)
+
+
 def verify_played_2002_places(timeline):
     """Return each club's 2002 division place after the close's own checks.
 
@@ -180,7 +252,7 @@ def verify_played_2002_places(timeline):
     4 once in every division. It does not write. The completion flag alone
     is not a 2002 close.
     """
-    return _verify_played_places(timeline, SEASON_YEAR)
+    return verify_played_places(timeline, SEASON_YEAR)
 
 
 def verify_played_2003_places(timeline):
@@ -189,7 +261,7 @@ def verify_played_2003_places(timeline):
     The caller holds the release lock inside the open transaction. This
     does not write and does not generate a later schedule.
     """
-    return _verify_played_places(timeline, 2003)
+    return verify_played_places(timeline, 2003)
 
 
 def verify_played_2004_places(timeline):
@@ -198,7 +270,7 @@ def verify_played_2004_places(timeline):
     The caller holds the release lock inside the open transaction. This
     does not write and does not generate a later schedule.
     """
-    return _verify_played_places(timeline, 2004)
+    return verify_played_places(timeline, 2004)
 
 
 def _verify_played_places(timeline, season_year):
@@ -282,6 +354,16 @@ def _result_from_stored(row):
     )
 
 
+def close_regular_season(*, timeline_id, results, season_year):
+    """Store one supported season. Return ``created`` or ``unchanged``.
+
+    2002, 2003, and 2004 use the documented procedure. Any other season is
+    refused before the release lock. The stored 256 fixtures must already
+    exist. An exact rerun recomputes the tiebreak and writes nothing.
+    """
+    return _close_regular_season(timeline_id, results, season_year)
+
+
 def close_2002_regular_season(*, timeline_id, results):
     """Store 2002 results and division places. Return ``created`` or ``unchanged``.
 
@@ -294,7 +376,11 @@ def close_2002_regular_season(*, timeline_id, results):
     still false has been recomputed and accepted. An already complete exact
     rerun writes nothing.
     """
-    return _close_regular_season(timeline_id, results, SEASON_YEAR)
+    return close_regular_season(
+        timeline_id=timeline_id,
+        results=results,
+        season_year=SEASON_YEAR,
+    )
 
 
 def close_2003_regular_season(*, timeline_id, results):
@@ -303,7 +389,11 @@ def close_2003_regular_season(*, timeline_id, results):
     This uses the same tiebreak, draw verification, and locked flag update
     as the 2002 close. It does not simulate games or generate 2004 fixtures.
     """
-    return _close_regular_season(timeline_id, results, 2003)
+    return close_regular_season(
+        timeline_id=timeline_id,
+        results=results,
+        season_year=2003,
+    )
 
 
 def close_2004_regular_season(*, timeline_id, results):
@@ -313,7 +403,11 @@ def close_2004_regular_season(*, timeline_id, results):
     as the 2002 and 2003 closes. It does not simulate games or generate
     2005 fixtures.
     """
-    return _close_regular_season(timeline_id, results, 2004)
+    return close_regular_season(
+        timeline_id=timeline_id,
+        results=results,
+        season_year=2004,
+    )
 
 
 def _close_regular_season(timeline_id, results, season_year):
