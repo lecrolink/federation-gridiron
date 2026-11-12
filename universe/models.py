@@ -10,7 +10,9 @@ single-table structure only. The confirmed 1970–2029 schedule is release
 data, checked when that release is generated and published. Opponent
 pairings are the 1970–1977 project approximation and carry no week, score,
 or historical chart. Week assignments are separate rows that point at
-those pairings. This module adds no database trigger.
+those pairings. Historical schedule templates live in
+``universe.historical`` and are reference rows, not release rows.
+This module adds no database trigger.
 """
 
 from django.core.exceptions import ValidationError
@@ -894,5 +896,6 @@ def _require_slug(value, field_name, errors):
         errors[field_name] = 'Enter a nonempty slug.'
 
 
+from universe import historical as _historical  # noqa: E402,F401
 from universe import people as _people  # noqa: E402,F401
 from universe import rules as _rules  # noqa: E402,F401
