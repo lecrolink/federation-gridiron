@@ -19,6 +19,7 @@ from timelines.models import (
 from timelines.services.calendar_2021 import (
     BYE_COUNTS,
     DIFFER,
+    DIVISION_ROUNDS,
     FIXTURE_MISMATCH,
     INSERT_FAILED,
     NO_FIXTURES,
@@ -27,6 +28,7 @@ from timelines.services.calendar_2021 import (
     CalendarGame,
     CalendarRefused,
     assign_regular_season_calendar,
+    place_remaining_games,
     project_calendar,
 )
 from timelines.services.division_place_2002 import close_regular_season
@@ -89,6 +91,44 @@ def _synthetic_seats():
     return seats
 
 
+def _expected_division_weeks(fixtures, seats, counts):
+    """Division weeks from the sourced full weeks and the slot-pair rotation.
+
+    ``fixtures`` are ``(key, home slug, away slug, category)``. The return
+    game of each pair is three rounds later, so week 18 is the return of
+    slot pairs 1–4 and 2–3.
+    """
+    groups = {}
+    for seat in seats:
+        groups.setdefault((seat.conference, seat.division), []).append(seat)
+    ordered = []
+    for conference in (AFC_SIDE, NFC_SIDE):
+        for division in POSITIONS:
+            ordered.append(tuple(sorted(
+                groups[(conference, division)],
+                key=lambda seat: seat.slot,
+            )))
+    full = [week for week, count in enumerate(counts, start=1) if count == 0]
+    division_weeks = [week for week in full if week != 18][:5] + [18]
+    by_pair = defaultdict(list)
+    for key, home, away, category in fixtures:
+        if category != 'division':
+            continue
+        by_pair[frozenset((home, away))].append((key, home, away))
+    week_of = {}
+    for group in ordered:
+        slugs = [seat.slug for seat in group]
+        for round_index, pairs in enumerate(DIVISION_ROUNDS):
+            for left, right in pairs:
+                matched = sorted(
+                    by_pair[frozenset((slugs[left], slugs[right]))],
+                    key=lambda item: (item[1], item[2], item[0]),
+                )
+                week_of[matched[0][0]] = division_weeks[round_index]
+                week_of[matched[1][0]] = division_weeks[round_index + 3]
+    return week_of
+
+
 def _calendar_games(season_year, seats, places):
     by_id = {seat.franchise_id: seat for seat in seats}
     return tuple(
@@ -116,7 +156,7 @@ class CalendarFormulaTests(SimpleTestCase):
             again, byes_again = project_calendar(year, reversed(games), reversed(seats))
             self.assertEqual(weeks, again)
             self.assertEqual(byes, byes_again)
-            self._assert_calendar(games, weeks, byes, counts)
+            self._assert_calendar(games, weeks, byes, counts, seats)
 
     def test_unpublished_seasons_have_no_calendar(self):
         seats = _synthetic_seats()
@@ -129,8 +169,48 @@ class CalendarFormulaTests(SimpleTestCase):
             with self.assertRaisesMessage(CalendarRefused, OUTSIDE_SPAN):
                 project_calendar(year, games, seats)
 
-    def _assert_calendar(self, games, weeks, byes, counts):
+    def test_preassigned_division_week_is_not_a_candidate(self):
+        # Both clubs already play a division game in week 1. Weeks 3–18 are
+        # closed, so the only week both are free is week 2. Ignoring the
+        # division week leaves week 1 open as well, and the search then
+        # either places the game there or fails to return week 2.
+        closed = set(range(3, 19))
+        taken = {'a': {1} | closed, 'b': {1} | closed}
+        found = place_remaining_games(
+            [CalendarGame('ab', 'a', 'b', 'conference')],
+            taken,
+        )
+        self.assertEqual(found, {'ab': 2})
+
+    def test_failed_candidate_is_undone_before_the_next_week(self):
+        # Each club has three open weeks and three games. Placing b–e in
+        # week 2 is legal for that pair and then fails; the search has to
+        # restore both clubs' weeks and finish on the other candidate.
+        closed = set(range(4, 19))
+        clubs = 'abcdefgh'
+        edges = (
+            ('a', 'b'), ('a', 'c'), ('a', 'd'),
+            ('b', 'e'), ('b', 'f'),
+            ('c', 'e'), ('c', 'g'),
+            ('d', 'f'), ('d', 'h'),
+            ('e', 'g'), ('f', 'h'), ('g', 'h'),
+        )
+        found = place_remaining_games(
+            [CalendarGame(home + away, home, away, 'conference') for home, away in edges],
+            {club: set(closed) for club in clubs},
+        )
+        self.assertEqual(found, {
+            'ab': 1, 'ac': 2, 'ad': 3,
+            'be': 3, 'bf': 2,
+            'ce': 1, 'cg': 3,
+            'df': 1, 'dh': 2,
+            'eg': 2, 'fh': 3, 'gh': 1,
+        })
+        self.assertNotEqual(found['be'], 2)
+
+    def _assert_calendar(self, games, weeks, byes, counts, seats):
         self.assertEqual(set(weeks), {game.key for game in games})
+        self.assertEqual(len(weeks), len(games))
         played = defaultdict(set)
         for game in games:
             week = weeks[game.key]
@@ -152,6 +232,24 @@ class CalendarFormulaTests(SimpleTestCase):
         week_18 = [game for game in games if weeks[game.key] == 18]
         self.assertEqual(len(week_18), 16)
         self.assertTrue(all(game.category == 'division' for game in week_18))
+        plan = _expected_division_weeks(
+            ((game.key, game.home, game.away, game.category) for game in games),
+            seats,
+            counts,
+        )
+        for key, week in plan.items():
+            self.assertEqual(weeks[key], week)
+        division_weeks = defaultdict(set)
+        for game in games:
+            if game.category != 'division':
+                continue
+            division_weeks[game.home].add(weeks[game.key])
+            division_weeks[game.away].add(weeks[game.key])
+        for game in games:
+            if game.category == 'division':
+                continue
+            self.assertNotIn(weeks[game.key], division_weeks[game.home])
+            self.assertNotIn(weeks[game.key], division_weeks[game.away])
 
 
 class CalendarStorageTests(TestCase):
@@ -547,6 +645,36 @@ class CalendarStorageTests(TestCase):
         week_18 = [row.game for row in weeks if row.week == 18]
         self.assertEqual(len(week_18), 16)
         self.assertTrue(all(game.category == 'division' for game in week_18))
+        seats = [
+            Seat(
+                row.franchise_id,
+                row.franchise.placeholder_slug,
+                row.conference_slug,
+                row.division_slug,
+                row.slot_order,
+            )
+            for row in FranchiseSeasonMembership.objects.filter(
+                franchise__release=self.release,
+                season_year=year,
+            ).select_related('franchise')
+        ]
+        slug_of = {seat.franchise_id: seat.slug for seat in seats}
+        stored_weeks = {row.game_id: row.week for row in weeks}
+        plan = _expected_division_weeks(
+            (
+                (
+                    row.game_id,
+                    slug_of[row.game.home_id],
+                    slug_of[row.game.away_id],
+                    row.game.category,
+                )
+                for row in weeks
+            ),
+            seats,
+            counts,
+        )
+        for key, week in plan.items():
+            self.assertEqual(stored_weeks[key], week)
 
     def _game_rows(self, year):
         return tuple(ScheduleGame.objects.filter(

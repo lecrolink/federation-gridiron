@@ -149,17 +149,19 @@ def project_calendar(season_year, games, seats):
     clubs = _clubs(seats)
     byes = _bye_weeks(clubs, counts)
     division_weeks = _division_weeks(counts)
-    week_of, remaining, occupied = _place_division_games(
-        ordered_games, clubs, division_weeks,
-    )
-    found = _search_remaining(remaining, clubs, byes, occupied)
+    week_of, remaining = _place_division_games(ordered_games, clubs, division_weeks)
+    division_plan = dict(week_of)
+    taken = _weeks_already_used(ordered_games, division_plan, byes)
+    found = place_remaining_games(remaining, taken)
     if found is None:
         raise CalendarRefused(
             f'{season_year} cannot be assigned to its bye calendar. '
             'The writer stored nothing.'
         )
     week_of.update(found)
-    if not _complete(ordered_games, clubs, week_of, byes, counts):
+    if not _calendar_is_valid(
+        ordered_games, clubs, week_of, byes, counts, division_plan,
+    ):
         raise CalendarRefused(
             f'{season_year} calendar assignment is incomplete. '
             'The writer stored nothing.'
@@ -411,7 +413,6 @@ def _place_division_games(games, clubs, division_weeks):
             continue
         by_pair[frozenset((game.home, game.away))].append(game)
     week_of = {}
-    occupied = defaultdict(set)
     for group in clubs:
         slugs = [seat.slug for seat in group]
         for round_index, pairs in enumerate(DIVISION_ROUNDS):
@@ -426,41 +427,65 @@ def _place_division_games(games, clubs, division_weeks):
                 second = division_weeks[round_index + 3]
                 week_of[matched[0].key] = first
                 week_of[matched[1].key] = second
-                for game, week in ((matched[0], first), (matched[1], second)):
-                    occupied[game.home].add(week)
-                    occupied[game.away].add(week)
     division_games = [
         game for game in games if game.category == ScheduleGame.Category.DIVISION
     ]
     if len(week_of) != len(division_games):
         raise CalendarRefused('Stored division fixtures are not a double round.')
     remaining = tuple(game for game in games if game.key not in week_of)
-    return week_of, remaining, occupied
+    return week_of, remaining
 
 
-def _search_remaining(games, clubs, byes, occupied):
-    ordered_slugs = sorted(seat.slug for group in clubs for seat in group)
-    slug_index = {slug: index for index, slug in enumerate(ordered_slugs)}
-    edges = []
-    keys = []
-    for game in sorted(games, key=lambda item: (item.home, item.away, item.key)):
-        edges.append((slug_index[game.home], slug_index[game.away]))
-        keys.append(game.key)
-    weeks = WEEK_COUNT
-    full = (1 << weeks) - 1
-    club_count = len(slug_index)
-    free0 = []
-    for slug in ordered_slugs:
-        mask = full & ~(1 << (byes[slug] - 1))
-        for week in occupied[slug]:
+def _weeks_already_used(games, division_plan, byes):
+    """Weeks each club has already spent on a division game or its bye."""
+    used = defaultdict(set)
+    for game in games:
+        week = division_plan.get(game.key)
+        if week is None:
+            continue
+        used[game.home].add(week)
+        used[game.away].add(week)
+    for slug, week in byes.items():
+        used[slug].add(week)
+    return used
+
+
+def place_remaining_games(games, taken, week_count=WEEK_COUNT):
+    """Place games in weeks neither club has already used.
+
+    ``taken`` is the occupied-week set for each club, built from division
+    assignments and byes before this search starts. A candidate week is
+    legal only when both clubs are free. Placing a game adds that week to
+    both clubs, and a failed branch removes it before the next candidate.
+    The same games and occupied weeks produce the same assignment. ``None``
+    means every branch failed.
+    """
+    ordered = tuple(sorted(games, key=lambda game: (game.home, game.away, game.key)))
+    if not ordered:
+        return {}
+    slugs = sorted({club for game in ordered for club in (game.home, game.away)})
+    index = {slug: position for position, slug in enumerate(slugs)}
+    edges = [(index[game.home], index[game.away]) for game in ordered]
+    keys = [game.key for game in ordered]
+    full = (1 << week_count) - 1
+    free = []
+    for slug in slugs:
+        mask = full
+        for week in taken.get(slug, ()):
+            if not 1 <= week <= week_count:
+                return None
             mask &= ~(1 << (week - 1))
-        free0.append(mask)
-    incident = [[] for _ in range(club_count)]
+        free.append(mask)
+    domain = [free[home] & free[away] for home, away in edges]
+    if any(mask == 0 for mask in domain):
+        return None
+    week_of = [0] * len(edges)
+    incident = [[] for _ in slugs]
     for game, (home, away) in enumerate(edges):
         incident[home].append(game)
         incident[away].append(game)
 
-    def assign(week_of, domain, free, game, week):
+    def assign(game, week):
         home, away = edges[game]
         bit = 1 << (week - 1)
         if (
@@ -469,21 +494,57 @@ def _search_remaining(games, clubs, byes, occupied):
             or (free[home] & bit) == 0
             or (free[away] & bit) == 0
         ):
-            return False
+            return None
+        saved_week = week_of[game]
+        saved_domain = domain[game]
+        saved_home = free[home]
+        saved_away = free[away]
         week_of[game] = week
         domain[game] = bit
-        free[home] &= ~bit
-        free[away] &= ~bit
+        free[home] = saved_home & ~bit
+        free[away] = saved_away & ~bit
+        touched = []
+        seen = set()
         for club in (home, away):
             for other in incident[club]:
-                if other != game and week_of[other] == 0 and domain[other] & bit:
+                if other == game or other in seen or week_of[other] != 0:
+                    continue
+                if domain[other] & bit:
+                    seen.add(other)
+                    touched.append((other, domain[other]))
                     domain[other] &= ~bit
-        return True
 
-    def search(week_of, domain, free):
-        week_of = week_of[:]
-        domain = domain[:]
-        free = free[:]
+        def undo():
+            week_of[game] = saved_week
+            domain[game] = saved_domain
+            free[home] = saved_home
+            free[away] = saved_away
+            for other, previous in touched:
+                domain[other] = previous
+
+        return undo
+
+    def search():
+        undos = []
+
+        def place(game, week):
+            undo = assign(game, week)
+            if undo is None:
+                return False
+            undos.append(undo)
+            return True
+
+        def rollback():
+            while undos:
+                undos.pop()()
+
+        def narrow(game, mask):
+            if domain[game] == mask:
+                return
+            previous = domain[game]
+            domain[game] = mask
+            undos.append(lambda game=game, previous=previous: domain.__setitem__(game, previous))
+
         changed = True
         while changed:
             changed = False
@@ -491,16 +552,18 @@ def _search_remaining(games, clubs, byes, occupied):
                 if week_of[game] != 0:
                     continue
                 mask = domain[game] & free[home] & free[away]
-                domain[game] = mask
+                narrow(game, mask)
                 if mask == 0:
+                    rollback()
                     return None
                 if mask.bit_count() == 1:
-                    if not assign(week_of, domain, free, game, mask.bit_length()):
+                    if not place(game, mask.bit_length()):
+                        rollback()
                         return None
                     changed = True
             if changed:
                 continue
-            for club in range(club_count):
+            for club in range(len(slugs)):
                 mask = free[club]
                 week = 1
                 forced = None
@@ -511,6 +574,7 @@ def _search_remaining(games, clubs, byes, occupied):
                             if week_of[game] == 0 and domain[game] & (1 << (week - 1))
                         ]
                         if not choices:
+                            rollback()
                             return None
                         if len(choices) == 1:
                             forced = (choices[0], week)
@@ -518,14 +582,15 @@ def _search_remaining(games, clubs, byes, occupied):
                     mask >>= 1
                     week += 1
                 if forced is not None:
-                    if not assign(week_of, domain, free, *forced):
+                    if not place(*forced):
+                        rollback()
                         return None
                     changed = True
                     break
         if all(week_of):
-            return week_of
+            return week_of[:]
         best = None
-        for club in range(club_count):
+        for club in range(len(slugs)):
             mask = free[club]
             week = 1
             while mask:
@@ -535,6 +600,7 @@ def _search_remaining(games, clubs, byes, occupied):
                         if week_of[game] == 0 and domain[game] & (1 << (week - 1))
                     ]
                     if not choices:
+                        rollback()
                         return None
                     ranked = (len(choices), club, week)
                     if best is None or ranked < best[0]:
@@ -542,26 +608,26 @@ def _search_remaining(games, clubs, byes, occupied):
                 mask >>= 1
                 week += 1
         if best is None:
+            rollback()
             return None
         _ranked, choices, week = best
         for game in choices:
-            copied_weeks = week_of[:]
-            copied_domain = domain[:]
-            copied_free = free[:]
-            if not assign(copied_weeks, copied_domain, copied_free, game, week):
+            if not place(game, week):
                 continue
-            found = search(copied_weeks, copied_domain, copied_free)
+            found = search()
+            undos.pop()()
             if found is not None:
                 return found
+        rollback()
         return None
 
-    found = search([0] * len(edges), [full] * len(edges), free0)
+    found = search()
     if found is None:
         return None
     return {key: week for key, week in zip(keys, found)}
 
 
-def _complete(games, clubs, week_of, byes, counts):
+def _calendar_is_valid(games, clubs, week_of, byes, counts, division_plan):
     if set(week_of) != {game.key for game in games}:
         return False
     if set(byes) != {seat.slug for group in clubs for seat in group}:
@@ -598,4 +664,21 @@ def _complete(games, clubs, week_of, byes, counts):
     week_18 = [game for game in games if week_of[game.key] == WEEK_COUNT]
     if len(week_18) != 16 or any(game.category != ScheduleGame.Category.DIVISION for game in week_18):
         return False
+    if any(week_of[key] != week for key, week in division_plan.items()):
+        return False
+    planned = {game.key for game in games if game.category == ScheduleGame.Category.DIVISION}
+    if set(division_plan) != planned:
+        return False
+    for game in games:
+        if game.category == ScheduleGame.Category.DIVISION:
+            continue
+        for slug in (game.home, game.away):
+            division_weeks = {
+                week_of[other.key]
+                for other in games
+                if other.category == ScheduleGame.Category.DIVISION
+                and slug in (other.home, other.away)
+            }
+            if week_of[game.key] in division_weeks:
+                return False
     return True
