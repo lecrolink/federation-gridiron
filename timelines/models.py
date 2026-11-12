@@ -182,12 +182,13 @@ def writing_division_rows():
 
 @contextmanager
 def writing_calendar_rows():
-    """Allow the calendar service to validate one season's weeks and byes.
+    """Allow one season's weeks and byes to be validated together.
 
     ``save()`` on a new week or bye stays refused. The service validates
     every row, then ``bulk_create`` writes the batch. A new row whose
     ``full_clean`` runs outside this block is refused, so one row cannot
-    freeze a partial calendar.
+    freeze a partial calendar. The 1970 historical writer uses this same
+    gate for its copied template weeks. It does not write bye rows.
     """
     token = _calendar_rows.set(True)
     try:
@@ -2775,14 +2776,174 @@ class TimelineSchedulingRank(TimelineChild):
             errors['scheduling_rank'] = 'A scheduling rank is written once.'
 
 
-class ScheduleGame(TimelineChild):
-    """One 2002 regular-season fixture owned by a timeline.
+OPENING_ASSIGNMENT_SEASON = 1970
+OPENING_CONFERENCE_ROLE = {
+    'conference-1': 'afc',
+    'conference-2': 'nfc',
+}
+OPENING_DIVISION_ROLE = {
+    'd3': 'east',
+    'd1': 'central',
+    'd2': 'west',
+}
 
-    The clubs and the category are the fixture. A calendar week, a bye, a
-    kickoff, and a score stay out of this row. ``ScheduleWeekAssignment``
-    and ``ScheduleBye`` store the 2021–2026 week and bye. Home and away are
-    franchise identities. A 2001 division place does not choose which club
-    is stored.
+
+def opening_slot_role(conference_slug, division_slug, slot_order):
+    """Map one stored 1970 membership seat onto a historical slot role.
+
+    Conference-1 is the historical AFC template conference and conference-2
+    is the NFC. Stored ``d3``, ``d1``, and ``d2`` are historical East,
+    Central, and West. ``slot_order`` is the historical slot number. This
+    is an opening placement rule, not an identity between a Federation
+    franchise and a provenance club.
+    """
+    conference = OPENING_CONFERENCE_ROLE.get(conference_slug)
+    division = OPENING_DIVISION_ROLE.get(division_slug)
+    if conference is None or division is None or slot_order is None:
+        return None
+    return (conference, division, slot_order)
+
+
+def historical_fixture_category(
+    home_conference,
+    home_division,
+    away_conference,
+    away_division,
+):
+    """Category of one 1970 fixture from the two stored memberships."""
+    if home_conference == away_conference and home_division == away_division:
+        return 'division'
+    if home_conference == away_conference:
+        return 'conference'
+    return 'interconference'
+
+
+class TimelineScheduleSlotAssignment(TimelineChild):
+    """One timeline's opening assignment of a franchise to a 1970 slot.
+
+    The historical slot keeps the provenance club. This row does not copy
+    that name onto the franchise or the membership. The basis is the stored
+    1970 membership seat. A later season that assigns slots from standings
+    is a different writer.
+    """
+
+    class Basis(models.TextChoices):
+        OPENING_MEMBERSHIP_SEAT = (
+            'opening-membership-seat',
+            'opening-membership-seat',
+        )
+
+    timeline = models.ForeignKey(
+        Timeline,
+        on_delete=models.CASCADE,
+        related_name='schedule_slot_assignments',
+    )
+    season_year = models.PositiveSmallIntegerField()
+    franchise = models.ForeignKey(
+        'universe.UniverseFranchise',
+        on_delete=models.PROTECT,
+        related_name='schedule_slot_assignments',
+    )
+    historical_slot = models.ForeignKey(
+        'universe.HistoricalScheduleSlot',
+        on_delete=models.PROTECT,
+        related_name='timeline_assignments',
+    )
+    assignment_basis = models.CharField(max_length=32, choices=Basis.choices)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['timeline', 'season_year', 'historical_slot']
+        indexes = [
+            models.Index(
+                fields=['timeline', 'season_year'],
+                name='tl_hist_assign_idx',
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['timeline', 'season_year', 'franchise'],
+                name='unique_tl_hist_assign_franchise',
+            ),
+            models.UniqueConstraint(
+                fields=['timeline', 'season_year', 'historical_slot'],
+                name='unique_tl_hist_assign_slot',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(season_year=OPENING_ASSIGNMENT_SEASON),
+                name='tl_hist_assign_season',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    assignment_basis='opening-membership-seat',
+                ),
+                name='tl_hist_assign_basis',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.timeline_id} {self.season_year} {self.franchise_id}'
+
+    def bound_timeline(self):
+        if not self.timeline_id:
+            return None
+        return self.timeline
+
+    def extra_clean(self, errors):
+        if self.season_year != OPENING_ASSIGNMENT_SEASON:
+            errors['season_year'] = (
+                'Opening historical assignments in this slice are 1970.'
+            )
+            return
+        if self.assignment_basis != self.Basis.OPENING_MEMBERSHIP_SEAT:
+            errors['assignment_basis'] = (
+                'The opening assignment uses the stored membership seat.'
+            )
+        if not self.timeline_id or not self.franchise_id or not self.historical_slot_id:
+            return
+        timeline = self.timeline
+        franchise = self.franchise
+        if franchise.release_id != timeline.release_id:
+            errors['franchise'] = (
+                'The franchise belongs to this timeline\'s release.'
+            )
+            return
+        slot = self.historical_slot
+        if slot.season_year != OPENING_ASSIGNMENT_SEASON:
+            errors['historical_slot'] = 'The historical slot is from 1970.'
+            return
+        from universe.models import FranchiseSeasonMembership
+        membership = FranchiseSeasonMembership.objects.filter(
+            franchise_id=self.franchise_id,
+            season_year=OPENING_ASSIGNMENT_SEASON,
+        ).first()
+        if membership is None:
+            errors['franchise'] = 'The franchise has a 1970 membership.'
+            return
+        role = opening_slot_role(
+            membership.conference_slug,
+            membership.division_slug,
+            membership.slot_order,
+        )
+        if role != (slot.conference_role, slot.division_role, slot.slot_number):
+            errors['historical_slot'] = (
+                'The membership conference, division, and slot order '
+                'match this historical slot.'
+            )
+        previous = _previous(self)
+        if previous is not None and _changed(previous, self, _stored_names(self)):
+            errors['franchise'] = 'A historical slot assignment is written once.'
+
+
+class ScheduleGame(TimelineChild):
+    """One regular-season fixture owned by a timeline.
+
+    Seasons 2002 through 2029 are formula fixtures. Season 1970 is a
+    historical-template fixture: ``historical_game`` names the template
+    game whose slots were replaced by Federation franchises. A formula
+    fixture leaves that field empty. A calendar week, a bye, a kickoff,
+    and a score stay out of this row. Home and away are franchise
+    identities. A provenance club is not copied onto either franchise.
     """
 
     class Kind(models.TextChoices):
@@ -2812,6 +2973,13 @@ class ScheduleGame(TimelineChild):
     )
     kind = models.CharField(max_length=16, choices=Kind.choices)
     category = models.CharField(max_length=32, choices=Category.choices)
+    historical_game = models.ForeignKey(
+        'universe.HistoricalScheduleGame',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='timeline_fixtures',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -2832,8 +3000,30 @@ class ScheduleGame(TimelineChild):
                 name='tl_schedule_game_clubs',
             ),
             models.CheckConstraint(
-                condition=models.Q(season_year__gte=2002, season_year__lte=2029),
+                condition=(
+                    models.Q(season_year=OPENING_ASSIGNMENT_SEASON)
+                    | models.Q(season_year__gte=2002, season_year__lte=2029)
+                ),
                 name='tl_schedule_game_span',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(season_year=OPENING_ASSIGNMENT_SEASON)
+                    | models.Q(historical_game__isnull=False)
+                ),
+                name='tl_schedule_game_1970_source',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(season_year=OPENING_ASSIGNMENT_SEASON)
+                    | models.Q(historical_game__isnull=True)
+                ),
+                name='tl_schedule_game_formula_source',
+            ),
+            models.UniqueConstraint(
+                fields=['timeline', 'historical_game'],
+                condition=models.Q(historical_game__isnull=False),
+                name='unique_tl_game_historical',
             ),
             models.CheckConstraint(
                 condition=models.Q(kind='regular'),
@@ -2861,11 +3051,18 @@ class ScheduleGame(TimelineChild):
     def extra_clean(self, errors):
         if not self.timeline_id:
             return
+        if self.season_year == OPENING_ASSIGNMENT_SEASON:
+            self._clean_historical_1970(errors)
+            return
         if self.season_year < 2002 or self.season_year > 2029:
             errors['season_year'] = (
                 'Schedule fixtures in this slice run from 2002 through 2029.'
             )
             return
+        if self.historical_game_id:
+            errors['historical_game'] = (
+                'A formula fixture has no historical template game.'
+            )
         if self.kind != self.Kind.REGULAR:
             errors['kind'] = 'This slice stores regular-season fixtures.'
         if self.category not in self.Category.values:
@@ -2901,12 +3098,95 @@ class ScheduleGame(TimelineChild):
         if previous is not None and _changed(previous, self, _stored_names(self)):
             errors['home'] = 'A schedule fixture is written once.'
 
+    def _clean_historical_1970(self, errors):
+        if self.kind != self.Kind.REGULAR:
+            errors['kind'] = 'This slice stores regular-season fixtures.'
+        if self.category not in (
+            self.Category.DIVISION,
+            self.Category.CONFERENCE,
+            self.Category.INTERCONFERENCE,
+        ):
+            errors['category'] = (
+                'A 1970 fixture category is division, conference, or interconference.'
+            )
+        if self.historical_game_id is None:
+            errors['historical_game'] = (
+                'A 1970 fixture names its historical template game.'
+            )
+            return
+        source = self.historical_game
+        if source.season_year != OPENING_ASSIGNMENT_SEASON:
+            errors['historical_game'] = 'The historical template game is from 1970.'
+            return
+        if self.home_id and self.away_id and self.home_id == self.away_id:
+            errors['away'] = 'Home and away are different franchises.'
+        if not TimelineSeason.objects.filter(
+            timeline_id=self.timeline_id,
+            season_year=OPENING_ASSIGNMENT_SEASON,
+        ).exists():
+            errors['season_year'] = 'The timeline has no season for this year.'
+        timeline = self.timeline
+        from universe.models import FranchiseSeasonMembership
+        memberships = {}
+        for field_name in ('home', 'away'):
+            franchise_id = getattr(self, field_name + '_id')
+            if not franchise_id:
+                continue
+            franchise = getattr(self, field_name)
+            if franchise.release_id != timeline.release_id:
+                errors[field_name] = (
+                    'The franchise belongs to this timeline\'s release.'
+                )
+                continue
+            membership = FranchiseSeasonMembership.objects.filter(
+                franchise_id=franchise_id,
+                season_year=OPENING_ASSIGNMENT_SEASON,
+            ).first()
+            if membership is None:
+                errors[field_name] = 'The franchise is seated in this season.'
+                continue
+            memberships[field_name] = membership
+        home = memberships.get('home')
+        away = memberships.get('away')
+        if home is not None and away is not None and 'category' not in errors:
+            expected = historical_fixture_category(
+                home.conference_slug,
+                home.division_slug,
+                away.conference_slug,
+                away.division_slug,
+            )
+            if self.category != expected:
+                errors['category'] = (
+                    'The category matches the stored 1970 memberships.'
+                )
+            for field_name, membership, slot in (
+                ('home', home, source.home_slot),
+                ('away', away, source.away_slot),
+            ):
+                role = opening_slot_role(
+                    membership.conference_slug,
+                    membership.division_slug,
+                    membership.slot_order,
+                )
+                if role != (
+                    slot.conference_role,
+                    slot.division_role,
+                    slot.slot_number,
+                ):
+                    errors[field_name] = (
+                        'The franchise membership matches that historical slot.'
+                    )
+        previous = _previous(self)
+        if previous is not None and _changed(previous, self, _stored_names(self)):
+            errors['home'] = 'A schedule fixture is written once.'
+
 
 class ScheduleWeekAssignment(TimelineChild):
-    """The project week for one stored 2021–2026 regular-season fixture.
+    """The week for one stored regular-season fixture.
 
-    The row points at a ``ScheduleGame`` and does not copy or change that
-    fixture's clubs, category, or home site. It is not a kickoff. Seasons
+    A 2021–2026 row is the project calendar week. A 1970 row copies
+    ``HistoricalScheduleGame.week_played`` through its ``ScheduleGame``
+    and does not copy a provenance club. It is not a kickoff. Seasons
     2027 through 2029 have no published bye calendar, so this row does not
     cover them. Shared ``OpponentWeekAssignment`` rows stay on the release.
     """
@@ -2935,7 +3215,10 @@ class ScheduleWeekAssignment(TimelineChild):
         ]
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(season_year__gte=2021, season_year__lte=2026),
+                condition=(
+                    models.Q(season_year=OPENING_ASSIGNMENT_SEASON)
+                    | models.Q(season_year__gte=2021, season_year__lte=2026)
+                ),
                 name='tl_cal_week_span',
             ),
             models.CheckConstraint(
@@ -2958,12 +3241,16 @@ class ScheduleWeekAssignment(TimelineChild):
                 'A calendar week is stored with the rest of its season.'
             )
             return
-        if self.season_year < 2021 or self.season_year > 2026:
+        if self.season_year == OPENING_ASSIGNMENT_SEASON:
+            if self.week < 1 or self.week > 14:
+                errors['week'] = 'A 1970 historical week is from 1 through 14.'
+                return
+        elif self.season_year < 2021 or self.season_year > 2026:
             errors['season_year'] = (
                 'Calendar weeks in this slice run from 2021 through 2026.'
             )
             return
-        if self.week < 1 or self.week > 18:
+        elif self.week < 1 or self.week > 18:
             errors['week'] = 'The week is from 1 through 18.'
             return
         if not self.timeline_id or not self.game_id:
@@ -2972,6 +3259,13 @@ class ScheduleWeekAssignment(TimelineChild):
         if game.timeline_id != self.timeline_id or game.season_year != self.season_year:
             errors['game'] = 'The fixture belongs to this timeline and season.'
             return
+        if self.season_year == OPENING_ASSIGNMENT_SEASON:
+            if not game.historical_game_id:
+                errors['game'] = 'The week follows the historical template game.'
+                return
+            if game.historical_game.week_played != self.week:
+                errors['week'] = 'The week is the historical template week.'
+                return
         clubs = (game.home_id, game.away_id)
         clash = ScheduleWeekAssignment.objects.filter(
             timeline_id=self.timeline_id,
