@@ -770,6 +770,26 @@ The search is a complete 1-factorization, not a sequential greedy pass. It force
 
 These rows are not part of either release fingerprint. Kickoff dates and times, scoring, standings, and simulation stay out of this writer. The 1978–1994 weeks are a separate project rule.
 
+### Historical 1970 schedule template
+
+`HistoricalScheduleSlot`, `HistoricalScheduleGame`, and `HistoricalScheduleBye` store a historical regular-season template. They are reference data. A row has no `UniverseRelease` and no `Timeline`. It is not an `OpponentPairing`, an `OpponentWeekAssignment`, a `ScheduleGame`, a `ScheduleWeekAssignment`, or a `ScheduleBye`. Loading the template does not rewrite those rows, franchise identity, membership, `slot_order`, either release fingerprint, or a timeline result, place, or scheduling rank.
+
+The provenance club is a source label. It is not a `UniverseFranchise` placeholder slug, display name, or catalog identity. No Federation slug is a permanent NFL franchise. The 1970 slot numbers are neutral labels in the order of the published 1970 division lists: AFC and NFC, each East, Central, and West. East is five slots and the other divisions are four.
+
+1970 uses `merger-placement`. The Colts, Browns, and Steelers moved into the AFC in the May 1969 merger, and other clubs changed divisions at the same time, so a 1969 division finish is not a slot inside the 1970 alignment. `prior_place`, `prior_conference_role`, and `prior_division_role` stay empty. Those fields are for a later season that assigns slots from a prior finish.
+
+The checked-in source is `universe/generation/historical_1970_data.py`, transcribed from the 1970 Pro-Football-Reference regular-season table, Weeks 1–14, 18 September 1970 through 20 December 1970, 182 games. `load_historical_schedule_1970` does not fetch it. An `@` on that table means the winner was away. Postseason games are absent. There are no 1970 bye rows. Every stored game is `played`, with no originally scheduled week.
+
+The loader validates the whole template before it inserts. It writes slots and games in one transaction, in the checked-in order. An exact rerun writes nothing. A partial or different stored 1970 set is left unchanged. A failed insert rolls the template rows back. Instance save and delete, and queryset update and delete, refuse to change a stored template row.
+
+This slice does not create `TimelineScheduleSlotAssignment`. It does not substitute a Federation franchise into a slot, and it does not create 1970 timeline games, results, standings, or simulation. Assigning each active Federation club to one compatible historical slot from that timeline's resolved division places is an approved later adaptation. The assignment has to be a bijection for that season, and different timelines can assign different clubs because their standings differ. That writer is not in this slice.
+
+The stored project schedules remain the schedules already published. The 1970–1994 opponent and week writers, the 2002–2029 timeline schedule and close, and the 2021–2026 calendar stay in place. A historical template does not replace them.
+
+1982, 1987, 1993, 2001, the expansion and realignment seasons, and every later published slate are future template work. The model can record a postponed week, a replacement week, a cancellation, a prior place, and a bye, but this loader does not import those seasons. 2027–2029 calendar assignments stay unresolved until official schedules and bye weeks are published.
+
+The checked-in 1970 template is not the stored project schedule. Under the comparison alignment, conference-1 lines up with the AFC, conference-2 with the NFC, `d3` with East, `d1` with Central, `d2` with West, and `slot_order` with the template slot number. That alignment is a comparison only. The two home-week-mask sets share no mask, so no permutation of the 26 Federation clubs preserves opponents, sites, and weeks together. The test records that evidence. It does not search every permutation.
+
 ### 2001 finishes and 2002 scheduling ranks
 
 A played 2001 place stays on the stored 2001 division. `TimelinePriorFinish` stores that place with the club's wins, losses, and ties. Conference-1 `d1` uses places 1 through 6. Each other 2001 division uses places 1 through 5. The service copies the conference and division from the 2001 membership. `expansion-2002-01` has no 2001 membership and no 2001 finish.
