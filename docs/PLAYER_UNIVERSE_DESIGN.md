@@ -926,7 +926,7 @@ This planner keeps the 2002-anchored `k3` and `k4` tables. Those tables match th
 
 Division, conference, interconference, and the two intraconference same-place games keep the seat-based sites already used for 2002 through 2020. `slot_order` chooses the home pair inside a four-game set. It is not a real-club identity and it is not a division place. The 17th game is stored as `same_place` because it is chosen by the prior year's place. Its two clubs are in opposite conferences, which separates it from the two intraconference same-place games. The category check stays the four existing values.
 
-Each of these seasons stores 272 `ScheduleGame` rows: 96 division, 64 conference, 64 interconference, and 48 same-place. The 48 same-place rows are 32 intraconference games and 16 interconference games. Every club appears 17 times. No week, bye, kickoff date, or time is stored.
+Each of these seasons stores 272 `ScheduleGame` rows: 96 division, 64 conference, 64 interconference, and 48 same-place. The 48 same-place rows are 32 intraconference games and 16 interconference games. Every club appears 17 times. The fixture still has no week, bye, kickoff date, or time. The 2021–2026 week and bye are separate rows, described below. 2027–2029 stay unassigned.
 
 The close carries the 2011 three-club restart through 2029. The 2021 Official NFL Record & Fact Book, Tie-Breaking Procedures, p. 26, the 2024 book, Tie-breaking procedures, playoffs/draft, p. 32, and the 2025 book, p. 36, each say that if three clubs remain tied after a fourth club is eliminated, the tiebreaker restarts at step 1 of the three-club format. A remaining pair still restarts the two-club procedure. The wild-card note that restarts at step 2 of the three-club format is not the division procedure and is not implemented. The 2022 and 2023 editions were not opened. The 2026–2029 books do not state a different division procedure; the 2025 book is the latest opened text, and the current NFL.com tie-breaking procedures page keeps the same division restart. Carrying 2021–2025 forward through 2029 is that continuation, not a new formula.
 
@@ -935,6 +935,31 @@ Places 2 through 4 repeat the procedure after each place. That remains the appro
 A 2021–2029 close requires 272 fixtures and 17 appearances. It does not accept a 16-game slate. It stores results, draws, places 1 through 4, and `regular_season_simulated` atomically. The locks remain the release, then the timeline, then the season. An exact rerun recomputes and verifies the stored results, draws, and places and does not write. Partial, altered, extra, cross-season, cross-timeline, and tampered rows are refused and the stored rows stay as they are. The verifier is read-only. `TimelineSeason.save()` reserves the false-to-true completion flag through 2029.
 
 The widening migration replaces the schedule, result, draw, and place year checks. It does not rewrite a 2002–2020 row. Shared pairings, week assignments, memberships, franchise identity, `slot_order`, historical standings, and release fingerprints stay as they are.
+
+### 2021–2026 calendar assignment
+
+This is a timeline-owned calendar for the fixtures already stored. It does not change an opponent, a home site, a result, a division place, or a completion flag. It does not read or replace the shared 1970–1994 `OpponentWeekAssignment` rows. It does not store a kickoff date or time. 2030 is outside the span and is refused before the release lock.
+
+The sourced calendar is an 18-week regular season. Each club plays 17 games and has one bye. NFL.com's schedule pages list "Teams on Bye" for each week. Those lists, read for 2021 through 2026, name each of the 32 clubs once. The 2021 NFL.com article "How bye weeks break down in NFL's 17-game 2021 season" matches the 2021 list. The 2026 NFL.com article "2026 NFL schedule release: Every team's bye week" matches the 2026 list. The 2024, 2025, and 2026 NFL Communications announcements say the season is 18 weeks and 272 games, and that byes begin in week 5 and end in week 14. 2021's byes begin in week 6. 2022 has no bye in week 5 or week 12. The per-week counts are:
+
+- 2021, weeks 6 through 14: 4, 6, 2, 4, 4, 2, 2, 4, 4. Every other week has none.
+- 2022: week 6 has 4, 7 has 4, 8 has 2, 9 has 6, 10 has 4, 11 has 4, 13 has 2, and 14 has 6.
+- 2023: week 5 has 4, 6 has 2, 7 has 6, 9 has 4, 10 has 4, 11 has 4, 13 has 6, and 14 has 2.
+- 2024: week 5 has 4, 6 has 4, 7 has 2, 9 has 2, 10 has 4, 11 has 4, 12 has 6, and 14 has 6.
+- 2025: week 5 has 4, 6 has 2, 7 has 2, 8 has 6, 9 has 4, 10 has 4, 11 has 2, 12 has 4, and 14 has 4.
+- 2026: week 5 has 2, 6 has 4, 7 has 4, 8 has 4, 9 has 2, 10 has 4, 11 has 6, 13 has 4, and 14 has 2.
+
+A week with no byes has 16 games. A week with two, four, or six byes has 15, 14, or 13 games. The 2026 announcement says week 18 has been 16 division games for 17 consecutive seasons, so 2010 through 2026. The 2021 week-18 slate published by NFL.com is division games, and the 2024 and 2025 announcements say the same for those seasons.
+
+Which real club is off in which week is not used. `conference-1`, `conference-2`, `d1` through `d4`, and `slot_order` are unlabeled seats, not clubs. The project deals the sourced count for each bye week across those seats: divisions in conference and `d1`–`d4` order, rotating the starting division by the number of byes already dealt, and taking the next unused slot inside a division. Each club is dealt once.
+
+The six division rounds use the five earliest weeks with no byes, then week 18. Slot order 1–4 is paired as (1–2 and 3–4), then (1–3 and 2–4), then (1–4 and 2–3). The return game of each pair is three rounds later, so week 18 is the return of 1–4 and 2–3. When a pair has two stored directions, the earlier home slug, then away slug, takes the earlier round. That choice of rival for week 18 is a project rotation. The sourced rule is only that all 16 of those games are division games.
+
+The other 176 games are placed by the same exact search the 1970 week writer uses. A game with one legal week is forced, then a club-week with one legal game, then the search branches on the club-week with the fewest legal games. Equal counts break by club slug, then by week. The games tried in that slot are in home-slug, away-slug order. Each club is already barred from its bye and from the six division weeks. The first complete assignment is stored. If every branch fails, the season is refused and nothing is written.
+
+`ScheduleWeekAssignment` points at one `ScheduleGame`. `ScheduleBye` stores one week per club. Both rows belong to the timeline. The checks allow 2021 through 2026 and weeks 1 through 18. A new row is not saved on its own. The writer requires the published release, the active timeline, the season row, a verified prior-year place check, and a stored fixture set that matches `planned_games` for those places. An empty fixture set is refused. A partial, duplicate, or different fixture set is refused. An empty calendar is written in one transaction. An exact rerun writes nothing. A partial or different week or bye set is left in place. A failed insert rolls that season's weeks and byes back together.
+
+2027, 2028, and 2029 have published opponent rotations and no published bye calendar. NFL.com's week pages for those seasons list no teams on bye. The writer refuses each of those years before the release lock, including when the 272 fixtures are already stored. It does not reuse the 2026 counts. Shared pairings, 1970–1994 week rows, earlier fixtures, results, places, memberships, and both release fingerprints stay as they are.
 
 The schedule is shared universe data and is versioned with the release. Every timeline on that release activates the same franchises in the same seasons, in the same conferences and divisions. A timeline cannot vote a club into the league or change `N(year)`. After publish, editing the schedule means a new release. Timelines already pinned to the old release keep the old schedule.
 

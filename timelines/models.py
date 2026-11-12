@@ -128,6 +128,7 @@ RESERVE_BLOCKED_PHASES = (
 _deferred_players = contextvars.ContextVar('tl_deferred_players', default=None)
 _transition_rows = contextvars.ContextVar('tl_transition_rows', default=False)
 _division_rows = contextvars.ContextVar('tl_division_rows', default=False)
+_calendar_rows = contextvars.ContextVar('tl_calendar_rows', default=False)
 
 DIVISION_PLACE_STEPS = (
     'winning_percentage',
@@ -177,6 +178,22 @@ def writing_division_rows():
         yield
     finally:
         _division_rows.reset(token)
+
+
+@contextmanager
+def writing_calendar_rows():
+    """Allow the calendar service to validate one season's weeks and byes.
+
+    ``save()`` on a new week or bye stays refused. The service validates
+    every row, then ``bulk_create`` writes the batch. A new row whose
+    ``full_clean`` runs outside this block is refused, so one row cannot
+    freeze a partial calendar.
+    """
+    token = _calendar_rows.set(True)
+    try:
+        yield
+    finally:
+        _calendar_rows.reset(token)
 
 
 def _choices(values):
@@ -2762,8 +2779,10 @@ class ScheduleGame(TimelineChild):
     """One 2002 regular-season fixture owned by a timeline.
 
     The clubs and the category are the fixture. A calendar week, a bye, a
-    kickoff, and a score stay out of this row. Home and away are franchise
-    identities. A 2001 division place does not choose which club is stored.
+    kickoff, and a score stay out of this row. ``ScheduleWeekAssignment``
+    and ``ScheduleBye`` store the 2021–2026 week and bye. Home and away are
+    franchise identities. A 2001 division place does not choose which club
+    is stored.
     """
 
     class Kind(models.TextChoices):
@@ -2881,6 +2900,194 @@ class ScheduleGame(TimelineChild):
         previous = _previous(self)
         if previous is not None and _changed(previous, self, _stored_names(self)):
             errors['home'] = 'A schedule fixture is written once.'
+
+
+class ScheduleWeekAssignment(TimelineChild):
+    """The project week for one stored 2021–2026 regular-season fixture.
+
+    The row points at a ``ScheduleGame`` and does not copy or change that
+    fixture's clubs, category, or home site. It is not a kickoff. Seasons
+    2027 through 2029 have no published bye calendar, so this row does not
+    cover them. Shared ``OpponentWeekAssignment`` rows stay on the release.
+    """
+
+    timeline = models.ForeignKey(
+        Timeline,
+        on_delete=models.CASCADE,
+        related_name='schedule_weeks',
+    )
+    game = models.OneToOneField(
+        ScheduleGame,
+        on_delete=models.PROTECT,
+        related_name='week_assignment',
+    )
+    season_year = models.PositiveSmallIntegerField()
+    week = models.PositiveSmallIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['timeline', 'season_year', 'week', 'game']
+        indexes = [
+            models.Index(
+                fields=['timeline', 'season_year', 'week'],
+                name='tl_cal_week_idx',
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(season_year__gte=2021, season_year__lte=2026),
+                name='tl_cal_week_span',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(week__gte=1, week__lte=18),
+                name='tl_cal_week_range',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.timeline_id} {self.season_year} week {self.week}'
+
+    def bound_timeline(self):
+        if not self.timeline_id:
+            return None
+        return self.timeline
+
+    def extra_clean(self, errors):
+        if not self.pk and not _calendar_rows.get():
+            errors['timeline'] = (
+                'A calendar week is stored with the rest of its season.'
+            )
+            return
+        if self.season_year < 2021 or self.season_year > 2026:
+            errors['season_year'] = (
+                'Calendar weeks in this slice run from 2021 through 2026.'
+            )
+            return
+        if self.week < 1 or self.week > 18:
+            errors['week'] = 'The week is from 1 through 18.'
+            return
+        if not self.timeline_id or not self.game_id:
+            return
+        game = self.game
+        if game.timeline_id != self.timeline_id or game.season_year != self.season_year:
+            errors['game'] = 'The fixture belongs to this timeline and season.'
+            return
+        clubs = (game.home_id, game.away_id)
+        clash = ScheduleWeekAssignment.objects.filter(
+            timeline_id=self.timeline_id,
+            season_year=self.season_year,
+            week=self.week,
+        ).filter(
+            models.Q(game__home_id__in=clubs) | models.Q(game__away_id__in=clubs)
+        )
+        if self.pk:
+            clash = clash.exclude(pk=self.pk)
+        if clash.exists():
+            errors['week'] = 'That club already plays in this week.'
+        previous = _previous(self)
+        if previous is not None and _changed(previous, self, _stored_names(self)):
+            errors['week'] = 'A calendar week is written once.'
+
+
+class ScheduleBye(TimelineChild):
+    """One club's bye week in a stored 2021–2026 regular season.
+
+    Each club has one. The week is a season's published bye week, not a
+    kickoff date. 2027 through 2029 are not stored. This row does not
+    change the club's fixtures.
+    """
+
+    timeline = models.ForeignKey(
+        Timeline,
+        on_delete=models.CASCADE,
+        related_name='schedule_byes',
+    )
+    franchise = models.ForeignKey(
+        'universe.UniverseFranchise',
+        on_delete=models.PROTECT,
+        related_name='schedule_byes',
+    )
+    season_year = models.PositiveSmallIntegerField()
+    week = models.PositiveSmallIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['timeline', 'season_year', 'week', 'franchise']
+        indexes = [
+            models.Index(
+                fields=['timeline', 'season_year', 'week'],
+                name='tl_cal_bye_idx',
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['timeline', 'season_year', 'franchise'],
+                name='unique_tl_cal_bye',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(season_year__gte=2021, season_year__lte=2026),
+                name='tl_cal_bye_span',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(week__gte=1, week__lte=18),
+                name='tl_cal_bye_range',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.timeline_id} {self.franchise_id} bye {self.week}'
+
+    def bound_timeline(self):
+        if not self.timeline_id:
+            return None
+        return self.timeline
+
+    def extra_clean(self, errors):
+        if not self.pk and not _calendar_rows.get():
+            errors['timeline'] = 'A bye is stored with the rest of its season.'
+            return
+        if self.season_year < 2021 or self.season_year > 2026:
+            errors['season_year'] = (
+                'Bye weeks in this slice run from 2021 through 2026.'
+            )
+            return
+        if self.week < 1 or self.week > 18:
+            errors['week'] = 'The week is from 1 through 18.'
+            return
+        if not self.timeline_id or not self.franchise_id:
+            return
+        timeline = self.timeline
+        franchise = self.franchise
+        if franchise.release_id != timeline.release_id:
+            errors['franchise'] = 'The franchise belongs to this timeline\'s release.'
+            return
+        from universe.models import FranchiseSeasonMembership
+        seated = FranchiseSeasonMembership.objects.filter(
+            franchise_id=self.franchise_id,
+            season_year=self.season_year,
+        ).exists()
+        if not seated:
+            errors['franchise'] = 'The franchise is seated in this season.'
+            return
+        if not TimelineSeason.objects.filter(
+            timeline_id=self.timeline_id,
+            season_year=self.season_year,
+        ).exists():
+            errors['season_year'] = 'The timeline has no season for this year.'
+            return
+        played = ScheduleWeekAssignment.objects.filter(
+            timeline_id=self.timeline_id,
+            season_year=self.season_year,
+            week=self.week,
+        ).filter(
+            models.Q(game__home_id=self.franchise_id)
+            | models.Q(game__away_id=self.franchise_id)
+        )
+        if played.exists():
+            errors['week'] = 'That club already plays in this week.'
+        previous = _previous(self)
+        if previous is not None and _changed(previous, self, _stored_names(self)):
+            errors['week'] = 'A bye is written once.'
 
 
 class TimelineScheduleSeed(TimelineChild):

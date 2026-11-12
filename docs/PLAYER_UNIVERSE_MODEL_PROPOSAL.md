@@ -970,7 +970,7 @@ The derived rank, 1 through 4, inside one stored 2002 division. Same-place games
 
 ### ScheduleGame
 
-One 2002 regular-season fixture owned by one timeline. The clubs and the category are the fixture. A week, a bye, a kickoff, and a score are not on this row. The later replay fixture, with weeks and playoff games, is a different model and is not stored here.
+One 2002 regular-season fixture owned by one timeline. The clubs and the category are the fixture. A week, a bye, a kickoff, and a score are not on this row. `ScheduleWeekAssignment` and `ScheduleBye` hold the 2021–2026 calendar. The later replay fixture, with playoff games, is a different model and is not stored here.
 
 - Ownership: timeline and season.
 - Primary key: `BigAutoField`.
@@ -982,6 +982,36 @@ One 2002 regular-season fixture owned by one timeline. The clubs and the categor
 - Immutable once written.
 - Rows: 256 for one timeline's 2002 season, 256 for 2003 once that season's `TimelineSeason` already exists and the 2002 places recompute, and 256 for 2004 once that season's `TimelineSeason` already exists and the 2003 places recompute, and 256 for 2005 once that season's `TimelineSeason` already exists and the 2004 places recompute. Every club plays 16 and finishes 8 home and 8 away through 2020. 2006 through 2020 use that same 256-game formula when the prior close verifies. 2021 through 2029 store 272 games: those categories plus one same-place interconference game, 17 appearances, and an 8/9 home split. Conference-1 hosts that 17th game in 2021, and the home conference alternates. The 17th-game division is the interconference pairing from two years earlier on the 2002 cycle. The 2003, 2004, and 2005 same-place games use `TimelineDivisionPlace` from the prior played season, not a scheduling rank or a new seed. For 2003, `k3` is 1 and `k4` is 1. Same-conference pairs are `d1`–`d3` and `d2`–`d4`. Interconference pairs are conference-1 `d1`, `d2`, `d3`, and `d4` with conference-2 `d1`, `d4`, `d3`, and `d2`. The 2003 sites are the first meeting: rotating slot pairs host their matching pair, and same-place homes are `d1` over `d2`, `d2` over `d3`, `d3` over `d4`, and `d4` over `d1`. For 2004, `k3` is 2 and `k4` is 2. Same-conference pairs are `d1`–`d2` and `d3`–`d4`. Interconference pairs are conference-1 `d1`, `d2`, `d3`, and `d4` with conference-2 `d4`, `d1`, `d2`, and `d3`. The 2004 sites are also a first meeting. The second meeting of those pairs flips every site, in 2007 for the same-conference and same-place pairs and in 2008 for the interconference pairs. The 2004 same-place homes are `d1` over `d3`, `d2` over `d4`, `d3` over `d2`, and `d4` over `d1`. For 2005, `k3` is 0 and `k4` is 3. Same-conference pairs are `d1`–`d4` and `d2`–`d3`. That is the second meeting of the 2002 same-conference rotation, so those sites and the same-place sites flip. The 2005 same-place homes are `d1` over `d3`, `d2` over `d1`, `d3` over `d4`, and `d4` over `d2`. Interconference pairs are conference-1 `d1`, `d2`, `d3`, and `d4` with conference-2 `d3`, `d2`, `d4`, and `d1`. That row's first meeting is 2005, so those sites stay unflipped. The 2008 return restores the 2002 same-conference orientation, and the 2009 return flips the 2005 interconference sites.
 - Created by the timeline-schedule service. An exact 2002, 2003, 2004, or 2005 rerun writes nothing. A partial or different 2003, 2004, or 2005 set is left unchanged. The service does not create the 2003, 2004, or 2005 season, results, or a close.
+
+### ScheduleWeekAssignment
+
+The project week for one stored 2021–2026 `ScheduleGame`. The row points at that fixture and does not copy its clubs, category, or home site. It is not a kickoff and it is not the shared `OpponentWeekAssignment`.
+
+- Ownership: timeline.
+- Primary key: `BigAutoField`.
+- Foreign keys: `timeline` `CASCADE`; `game` one-to-one to `ScheduleGame`, `PROTECT`.
+- Fields: `season_year` 2021 through 2026; `week` 1 through 18.
+- Unique: the game.
+- Checks: the season is 2021 through 2026; the week is 1 through 18. Model validation requires the fixture's timeline and season, and refuses a second game for either club in that week. A new row is refused outside the calendar batch.
+- Indexes: `(timeline, season_year, week)`.
+- Immutable once written.
+- Rows: 272 per timeline for each season from 2021 through 2026. None for 2027 through 2029.
+- Created by the calendar service with that season's byes. An exact rerun writes nothing. A partial or different set is left unchanged.
+
+### ScheduleBye
+
+One club's bye in a stored 2021–2026 regular season. The week is one of that season's published bye weeks. The club is an unlabeled seat, not the real club that took that week off.
+
+- Ownership: timeline.
+- Primary key: `BigAutoField`.
+- Foreign keys: `timeline` `CASCADE`; `franchise` to `UniverseFranchise`, `PROTECT`.
+- Fields: `season_year` 2021 through 2026; `week` 1 through 18.
+- Unique: one bye per franchise per season.
+- Checks: the season is 2021 through 2026; the week is 1 through 18. Model validation requires the season membership and refuses a bye on a week that club already plays. A new row is refused outside the calendar batch.
+- Indexes: `(timeline, season_year, week)`.
+- Immutable once written.
+- Rows: 32 per timeline for each season from 2021 through 2026. None for 2027 through 2029.
+- Created in the same transaction as that season's week rows.
 
 ### TimelineScheduleSeed
 
