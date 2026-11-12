@@ -1,26 +1,29 @@
 """Close one supported regular season and store division places.
 
 ``close_regular_season`` is the year-driven entry. The 2002, 2003, and 2004
-names call it. They share one tiebreak. Each reads that season's 256 games,
-stores one project result for each, ranks every division, and only then sets
+names call it. They share one tiebreak. Each reads that season's full
+schedule, 256 games through 2020 and 272 from 2021, stores one project
+result for each, ranks every division, and only then sets
 ``regular_season_simulated``.
 
-The supported span is 2002 through 2020. The sources are not one sentence.
+The supported span is 2002 through 2029. The sources are not one sentence.
 The 2002 text, the December 13, 2003 procedure, and the 2004 continuation
 govern 2002, 2003, and 2004. The 2005 and 2010 official record books keep
 that two-club restart and do not restart three clubs, so 2005 through 2010
 use it. The 2011 official record book adds the three-club restart, and the
 2012, 2014, 2019, and 2020 books keep it, so 2011 through 2020 use it.
-Combined-rank ties use the competition rank printed in the 2010 book. Applying
-that arithmetic to 2005 through 2009, where the 2005 book names the step and
-does not print the tie rule, is an approved project rule. Repeating the
-procedure for places 2 through 4 is also an approved project rule: the books
-say the steps run until a champion is determined and that one club advances
-at a time. A season outside 2002–2020 is refused before the release lock.
-Closing one year unlocks only the next schedule.
+The 2021 book, p. 26, the 2024 book, p. 32, and the 2025 book, p. 36, keep
+that three-club restart, so 2021 through 2029 use it. Combined-rank ties
+use the competition rank printed in the 2010 book. Applying that arithmetic
+where a book names the step and does not print the tie rule is an approved
+project rule. Repeating the procedure for places 2 through 4 is also an
+approved project rule: the books say the steps run until a champion is
+determined and that one club advances at a time. A season outside 2002–2029
+is refused before the release lock. Closing one year unlocks only the next
+schedule.
 
 The completion flag change is one queryset update of the locked season row.
-``TimelineSeason.save()`` cannot make it for 2002 through 2020. No close
+``TimelineSeason.save()`` cannot make it for 2002 through 2029. No close
 generates the next season's fixtures. None of them plays an overtime period.
 
 An equal final score is a tie. A higher score is a win. Touchdown counts are
@@ -87,9 +90,11 @@ from universe.release_guard import assert_release_lock_held, holding_release_loc
 
 
 SEASON_YEAR = 2002
-LAST_SEASON = 2020
+LAST_SEASON = 2029
+SEVENTEEN_FIRST = 2021
 THREE_CLUB_RESTART_YEAR = 2011
 SUPPORTED_SEASONS = tuple(range(SEASON_YEAR, LAST_SEASON + 1))
+OUTSIDE_SPAN = 'The season is outside 2002–2029.'
 # The step order is shared. The restart that each window authorizes differs.
 # Places 2–4 repeat that window's procedure. That repeat is a project rule.
 RULE_WINDOWS = (
@@ -137,7 +142,7 @@ RULE_WINDOWS = (
         ),
     },
     {
-        'seasons': tuple(range(THREE_CLUB_RESTART_YEAR, LAST_SEASON + 1)),
+        'seasons': tuple(range(THREE_CLUB_RESTART_YEAR, SEVENTEEN_FIRST)),
         'closes': True,
         'procedure': 'three-club-restart',
         'source': (
@@ -149,8 +154,38 @@ RULE_WINDOWS = (
             'procedure as the approved project rule for the scheduling order.'
         ),
     },
+    {
+        'seasons': tuple(range(SEVENTEEN_FIRST, LAST_SEASON + 1)),
+        'closes': True,
+        'procedure': 'three-club-restart',
+        'source': (
+            '2021 Official NFL Record & Fact Book, Tie-Breaking Procedures, '
+            'p. 26; the 2024 book, Tie-breaking procedures, playoffs/draft, '
+            'p. 32; and the 2025 book, p. 36. Each restarts three clubs at '
+            'step 1 of the three-club format when a fourth club is eliminated. '
+            'The 2022 and 2023 editions were not opened. No 2026–2029 edition '
+            'states a different division procedure; the 2025 book is the latest '
+            'opened text and the current NFL.com tie-breaking procedures page '
+            'keeps the same division restart. Places 2–4 repeat the procedure '
+            'as the approved project rule. Combined-rank ties keep the '
+            'competition rank printed in the 2010 book, p. 34. The wild-card '
+            'restart at step 2 is not this division procedure.'
+        ),
+    },
 )
 DRAW_LIMIT = 8
+
+
+def regular_season_size(season_year):
+    """Return ``(fixture count, appearances)`` for one supported season.
+
+    2002–2020 are 256 fixtures and 16 appearances. 2021–2029 are 272 and 17.
+    Callers refuse a year outside that span before they use this size.
+    """
+    appearances = 17 if season_year >= SEVENTEEN_FIRST else 16
+    return (32 * appearances) // 2, appearances
+
+
 _DRAW_SPAN = 1 << 64
 _PROCEDURE = 'division-place'
 
@@ -252,13 +287,13 @@ def verify_played_places(timeline, season_year):
     """Return each club's division place after the close's own checks.
 
     The caller holds the release lock inside the open transaction. A season
-    outside 2002–2020 is refused before that lock is required. This reads
+    outside 2002–2029 is refused before that lock is required. This reads
     the stored results, draws, and places. It recomputes the tiebreak with
     the close's stored-draw ranker and accepts the rows only when the stored
     places match. It does not write.
     """
     if season_year not in SUPPORTED_SEASONS:
-        raise DivisionPlaceRefused('The season is outside 2002–2020.')
+        raise DivisionPlaceRefused(OUTSIDE_SPAN)
     return _verify_played_places(timeline, season_year)
 
 
@@ -314,7 +349,8 @@ def _verify_played_places(timeline, season_year):
     stored_results = _load_results(timeline.pk)
     _require_result_fixtures(stored_results, games, timeline.pk, season_year)
     stored_results = _results_for_season(stored_results, season_year)
-    if len(stored_results) != 256:
+    expected_games, _expected_appearances = regular_season_size(season_year)
+    if len(stored_results) != expected_games:
         raise DivisionPlaceRefused(
             _season_text(
                 season_year,
@@ -377,9 +413,10 @@ def _result_from_stored(row):
 def close_regular_season(*, timeline_id, results, season_year):
     """Store one supported season. Return ``created`` or ``unchanged``.
 
-    2002 through 2020 use the documented procedure for that season. Any other
-    season is refused before the release lock. The stored 256 fixtures must already
-    exist. An exact rerun recomputes the tiebreak and writes nothing.
+    2002 through 2029 use the documented procedure for that season. Any other
+    season is refused before the release lock. The stored fixtures, 256 through
+    2020 and 272 from 2021, must already exist. An exact rerun recomputes the
+    tiebreak and writes nothing.
     """
     return _close_regular_season(timeline_id, results, season_year)
 
@@ -433,7 +470,7 @@ def close_2004_regular_season(*, timeline_id, results):
 def _close_regular_season(timeline_id, results, season_year):
     _require_id(timeline_id)
     if season_year not in SUPPORTED_SEASONS:
-        raise DivisionPlaceRefused('The season is outside 2002–2020.')
+        raise DivisionPlaceRefused(OUTSIDE_SPAN)
     probe = Timeline.objects.filter(pk=timeline_id).only('pk', 'release_id').first()
     if probe is None:
         raise DivisionPlaceRefused('The timeline is missing.')
@@ -538,7 +575,7 @@ def division_draw_label(conference, division, keys, draw_index, season_year=SEAS
     stays 2002.
     """
     if season_year not in SUPPORTED_SEASONS:
-        raise DivisionPlaceRefused('The season is outside 2002–2020.')
+        raise DivisionPlaceRefused(OUTSIDE_SPAN)
     joined = ','.join(keys)
     return (
         f'{_PROCEDURE}:{season_year}:{conference}:{division}:'
@@ -1200,7 +1237,8 @@ def _validated_results(results, games, memberships, season_year=SEASON_YEAR):
     )
     if not isinstance(results, (list, tuple)) or isinstance(results, str):
         raise DivisionPlaceRefused(result_message)
-    if len(games) != 256:
+    expected_games, expected_appearances = regular_season_size(season_year)
+    if len(games) != expected_games:
         raise DivisionPlaceRefused(fixture_message)
     _require_alignment(memberships, season_year)
     member_ids = {row.franchise_id for row in memberships}
@@ -1221,9 +1259,9 @@ def _validated_results(results, games, memberships, season_year=SEASON_YEAR):
         fixture_pairs.add(pair)
         appearances[game.home_id] += 1
         appearances[game.away_id] += 1
-    if any(count != 16 for count in appearances.values()):
+    if any(count != expected_appearances for count in appearances.values()):
         raise DivisionPlaceRefused(fixture_message)
-    if len(results) != 256:
+    if len(results) != expected_games:
         raise DivisionPlaceRefused(result_message)
     normalized = []
     seen = set()

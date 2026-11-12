@@ -15,17 +15,17 @@ too. Swapping the conferences would change the interconference pairs.
 ``k3 = (year - 2002) mod 3`` picks the intraconference pairs. Both
 conferences use the same pairs.
 
-- 0, years 2002, 2005, 2008, 2011, 2014, 2017, 2020: East–West and North–South
-- 1, years 2003, 2006, 2009, 2012, 2015, 2018: East–South and North–West
-- 2, years 2004, 2007, 2010, 2013, 2016, 2019: East–North and South–West
+- 0, years 2002, 2005, 2008, 2011, 2014, 2017, 2020, 2023, 2026, 2029: East–West and North–South
+- 1, years 2003, 2006, 2009, 2012, 2015, 2018, 2021, 2024, 2027: East–South and North–West
+- 2, years 2004, 2007, 2010, 2013, 2016, 2019, 2022, 2025, 2028: East–North and South–West
 
 ``k4 = (year - 2002) mod 4`` picks the interconference pairs. The AFC-side
 positions East, North, South, and West play the NFC-side positions:
 
-- 0, years 2002, 2006, 2010, 2014, 2018: North, South, East, West
-- 1, years 2003, 2007, 2011, 2015, 2019: East, West, South, North
-- 2, years 2004, 2008, 2012, 2016, 2020: West, East, North, South
-- 3, years 2005, 2009, 2013, 2017: South, North, West, East
+- 0, years 2002, 2006, 2010, 2014, 2018, 2022, 2026: North, South, East, West
+- 1, years 2003, 2007, 2011, 2015, 2019, 2023, 2027: East, West, South, North
+- 2, years 2004, 2008, 2012, 2016, 2020, 2024, 2028: West, East, North, South
+- 3, years 2005, 2009, 2013, 2017, 2021, 2025, 2029: South, North, West, East
 
 The other conference is that matching read in reverse. The two same-place
 games are against the two same-conference divisions that are not the
@@ -48,14 +48,22 @@ home and one away. The next repeat of that intraconference pairing reverses
 all four sites. Position order is the seat order ``d1``, ``d2``, ``d3``,
 ``d4``.
 
+Seasons 2021 through 2029 keep those four categories and add one
+same-place interconference game. Its division is the interconference
+pairing from two years earlier, ``INTER_ROW[(year - 2004) mod 4]``, which
+is never that year's four-game interconference division. Conference-1
+hosts that game in 2021, and the home conference alternates after that.
+The other categories keep the seat-based sites above. Each of those seasons
+is 272 games. The hosting conference plays nine home games and the other
+plays eight. 2030 is outside this planner.
+
 This service writes the 2002 fixtures on their own path. Seasons 2003
-through 2020 use one later path. Its prior year is ``season_year - 1``,
+through 2029 use one later path. Its prior year is ``season_year - 1``,
 and its fixtures come from ``planned_games``. That path stores a season
 only when the prior year already has a read-only division-place check.
-Those checks are the supported close, 2002 through 2020, so a closed prior
-year unlocks the next season through 2020. Closing one year does not write
-a later season. A 2021 request is outside this 16-game planner and is refused
-before any insert. Same-place
+Those checks are the supported close, 2002 through 2029, so a closed prior
+year unlocks only the next season. Closing one year does not write a later
+season. A 2030 request is refused before any insert. Same-place
 games read ``TimelineDivisionPlace`` from that prior played season. They
 do not read ``TimelineSchedulingRank``,
 ``TimelinePriorFinish``, ``slot_order`` as a place, slug order, draft
@@ -97,8 +105,11 @@ from timelines.services.prior_finish import (
     derive_scheduling_ranks,
 )
 from timelines.services.division_place_2002 import (
+    LAST_SEASON,
+    SEVENTEEN_FIRST,
     SUPPORTED_SEASONS,
     DivisionPlaceRefused,
+    regular_season_size,
     verify_played_places,
 )
 from universe.generation.founding import hmac_int
@@ -107,8 +118,8 @@ from universe.release_guard import assert_release_lock_held, holding_release_loc
 
 
 FIRST_SEASON = 2002
-LAST_SEASON = 2020
 DRAW_LIMIT = 8
+OUTSIDE_SPAN = 'The season is outside 2002–2029.'
 
 POSITIONS = ('d1', 'd2', 'd3', 'd4')
 POSITION_INDEX = {slug: index for index, slug in enumerate(POSITIONS)}
@@ -152,14 +163,14 @@ class TimelineScheduleRefused(Exception):
 
 
 def generate_timeline_schedule(*, timeline_id, season_year):
-    """Write one 2002–2020 season. Return ``created`` or ``unchanged``.
+    """Write one 2002–2029 season. Return ``created`` or ``unchanged``.
 
-    2002 keeps its opening path. 2003–2020 use the immediately preceding
-    season's verified places. 2021 is outside this 16-game planner.
+    2002 keeps its opening path. 2003–2029 use the immediately preceding
+    season's verified places. 2021–2029 add the 17th game. 2030 is outside.
     """
     _require_id(timeline_id)
     if isinstance(season_year, bool) or not isinstance(season_year, int):
-        raise TimelineScheduleRefused('The season is outside 2002–2020.')
+        raise TimelineScheduleRefused(OUTSIDE_SPAN)
     if season_year == FIRST_SEASON:
         return _generate_for(timeline_id, _generate_locked)
     if FIRST_SEASON < season_year <= LAST_SEASON:
@@ -171,7 +182,7 @@ def generate_timeline_schedule(*, timeline_id, season_year):
                 _generate_verified_prior(release, locked_id, year)
             ),
         )
-    raise TimelineScheduleRefused('The season is outside 2002–2020.')
+    raise TimelineScheduleRefused(OUTSIDE_SPAN)
 
 
 def _generate_for(timeline_id, writer):
@@ -201,11 +212,11 @@ def opening_places(seed, seats):
 
 
 def planned_games(season_year, seats, places):
-    """Return the 256 fixtures for one documented season.
+    """Return one documented season's fixtures.
 
-    ``generate_timeline_schedule`` stores 2002, and stores 2003–2020 when
-    the prior year has a read-only division-place check. This function
-    still projects every year in that span.
+    2002–2020 are 256 games. 2021–2029 are 272. ``generate_timeline_schedule``
+    stores a year only when the prior year has a read-only division-place
+    check, except 2002, which keeps its opening path.
     """
     _require_formula_year(season_year)
     groups = _groups(seats)
@@ -214,8 +225,11 @@ def planned_games(season_year, seats, places):
     _add_division_games(games, groups)
     _add_rotating_games(games, groups, season_year)
     _add_place_games(games, groups, places, season_year)
-    if len(games) != 256:
-        raise TimelineScheduleRefused('The season did not produce 256 fixtures.')
+    if season_year >= SEVENTEEN_FIRST:
+        _add_seventeenth_games(games, groups, places, season_year)
+    count, _appearances = regular_season_size(season_year)
+    if len(games) != count:
+        raise TimelineScheduleRefused(f'The season did not produce {count} fixtures.')
     return tuple(sorted(games, key=lambda game: (game.category, game.home_id, game.away_id)))
 
 
@@ -698,6 +712,37 @@ def _add_place_games(games, groups, places, season_year):
                 ))
 
 
+def _add_seventeenth_games(games, groups, places, season_year):
+    """Same-place game against the interconference division from two years earlier.
+
+    That division is not the season's four-game interconference opponent.
+    Conference-1 hosts the game when ``(year - 2021)`` is even.
+    """
+    lookup = {}
+    for (conference, division), group in groups.items():
+        for seat in group:
+            lookup[(conference, division, places[seat.franchise_id])] = seat
+    row = INTER_ROW[(season_year - (FIRST_SEASON + 2)) % 4]
+    afc_hosts = (season_year - SEVENTEEN_FIRST) % 2 == 0
+    for afc_position, nfc_position in enumerate(row):
+        afc_division = groups[(AFC_SIDE, POSITIONS[afc_position])]
+        for seat in afc_division:
+            opponent = lookup[(
+                NFC_SIDE,
+                POSITIONS[nfc_position],
+                places[seat.franchise_id],
+            )]
+            if afc_hosts:
+                home, away = seat, opponent
+            else:
+                home, away = opponent, seat
+            games.add(Fixture(
+                home.franchise_id,
+                away.franchise_id,
+                ScheduleGame.Category.SAME_PLACE,
+            ))
+
+
 def _add_four(games, left, right, flipped, category):
     for seat in left:
         for other in right:
@@ -720,9 +765,9 @@ def _flipped(year, first_year, period):
 
 def _require_formula_year(season_year):
     if isinstance(season_year, bool) or not isinstance(season_year, int):
-        raise TimelineScheduleRefused('The season is outside 2002–2020.')
+        raise TimelineScheduleRefused(OUTSIDE_SPAN)
     if season_year < FIRST_SEASON or season_year > LAST_SEASON:
-        raise TimelineScheduleRefused('The season is outside 2002–2020.')
+        raise TimelineScheduleRefused(OUTSIDE_SPAN)
 
 
 def _require_id(timeline_id):

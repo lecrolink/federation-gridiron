@@ -186,8 +186,8 @@ class RotationFormulaTests(SimpleTestCase):
 
     def test_years_outside_the_formula_are_refused(self):
         seats = _synthetic_seats()
-        for year in (2001, 2021, True, '2002'):
-            with self.assertRaises(TimelineScheduleRefused):
+        for year in (2001, 2030, True, '2002'):
+            with self.assertRaisesMessage(TimelineScheduleRefused, 'outside 2002–2029'):
                 planned_games(year, seats, _slot_places(seats))
 
 
@@ -556,8 +556,13 @@ class TimelineScheduleTests(TestCase):
             'The timeline has no 2019 season.',
         ):
             generate_timeline_schedule(timeline_id=timeline.pk, season_year=2020)
-        with self.assertRaisesMessage(TimelineScheduleRefused, 'outside 2002'):
+        with self.assertRaisesMessage(
+            TimelineScheduleRefused,
+            'The timeline has no season for this year.',
+        ):
             generate_timeline_schedule(timeline_id=timeline.pk, season_year=2021)
+        with self.assertRaisesMessage(TimelineScheduleRefused, 'outside 2002–2029'):
+            generate_timeline_schedule(timeline_id=timeline.pk, season_year=2030)
         self.assertEqual(ScheduleGame.objects.count(), 0)
         self.assertEqual(TimelineScheduleSeed.objects.count(), 0)
 
