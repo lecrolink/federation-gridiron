@@ -782,13 +782,44 @@ The checked-in source is `universe/generation/historical_1970_data.py`, transcri
 
 The loader validates the whole template before it inserts. It writes slots and games in one transaction, in the checked-in order. An exact rerun writes nothing. A partial or different stored 1970 set is left unchanged. A failed insert rolls the template rows back. Instance save and delete, and queryset update and delete, refuse to change a stored template row.
 
-This slice does not create `TimelineScheduleSlotAssignment`. It does not substitute a Federation franchise into a slot, and it does not create 1970 timeline games, results, standings, or simulation. Assigning each active Federation club to one compatible historical slot from that timeline's resolved division places is an approved later adaptation. The assignment has to be a bijection for that season, and different timelines can assign different clubs because their standings differ. That writer is not in this slice.
+The template loader does not assign a Federation franchise to a slot and does not create timeline games, results, standings, or simulation. The 1970 opening assignment is the next section. Later seasons still wait for resolved standings. Different timelines can then assign different clubs because their standings differ. That later writer is not in this slice.
 
 The stored project schedules remain the schedules already published. The 1970–1994 opponent and week writers, the 2002–2029 timeline schedule and close, and the 2021–2026 calendar stay in place. A historical template does not replace them.
 
 1982, 1987, 1993, 2001, the expansion and realignment seasons, and every later published slate are future template work. The model can record a postponed week, a replacement week, a cancellation, a prior place, and a bye, but this loader does not import those seasons. 2027–2029 calendar assignments stay unresolved until official schedules and bye weeks are published.
 
 The checked-in 1970 template is not the stored project schedule. Under the comparison alignment, conference-1 lines up with the AFC, conference-2 with the NFC, `d3` with East, `d1` with Central, `d2` with West, and `slot_order` with the template slot number. That alignment is a comparison only. The two home-week-mask sets share no mask, so no permutation of the 26 Federation clubs preserves opponents, sites, and weeks together. The test records that evidence. It does not search every permutation.
+
+### 1970 opening historical assignment
+
+`generate_historical_timeline_schedule_1970` assigns the 26 active Federation franchises to the 26 stored 1970 historical slots and substitutes those franchises into the 182 template games. 1970 has no previous Federation season, so the opening assignment reads the stored 1970 membership seats. It does not read standings.
+
+The approved opening-placement rule is:
+
+- `conference-1` maps to the historical AFC template conference.
+- `conference-2` maps to the historical NFC template conference.
+- stored division `d3` maps to historical East.
+- stored division `d1` maps to historical Central.
+- stored division `d2` maps to historical West.
+- ascending `FranchiseSeasonMembership.slot_order` maps to ascending `HistoricalScheduleSlot.slot_number` inside that conference and division.
+
+This is a placement rule for an empty previous season. It is not a claim that a Federation franchise is an NFL franchise. The provenance club stays on the historical slot. The franchise, its display name, its placeholder slug, and its membership do not store that club.
+
+`TimelineScheduleSlotAssignment` is the timeline-owned record. It stores the timeline, season 1970, the `UniverseFranchise`, the `HistoricalScheduleSlot`, the basis `opening-membership-seat`, and `created_at`. One franchise and one historical slot each appear once for a timeline and season. The franchise must belong to the timeline's release, have a 1970 membership, and match the slot under the rule above. The row is written once.
+
+Each template game becomes one `ScheduleGame` for that timeline: season 1970, regular, home and away replaced by the assigned franchises, and `historical_game` set to that exact `HistoricalScheduleGame`. The foreign key is protected and nullable. A 1970 fixture must have it. A 2002–2029 formula fixture must leave it null, and those seasons keep their current behavior. The category comes from the two clubs' stored 1970 memberships: division when conference and division match, conference when only the conference matches, and interconference when the conferences differ.
+
+`ScheduleWeekAssignment` stores `HistoricalScheduleGame.week_played` for each of those fixtures. The week row points at the `ScheduleGame`, so the template game is reached through that fixture. It does not copy a provenance club. The year check now also allows 1970. Weeks 1 through 14 are stored, 13 games every week, and there is no `ScheduleBye` row. `ScheduleBye` stays limited to 2021–2026. The 2021–2026 calendar writer still refuses 1970, and it still searches only its own seasons.
+
+The writer requires a published release, an active timeline, and an existing 1970 `TimelineSeason` that is not already marked simulated. Timeline start creates that season in the `direction` phase, which is the earliest stored phase where the fixtures can exist. The writer does not require a later phase, does not advance the phase, and does not set `regular_season_simulated` or any other completion flag. It locks the release and then the timeline, the same order the formula schedule writer uses.
+
+It checks that the stored 1970 template is the complete checked-in template, that the release has exactly 26 active 1970 memberships in the 5/4/4 shape, and that no incompatible 1970 assignment, fixture, or week rows are already stored. The assignment, fixture, and week plans are built and proved in memory before any insert. The proof requires 26 assignments, every active franchise once, every historical slot once, 182 fixtures, 14 games per franchise, 7 home and 7 away, 14 weeks, 13 games per week, no club twice in a week, no club playing itself, no duplicate directed fixture, no byes, every fixture pointing at one 1970 template game, every template game used once, home, away, and week matching the substituted template, and the category matching the stored memberships.
+
+The three sets are inserted in one transaction, assignments then fixtures then weeks. An exact rerun of all 26 assignments, 182 fixtures, and 182 weeks returns `unchanged` and writes nothing. A partial, extra, or different set is refused and left unchanged. The writer does not delete or repair. A failed insert rolls the new 1970 batch back. Two timelines on the same release get separate rows. They get the same mapping when they share the same stored memberships.
+
+The stored project schedule stays. `OpponentPairing` and `OpponentWeekAssignment` remain the published 1970–1977 approximation. The historical template is a different graph, and this writer does not reinterpret those rows. A new 1970 timeline can use the historical template through this writer. The old project rows are still there for the seasons and checks that already use them.
+
+1971 slot assignment is not in this slice. It waits for resolved 1970 standings. This writer does not import a later template, create results, simulate games, create standings or division places, or assign 2027–2029 calendar weeks.
 
 ### 2001 finishes and 2002 scheduling ranks
 
@@ -977,7 +1008,7 @@ The six division rounds use the five earliest weeks with no byes, then week 18. 
 
 The other 176 games are placed by the same exact search the 1970 week writer uses. Before that search, each club's occupied weeks are built from its six division assignments and its bye. A candidate game is placed in a week only when both clubs are free. Assigning the game records that week for both clubs, and a failed branch restores those weeks before the next candidate is tried. A game with one legal week is forced, then a club-week with one legal game, then the search branches on the club-week with the fewest legal games. Equal counts break by club slug, then by week. The games tried in that slot are in home-slug, away-slug order. The first complete assignment is stored. If every branch fails, the season is refused and nothing is written.
 
-`ScheduleWeekAssignment` points at one `ScheduleGame`. `ScheduleBye` stores one week per club. Both rows belong to the timeline. The checks allow 2021 through 2026 and weeks 1 through 18. A new row is not saved on its own. The writer requires the published release, the active timeline, the season row, a verified prior-year place check, and a stored fixture set that matches `planned_games` for those places. An empty fixture set is refused. A partial, duplicate, or different fixture set is refused. An empty calendar is written in one transaction. An exact rerun writes nothing. A partial or different week or bye set is left in place. A failed insert rolls that season's weeks and byes back together.
+`ScheduleWeekAssignment` points at one `ScheduleGame`. `ScheduleBye` stores one week per club. Both rows belong to the timeline. The 2021–2026 checks still allow those seasons and weeks 1 through 18. A 1970 historical-template week is a separate path: the year check also allows 1970, the week is copied from the template game, and no bye is stored. This calendar writer does not assign 1970, and it does not assign 2027 through 2029. A new row is not saved on its own. The writer requires the published release, the active timeline, the season row, a verified prior-year place check, and a stored fixture set that matches `planned_games` for those places. An empty fixture set is refused. A partial, duplicate, or different fixture set is refused. An empty calendar is written in one transaction. An exact rerun writes nothing. A partial or different week or bye set is left in place. A failed insert rolls that season's weeks and byes back together.
 
 2027, 2028, and 2029 have published opponent rotations and no published bye calendar. NFL.com's week pages for those seasons list no teams on bye. The writer refuses each of those years before the release lock, including when the 272 fixtures are already stored. It does not reuse the 2026 counts. Shared pairings, 1970–1994 week rows, earlier fixtures, results, places, memberships, and both release fingerprints stay as they are.
 
