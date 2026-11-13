@@ -2,7 +2,10 @@
 
 import os
 
+os.environ.setdefault('FG_SECRET_KEY', 'unused-isolated-test')
+os.environ.setdefault('FG_DB_NAME', 'unused-isolated-test')
 os.environ.setdefault('FG_DB_PASSWORD', 'unused-isolated-test')
+os.environ.setdefault('FG_ALLOWED_HOSTS', 'testserver,localhost')
 
 from federationgridiron.settings import *  # noqa: E402,F403
 
