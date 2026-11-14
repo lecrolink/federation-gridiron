@@ -12,23 +12,75 @@ https://docs.djangoproject.com/en/4.0/ref/settings/
 
 from pathlib import Path
 import os
+
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv("/home/lecrolink/.env/fg.env")
+# Existing process variables win. This file is outside the repository.
+load_dotenv("/home/lecrolink/.env/fg.env", override=False)
 
+
+def require_setting(environ, name, *, strip=False):
+    """Return a required environment value. Empty values are refused."""
+    value = environ.get(name)
+    if value is None:
+        raise ImproperlyConfigured(f'{name} is required.')
+    if strip:
+        value = value.strip()
+    if value == '':
+        raise ImproperlyConfigured(f'{name} is required.')
+    return value
+
+
+def debug_from_env(value):
+    """DEBUG is false unless the value is an explicit true flag."""
+    if value is None:
+        return False
+    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def allowed_hosts_from_env(value):
+    """Parse a comma-separated host list, dropping blanks."""
+    if value is None:
+        return []
+    return [host.strip() for host in value.split(',') if host.strip()]
+
+
+def load_deployment(environ):
+    """Read deployment settings from the environment.
+
+    Required names are FG_SECRET_KEY, FG_DB_NAME, FG_DB_PASSWORD, and
+    FG_ALLOWED_HOSTS. FG_DB_NAME has no default. The PythonAnywhere test
+    deployment must set it to lecrolink$fg_test. FG_ALLOWED_HOSTS is a
+    comma-separated list and, on PythonAnywhere, must include
+    federationgridiron.com and www.federationgridiron.com. FG_DEBUG is
+    optional and defaults to false.
+    """
+    hosts = allowed_hosts_from_env(environ.get('FG_ALLOWED_HOSTS'))
+    if not hosts:
+        raise ImproperlyConfigured(
+            'FG_ALLOWED_HOSTS is required. On PythonAnywhere include '
+            'federationgridiron.com and www.federationgridiron.com.'
+        )
+    return {
+        'SECRET_KEY': require_setting(environ, 'FG_SECRET_KEY'),
+        'DEBUG': debug_from_env(environ.get('FG_DEBUG')),
+        'ALLOWED_HOSTS': hosts,
+        'DB_NAME': require_setting(environ, 'FG_DB_NAME', strip=True),
+        'DB_PASSWORD': require_setting(environ, 'FG_DB_PASSWORD'),
+    }
+
+
+_deployment = load_deployment(os.environ)
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.0/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-$yz86a8)s(ym-(svy5a@3)(01ejoy#_@d=dv1ir#so2^2zx5oo'
-
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
-ALLOWED_HOSTS = ['www.federationgridiron.com', 'federationgridiron.com',]
+SECRET_KEY = _deployment['SECRET_KEY']
+DEBUG = _deployment['DEBUG']
+ALLOWED_HOSTS = _deployment['ALLOWED_HOSTS']
 
 
 # Application definition
@@ -82,9 +134,9 @@ WSGI_APPLICATION = 'federationgridiron.wsgi.application'
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.mysql",
-        "NAME": "lecrolink$fg",
+        "NAME": _deployment['DB_NAME'],
         "USER": "lecrolink",
-        "PASSWORD": os.environ["FG_DB_PASSWORD"],
+        "PASSWORD": _deployment['DB_PASSWORD'],
         "HOST": "lecrolink.mysql.pythonanywhere-services.com",
         "PORT": "3306",
         "OPTIONS": {
