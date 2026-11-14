@@ -1,0 +1,109 @@
+# Apply reviewed migrations to the PythonAnywhere test database.
+# This file runs only from a manual dispatch of main. It does not run on
+# push. A typed confirmation is required before any SSH connection.
+
+name: Migrate PythonAnywhere test database
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type MIGRATE_FG_TEST to migrate lecrolink$fg_test
+        required: true
+        type: string
+
+concurrency:
+  group: pythonanywhere-www-federationgridiron-com
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  require-main:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse every ref except main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "Refusing to migrate ${{ github.ref }}. Only main is migrated." >&2
+          exit 1
+
+      - name: Require the typed confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          if [ "${CONFIRMATION}" != "MIGRATE_FG_TEST" ]; then
+            echo "Refusing to migrate: type MIGRATE_FG_TEST to continue." >&2
+            exit 1
+          fi
+
+  migrate:
+    needs: require-main
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the migration script
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Migrate lecrolink$fg_test
+        env:
+          PYTHONANYWHERE_SSH_PRIVATE_KEY: ${{ secrets.PYTHONANYWHERE_SSH_PRIVATE_KEY }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          if [ "${CONFIRMATION}" != "MIGRATE_FG_TEST" ]; then
+            echo "Refusing to migrate: type MIGRATE_FG_TEST to continue." >&2
+            exit 1
+          fi
+          if [ -z "${PYTHONANYWHERE_SSH_PRIVATE_KEY}" ]; then
+            echo "PYTHONANYWHERE_SSH_PRIVATE_KEY is not configured." >&2
+            exit 1
+          fi
+          umask 077
+          install -d -m 700 "${HOME}/.ssh"
+          trap 'rm -f "${HOME}/.ssh/pythonanywhere"' EXIT
+          printf '%s\n' "${PYTHONANYWHERE_SSH_PRIVATE_KEY}" > "${HOME}/.ssh/pythonanywhere"
+          chmod 600 "${HOME}/.ssh/pythonanywhere"
+          ssh-keyscan -T 15 ssh.pythonanywhere.com \
+            | bash scripts/pythonanywhere_known_host.sh \
+              'SHA256:zy2jmqxNg/fs6tFZK55OjHTI3B2UofzOiUvTPtcX3/Y' \
+            > "${HOME}/.ssh/known_hosts"
+          ssh \
+            -i "${HOME}/.ssh/pythonanywhere" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts" \
+            -o ConnectTimeout=20 \
+            lecrolink@ssh.pythonanywhere.com \
+            bash -s -- /home/lecrolink/federationgridiron \
+            < scripts/pythonanywhere_migrate_test.sh
+
+      - name: Reload www.federationgridiron.com
+        if: success()
+        env:
+          PYTHONANYWHERE_API_TOKEN: ${{ secrets.PYTHONANYWHERE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PYTHONANYWHERE_API_TOKEN}" ]; then
+            echo "PYTHONANYWHERE_API_TOKEN is not configured." >&2
+            exit 1
+          fi
+          umask 077
+          reload_config="$(mktemp)"
+          trap 'rm -f "${reload_config}" /tmp/pa-reload-body' EXIT
+          printf 'header = "Authorization: Token %s"\n' "${PYTHONANYWHERE_API_TOKEN}" > "${reload_config}"
+          code="$(
+            curl --silent --show-error --config "${reload_config}" \
+              --output /tmp/pa-reload-body --write-out '%{http_code}' \
+              --request POST \
+              'https://www.pythonanywhere.com/api/v0/user/lecrolink/webapps/www.federationgridiron.com/reload/'
+          )"
+          if [ "${code}" != "200" ]; then
+            echo "Reload failed with HTTP ${code}." >&2
+            exit 1
+          fi
+          echo "Reloaded www.federationgridiron.com."
