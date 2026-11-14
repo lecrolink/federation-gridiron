@@ -2941,9 +2941,12 @@ class ScheduleGame(TimelineChild):
     Seasons 2002 through 2029 are formula fixtures. Season 1970 is a
     historical-template fixture: ``historical_game`` names the template
     game whose slots were replaced by Federation franchises. A formula
-    fixture leaves that field empty. A calendar week, a bye, a kickoff,
-    and a score stay out of this row. Home and away are franchise
-    identities. A provenance club is not copied onto either franchise.
+    fixture leaves that field empty. The unique constraint is the pair
+    ``(timeline, historical_game)`` with no partial condition, so MySQL
+    creates it. Several empty values are allowed on one timeline. A
+    template game is not. A calendar week, a bye, a kickoff, and a score
+    stay out of this row. Home and away are franchise identities. A
+    provenance club is not copied onto either franchise.
     """
 
     class Kind(models.TextChoices):
@@ -3022,7 +3025,6 @@ class ScheduleGame(TimelineChild):
             ),
             models.UniqueConstraint(
                 fields=['timeline', 'historical_game'],
-                condition=models.Q(historical_game__isnull=False),
                 name='unique_tl_game_historical',
             ),
             models.CheckConstraint(

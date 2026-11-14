@@ -51,7 +51,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='schedulegame',
-            constraint=models.UniqueConstraint(condition=models.Q(('historical_game__isnull', False)), fields=('timeline', 'historical_game'), name='unique_tl_game_historical'),
+            constraint=models.UniqueConstraint(fields=('timeline', 'historical_game'), name='unique_tl_game_historical'),
         ),
         migrations.AddConstraint(
             model_name='scheduleweekassignment',

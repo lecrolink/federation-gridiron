@@ -3,8 +3,10 @@
 from collections import Counter
 from unittest.mock import patch
 
-from django.db import IntegrityError, connection
-from django.test import TestCase
+from django.db import IntegrityError, connection, transaction
+from django.db.backends.mysql.base import DatabaseWrapper
+from django.db.backends.mysql.features import DatabaseFeatures
+from django.test import SimpleTestCase, TestCase
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
@@ -142,6 +144,39 @@ def _oracle():
             _category(seats[home_slug], seats[away_slug]),
         ))
     return fixtures
+
+
+class HistoricalGameUniqueConstraintTests(SimpleTestCase):
+    def test_mysql_creates_a_plain_unique_constraint(self):
+        self.assertFalse(DatabaseFeatures.supports_partial_indexes)
+        wrapper = DatabaseWrapper({
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': 'unused-isolated-test',
+            'USER': 'unused',
+            'PASSWORD': 'unused',
+            'HOST': '127.0.0.1',
+            'PORT': '3306',
+            'TIME_ZONE': 'UTC',
+            'OPTIONS': {},
+            'AUTOCOMMIT': True,
+            'CONN_MAX_AGE': 0,
+            'CONN_HEALTH_CHECKS': False,
+            'ATOMIC_REQUESTS': False,
+        })
+        self.assertIsNone(wrapper.connection)
+        constraint = next(
+            item for item in ScheduleGame._meta.constraints
+            if item.name == 'unique_tl_game_historical'
+        )
+        self.assertIsNone(constraint.condition)
+        self.assertEqual(constraint.fields, ('timeline', 'historical_game'))
+        with wrapper.schema_editor(collect_sql=True) as editor:
+            sql = str(constraint.constraint_sql(ScheduleGame, editor))
+        self.assertIsNone(wrapper.connection)
+        self.assertIn('CONSTRAINT `unique_tl_game_historical` UNIQUE', sql)
+        self.assertIn('`timeline_id`', sql)
+        self.assertIn('`historical_game_id`', sql)
+        self.assertNotIn('WHERE', sql)
 
 
 class Historical1970FixtureTests(TestCase):
@@ -611,6 +646,96 @@ class Historical1970FixtureTests(TestCase):
             UniverseRelease.objects.get(pk=self.release.pk).validation_fingerprint,
             'validation-fixed',
         )
+
+    def test_formula_fixtures_may_share_a_null_historical_game(self):
+        stored = ScheduleGame.objects.filter(
+            timeline=self.scheduled,
+            season_year=2002,
+            historical_game__isnull=True,
+        )
+        self.assertGreater(stored.count(), 1)
+        sample = stored.order_by('id').first()
+        ScheduleGame.objects.bulk_create([
+            ScheduleGame(
+                timeline=sample.timeline,
+                season_year=2003,
+                home_id=sample.home_id,
+                away_id=sample.away_id,
+                kind=sample.kind,
+                category=sample.category,
+                historical_game=None,
+            ),
+            ScheduleGame(
+                timeline=sample.timeline,
+                season_year=2004,
+                home_id=sample.home_id,
+                away_id=sample.away_id,
+                kind=sample.kind,
+                category=sample.category,
+                historical_game=None,
+            ),
+        ])
+        self.assertGreater(
+            ScheduleGame.objects.filter(
+                timeline=self.scheduled,
+                historical_game__isnull=True,
+            ).count(),
+            stored.count(),
+        )
+
+    def test_one_timeline_cannot_repeat_a_historical_game(self):
+        self._create()
+        games = list(ScheduleGame.objects.filter(
+            timeline=self.timeline_a,
+            season_year=1970,
+        ))
+        pairs = {(game.home_id, game.away_id) for game in games}
+        source = games[0]
+        home_id = away_id = None
+        franchise_ids = {game.home_id for game in games} | {game.away_id for game in games}
+        for candidate_home in franchise_ids:
+            for candidate_away in franchise_ids:
+                if candidate_home != candidate_away and (candidate_home, candidate_away) not in pairs:
+                    home_id, away_id = candidate_home, candidate_away
+                    break
+            if home_id is not None:
+                break
+        before = ScheduleGame.objects.filter(timeline=self.timeline_a).count()
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                ScheduleGame.objects.bulk_create([
+                    ScheduleGame(
+                        timeline=self.timeline_a,
+                        season_year=1970,
+                        home_id=home_id,
+                        away_id=away_id,
+                        kind=ScheduleGame.Kind.REGULAR,
+                        category=ScheduleGame.Category.DIVISION,
+                        historical_game_id=source.historical_game_id,
+                    ),
+                ])
+        self.assertEqual(
+            ScheduleGame.objects.filter(timeline=self.timeline_a).count(),
+            before,
+        )
+
+    def test_another_timeline_may_reference_the_same_historical_game(self):
+        self._create()
+        self.assertEqual(
+            generate_historical_timeline_schedule_1970(timeline_id=self.timeline_b.pk),
+            'created',
+        )
+        ids_a = set(ScheduleGame.objects.filter(
+            timeline=self.timeline_a,
+            season_year=1970,
+        ).values_list('historical_game_id', flat=True))
+        ids_b = set(ScheduleGame.objects.filter(
+            timeline=self.timeline_b,
+            season_year=1970,
+        ).values_list('historical_game_id', flat=True))
+        self.assertEqual(ids_a, ids_b)
+        self.assertEqual(len(ids_a), 182)
+        self.assertNotIn(None, ids_a)
 
     def test_formula_timeline_without_a_1970_season_is_refused(self):
         before = _dump(ScheduleGame.objects.filter(timeline=self.scheduled))
