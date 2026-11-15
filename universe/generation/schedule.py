@@ -213,6 +213,7 @@ YEAR_COUNTS = {
     1995: 30,
     1998: 30,
     1999: 31,
+    2000: 31,
     2001: 31,
     2002: 32,
     2029: 32,
@@ -261,13 +262,14 @@ _ALIGN_1995 = (
     ('c2-d2', _teams(17, 18, 19, 20, 23)),
     ('c2-d3', ('founding-22', 'expansion-1976-02', 'founding-24', 'founding-26', 'expansion-1995-02')),
 )
-# Conference-1 is 6/5/5. d1 is the six-club Central role and holds
-# expansion-1999-01. Conference-2 stays the kept three divisions of five.
+# 1999–2001 reverses the historical 16/15 conference sizes. Conference-1
+# is 5/5/5. Conference-2 is 6/5/5, and d1 is its six-club Central role.
+# expansion-1999-01 is slot 6 of that division. The 2002 seats are separate.
 _ALIGN_1999 = (
-    ('c1-d1', _teams(1, 2, 3, 4) + ('expansion-1995-01', 'expansion-1999-01')),
+    ('c1-d1', _teams(1, 2, 3, 4) + ('expansion-1995-01',)),
     ('c1-d2', _teams(5, 6, 7, 8) + ('expansion-1976-01',)),
     ('c1-d3', _teams(9, 10, 11, 12, 25)),
-    ('c2-d1', _teams(13, 14, 15, 16, 21)),
+    ('c2-d1', _teams(13, 14, 15, 16, 21) + ('expansion-1999-01',)),
     ('c2-d2', _teams(17, 18, 19, 20, 23)),
     ('c2-d3', ('founding-22', 'expansion-1976-02', 'founding-24', 'founding-26', 'expansion-1995-02')),
 )
@@ -1103,7 +1105,9 @@ def _validate_schedule_slice(release):
         (1995, 'expansion-1995-02', 'conference-2', 'd3', 5),
         (1998, 'founding-09', 'conference-1', 'd1', 5),
         (1999, 'founding-09', 'conference-1', 'd3', 1),
-        (1999, 'expansion-1999-01', 'conference-1', 'd1', 6),
+        (1999, 'expansion-1999-01', 'conference-2', 'd1', 6),
+        (2000, 'expansion-1999-01', 'conference-2', 'd1', 6),
+        (2001, 'expansion-1999-01', 'conference-2', 'd1', 6),
         (1999, 'expansion-1976-01', 'conference-1', 'd2', 5),
         (2001, 'expansion-1995-02', 'conference-2', 'd3', 5),
         (2002, 'expansion-2002-01', 'conference-2', 'd4', 4),
@@ -1128,8 +1132,12 @@ def _validate_schedule_slice(release):
         (1976, 'conference-2', (('d1', 4), ('d2', 5), ('d3', 5))),
         (1994, 'conference-1', (('d1', 4), ('d2', 5), ('d3', 5))),
         (1994, 'conference-2', (('d1', 5), ('d2', 4), ('d3', 5))),
-        (1999, 'conference-1', (('d1', 6), ('d2', 5), ('d3', 5))),
-        (1999, 'conference-2', (('d1', 5), ('d2', 5), ('d3', 5))),
+        (1999, 'conference-1', (('d1', 5), ('d2', 5), ('d3', 5))),
+        (1999, 'conference-2', (('d1', 6), ('d2', 5), ('d3', 5))),
+        (2000, 'conference-1', (('d1', 5), ('d2', 5), ('d3', 5))),
+        (2000, 'conference-2', (('d1', 6), ('d2', 5), ('d3', 5))),
+        (2001, 'conference-1', (('d1', 5), ('d2', 5), ('d3', 5))),
+        (2001, 'conference-2', (('d1', 6), ('d2', 5), ('d3', 5))),
         (2002, 'conference-1', (('d1', 4), ('d2', 4), ('d3', 4), ('d4', 4))),
     )
     for season_year, conference_slug, divisions in shape_checks:
@@ -1145,6 +1153,24 @@ def _validate_schedule_slice(release):
                     f'{season_year} {conference_slug} {division_slug} has '
                     f'{found} clubs, not {size}.'
                 )
+    conference_counts = (
+        (1999, 'conference-1', 15),
+        (1999, 'conference-2', 16),
+        (2000, 'conference-1', 15),
+        (2000, 'conference-2', 16),
+        (2001, 'conference-1', 15),
+        (2001, 'conference-2', 16),
+    )
+    for season_year, conference_slug, size in conference_counts:
+        found = FranchiseSeasonMembership.objects.filter(
+            franchise__release=release,
+            season_year=season_year,
+            conference_slug=conference_slug,
+        ).count()
+        if found != size:
+            raise ScheduleGenerationError(
+                f'{season_year} {conference_slug} has {found} clubs, not {size}.'
+            )
     if FranchiseSeasonMembership.objects.filter(
         franchise__release=release,
         season_year__in=(1999, 2000, 2001),

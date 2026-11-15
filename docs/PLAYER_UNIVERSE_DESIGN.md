@@ -24,7 +24,7 @@ The repository today is a Django 5.2 project (`requirements.txt`) with one domai
 
 `leagues/services/league_generator.py` still upserts **2 conferences, 8 divisions, and 32 teams** (`CONFERENCE_COUNT`, `DIVISION_COUNT`, `TEAM_COUNT`). That generator is the code on `main`. It is not the product shape this design uses.
 
-The confirmed schedule is 26 franchises for 1970–1975, 28 for 1976–1994, 30 for 1995–1998, 31 for 1999–2001, and 32 for 2002–2029. Permanent slugs and catalog links are not chosen. The release uses placeholder slugs until they are. `fg-founding-1` remains the shipped 24-club founding generator. `fg-founding-2` writes the 26-club founding catalog, the 1970–2029 memberships, the four expansion events, the 26 opening seats, and one provisional city and nickname for each of the 32 placeholder slugs. This document does not hard-code 26 as the size of every season.
+The confirmed schedule is 26 franchises for 1970–1975, 28 for 1976–1994, 30 for 1995–1998, 31 for 1999–2001, and 32 for 2002–2029. Permanent catalog links are not chosen. The release still uses placeholder slugs. The approved public names, the 2002 division codes, and the placeholder map are in [Approved franchise names and 2002 alignment](#approved-franchise-names-and-2002-alignment). `fg-founding-1` remains the shipped 24-club founding generator. `fg-founding-2` writes the 26-club founding catalog, the 1970–2029 memberships, the four expansion events, the 26 opening seats, and one provisional city and nickname for each of the 32 placeholder slugs. Those provisional strings are not the approved names. This document does not hard-code 26 as the size of every season.
 
 A franchise identity is shared by every timeline on a release. The current `Team` row can store only one conference and one division, so it cannot by itself represent expansion, realignment, or a last active season. Those facts belong on the shared franchise records below. Timeline code does not create franchises and does not write `Team.league`, `Team.conference`, or `Team.division`.
 
@@ -364,7 +364,7 @@ The profile key, the season span, and the style key on each row are approved. `y
 
 The approved style keys are `run-first` for 1970–1977, `passing-rules` for 1978–1986, `timing-specialists` for 1987–1994, `cap-and-size` for 1995–2003, `spread-influence` for 2004–2013, and `modern-passing` for 2014–2029. Each span holds one of those keys. A season with more franchises uses the same per-team quota and the same round count, multiplied by `N(year)`.
 
-`twelve_team_fill_to_six` is the approved stored value for 1999–2001: 12 teams, 6 from each conference, every division winner, wild cards filling that conference to 6, byes for the top two seeds in each conference, and a first round of 3 vs 6 and 4 vs 5. Conference-1 supplies 4 division winners and 2 wild cards. Conference-2 supplies 3 division winners and 3 wild cards. Order inside either group is outside that value. From 2002 the documented field is `twelve_team_4_and_2`: conference-2 gains its fourth division, so both conferences supply 4 winners and 2 wild cards. The field size, the byes, and the first-round pairings stay. 1995–1998 have three divisions in each conference, so they use the 8-team field of 3 winners and 1 wild card. 1976–1994 keep 2 winners and 2 wild cards. 1970–1975 keep 3 winners and 1 wild card. Those later playoff descriptions, other than the approved 1999–2001 value, remain unresolved card fields. The corrected alignment gives each conference three divisions in 1976–1994, and it gives conference-1 three divisions in 1999–2001. `eight_team_2_and_2` and `twelve_team_fill_to_six` stay the stored values, so their winner counts are not rewritten from those division sizes. `schedule_length` stays 16 for 1982 and 1987.
+`twelve_team_fill_to_six` is the approved stored value for 1999–2001: 12 teams, 6 from each conference, every division winner, wild cards filling that conference to 6, byes for the top two seeds in each conference, and a first round of 3 vs 6 and 4 vs 5. Conference-1 supplies 4 division winners and 2 wild cards. Conference-2 supplies 3 division winners and 3 wild cards. Order inside either group is outside that value. From 2002 the documented field is `twelve_team_4_and_2`: conference-2 gains its fourth division, so both conferences supply 4 winners and 2 wild cards. The field size, the byes, and the first-round pairings stay. 1995–1998 have three divisions in each conference, so they use the 8-team field of 3 winners and 1 wild card. 1976–1994 keep 2 winners and 2 wild cards. 1970–1975 keep 3 winners and 1 wild card. Those later playoff descriptions, other than the approved 1999–2001 value, remain unresolved card fields. The corrected alignment gives each conference three divisions in 1976–2001. In 1999–2001 conference-1 is 5, 5, and 5, and conference-2 is 6, 5, and 5. `eight_team_2_and_2` and `twelve_team_fill_to_six` stay the stored values, so their winner counts are not rewritten from those division sizes. `schedule_length` stays 16 for 1982 and 1987.
 
 ### Positions
 
@@ -603,9 +603,457 @@ The Federation Gridiron begins with 26 franchises in 1970. Two expansion franchi
 | 1999–2001 | 31 | 1 club enters in 1999 |
 | 2002–2029 | 32 | 1 club enters in 2002 |
 
+### Approved franchise names and 2002 alignment
+
+This is the user-approved naming plan and the permanent map from those clubs to the existing `fg-founding-2` placeholder slugs. These are the final public franchise names. No other city, nickname, or franchise name is approved. `fg-founding-2` still draws provisional names from its frozen lists. Those drawn names are not these names.
+
+`conference-1` is the American Conference. `conference-2` is the National Conference. That meaning is fixed for every alignment period.
+
+The 2002 public division names use the stored division codes as follows. This is the labeling that puts the most clubs in their approved 2002 division without moving a stored seat.
+
+American Conference, `conference-1`:
+
+- `d1` = Great Lakes. This code is also the stored Central-sized role before 2002.
+- `d2` = Mid-Atlantic. Before 2002 this same code is the stored West-sized role. That older phrase is a size role, not the 2002 National West.
+- `d3` = Northeast. Before 2002 this same code is the stored East-sized role.
+- `d4` = Midwest. `d4` exists only in 2002–2029.
+
+National Conference, `conference-2`:
+
+- `d1` = Southeast. Before 2002 this same code is the stored Central-sized role.
+- `d2` = Southwest. Before 2002 this same code is the stored West-sized role.
+- `d3` = West. Before 2002 this same code is the stored East-sized role.
+- `d4` = South Central. `d4` exists only in 2002–2029.
+
+Expansion slugs follow the stored conference after the existing one-year 1976 swap. That choice needs no membership change for the 1976 and 1995 pairs.
+
+- `expansion-1976-01` = Indianapolis Speedsters. It plays 1976 in conference-2, then returns to conference-1 for 1977–2029.
+- `expansion-1976-02` = Portland Lumberjacks. It plays 1976 in conference-1, then returns to conference-2 for 1977–2029.
+- `expansion-1995-01` = Memphis Marauders. It stays in conference-1.
+- `expansion-1995-02` = San Antonio Armadillos. It stays in conference-2.
+- `expansion-1999-01` = Charlotte Prospectors. She joins conference-2 in 1999 as `d1` slot 6 and stays there through 2001. Her 2002 seat is unchanged.
+- `expansion-2002-01` = Niagara Rapids. Niagara is the location name of the Buffalo-Toronto expansion franchise.
+
+The seat lines are the generator seats. Through 1994, the label after the division code is the stored size role. In 1999–2001, conference-2 `d1` is the six-club Central role, and `expansion-1999-01` is slot 6 of that division. Other 1995–2001 lines give the code and slot only. The 2002 lines use the public division names above. Clubs that do not exist yet have no line for that period. Four 2002 seats disagree with the approved public division. Those four are marked CONFLICT and are listed after the map. This document does not move the 2002 seats.
+
+```text
+founding-01
+1970 founding
+city Chicago
+nickname Navigators
+display Chicago Navigators
+approved 2002: American Conference, Great Lakes
+1970-1975: conference-1 d1 Central role slot 1
+1976: conference-1 d1 Central role slot 1
+1977-1994: conference-1 d1 Central role slot 1
+1995-1998: conference-1 d1 slot 1
+1999-2001: conference-1 d1 slot 1
+2002-2029: conference-1 d1 Great Lakes slot 1
+
+founding-02
+1970 founding
+city Cleveland
+nickname Riffs
+display Cleveland Riffs
+approved 2002: American Conference, Great Lakes
+1970-1975: conference-1 d1 Central role slot 2
+1976: conference-1 d1 Central role slot 2
+1977-1994: conference-1 d1 Central role slot 2
+1995-1998: conference-1 d1 slot 2
+1999-2001: conference-1 d1 slot 2
+2002-2029: conference-1 d1 Great Lakes slot 2
+
+founding-03
+1970 founding
+city Detroit
+nickname Wheels
+display Detroit Wheels
+approved 2002: American Conference, Great Lakes
+1970-1975: conference-1 d1 Central role slot 3
+1976: conference-1 d1 Central role slot 3
+1977-1994: conference-1 d1 Central role slot 3
+1995-1998: conference-1 d1 slot 3
+1999-2001: conference-1 d1 slot 3
+2002-2029: conference-1 d1 Great Lakes slot 3
+
+founding-04
+1970 founding
+city Milwaukee
+nickname Hammers
+display Milwaukee Hammers
+approved 2002: American Conference, Great Lakes
+1970-1975: conference-1 d1 Central role slot 4
+1976: conference-1 d1 Central role slot 4
+1977-1994: conference-1 d1 Central role slot 4
+1995-1998: conference-1 d1 slot 4
+1999-2001: conference-1 d1 slot 4
+2002-2029: conference-1 d1 Great Lakes slot 4
+
+founding-05
+1970 founding
+city Baltimore
+nickname Barons
+display Baltimore Barons
+approved 2002: American Conference, Mid-Atlantic
+1970-1975: conference-1 d2 West role slot 1
+1976: conference-1 d2 West role slot 1
+1977-1994: conference-1 d2 West role slot 1
+1995-1998: conference-1 d2 slot 1
+1999-2001: conference-1 d2 slot 1
+2002-2029: conference-1 d2 Mid-Atlantic slot 1
+
+founding-06
+1970 founding
+city Cincinnati
+nickname Centurions
+display Cincinnati Centurions
+approved 2002: American Conference, Mid-Atlantic
+1970-1975: conference-1 d2 West role slot 2
+1976: conference-1 d2 West role slot 2
+1977-1994: conference-1 d2 West role slot 2
+1995-1998: conference-1 d2 slot 2
+1999-2001: conference-1 d2 slot 2
+2002-2029: conference-1 d2 Mid-Atlantic slot 2
+
+founding-07
+1970 founding
+city Pittsburgh
+nickname Predators
+display Pittsburgh Predators
+approved 2002: American Conference, Mid-Atlantic
+1970-1975: conference-1 d2 West role slot 3
+1976: conference-1 d2 West role slot 3
+1977-1994: conference-1 d2 West role slot 3
+1995-1998: conference-1 d2 slot 3
+1999-2001: conference-1 d2 slot 3
+2002-2029: conference-1 d2 Mid-Atlantic slot 3
+
+founding-08
+1970 founding
+city Washington
+nickname Defenders
+display Washington Defenders
+approved 2002: American Conference, Mid-Atlantic
+1970-1975: conference-1 d2 West role slot 4
+1976: conference-1 d2 West role slot 4
+1977-1994: conference-1 d2 West role slot 4
+1995-1998: conference-1 d2 slot 4
+1999-2001: conference-1 d2 slot 4
+2002-2029: conference-1 d2 Mid-Atlantic slot 4
+
+founding-09
+1970 founding
+city Minneapolis
+nickname Loons
+display Minneapolis Loons
+approved 2002: American Conference, Midwest
+1970-1975: conference-1 d3 East role slot 1
+1976: conference-1 d3 East role slot 1
+1977-1994: conference-1 d3 East role slot 1
+1995-1998: conference-1 d1 slot 5
+1999-2001: conference-1 d3 slot 1
+2002-2029: conference-1 d4 Midwest slot 1
+
+founding-10
+1970 founding
+city Boston
+nickname Nor’easters
+display Boston Nor’easters
+approved 2002: American Conference, Northeast
+1970-1975: conference-1 d3 East role slot 2
+1976: conference-1 d3 East role slot 2
+1977-1994: conference-1 d3 East role slot 2
+1995-1998: conference-1 d3 slot 1
+1999-2001: conference-1 d3 slot 2
+2002-2029: conference-1 d3 Northeast slot 1
+
+founding-11
+1970 founding
+city St. Louis
+nickname Stallions
+display St. Louis Stallions
+approved 2002: American Conference, Midwest
+1970-1975: conference-1 d3 East role slot 3
+1976: conference-1 d3 East role slot 3
+1977-1994: conference-1 d3 East role slot 3
+1995-1998: conference-1 d2 slot 5
+1999-2001: conference-1 d3 slot 3
+2002-2029: conference-1 d4 Midwest slot 2
+
+founding-12
+1970 founding
+city New York
+nickname Emperors
+display New York Emperors
+approved 2002: American Conference, Northeast
+1970-1975: conference-1 d3 East role slot 4
+1976: conference-1 d3 East role slot 4
+1977-1994: conference-1 d3 East role slot 4
+1995-1998: conference-1 d3 slot 3
+1999-2001: conference-1 d3 slot 4
+2002-2029: conference-1 d3 Northeast slot 3
+
+founding-13
+1970 founding
+city Atlanta
+nickname Iron Horses
+display Atlanta Iron Horses
+approved 2002: National Conference, Southeast
+1970-1975: conference-2 d1 Central role slot 1
+1976: conference-2 d1 Central role slot 1
+1977-1994: conference-2 d1 Central role slot 1
+1995-1998: conference-2 d1 slot 1
+1999-2001: conference-2 d1 Central role slot 1
+2002-2029: conference-2 d1 Southeast slot 1
+
+founding-14
+1970 founding
+city Miami
+nickname Barracudas
+display Miami Barracudas
+approved 2002: National Conference, Southeast
+1970-1975: conference-2 d1 Central role slot 2
+1976: conference-2 d1 Central role slot 2
+1977-1994: conference-2 d1 Central role slot 2
+1995-1998: conference-2 d1 slot 2
+1999-2001: conference-2 d1 Central role slot 2
+2002-2029: conference-2 d1 Southeast slot 2
+
+founding-15
+1970 founding
+city Tampa
+nickname Phantoms
+display Tampa Phantoms
+approved 2002: National Conference, Southeast
+1970-1975: conference-2 d1 Central role slot 3
+1976: conference-2 d1 Central role slot 3
+1977-1994: conference-2 d1 Central role slot 3
+1995-1998: conference-2 d1 slot 3
+1999-2001: conference-2 d1 Central role slot 3
+2002-2029: conference-2 d1 Southeast slot 3
+
+founding-16
+1970 founding
+city New Orleans
+nickname River Kings
+display New Orleans River Kings
+approved 2002: National Conference, South Central
+1970-1975: conference-2 d1 Central role slot 4
+1976: conference-2 d1 Central role slot 4
+1977-1994: conference-2 d1 Central role slot 4
+1995-1998: conference-2 d1 slot 4
+1999-2001: conference-2 d1 Central role slot 4
+2002-2029: conference-2 d1 Southeast slot 4
+CONFLICT: stored 2002 division is Southeast; approved division is South Central
+
+founding-17
+1970 founding
+city Denver
+nickname Lions
+display Denver Lions
+approved 2002: National Conference, Southwest
+1970-1975: conference-2 d2 West role slot 1
+1976: conference-2 d2 West role slot 1
+1977-1994: conference-2 d2 West role slot 1
+1995-1998: conference-2 d2 slot 1
+1999-2001: conference-2 d2 slot 1
+2002-2029: conference-2 d2 Southwest slot 1
+
+founding-18
+1970 founding
+city Kansas City
+nickname Prairie Dogs
+display Kansas City Prairie Dogs
+approved 2002: National Conference, Southwest
+1970-1975: conference-2 d2 West role slot 2
+1976: conference-2 d2 West role slot 2
+1977-1994: conference-2 d2 West role slot 2
+1995-1998: conference-2 d2 slot 2
+1999-2001: conference-2 d2 slot 2
+2002-2029: conference-2 d2 Southwest slot 2
+
+founding-19
+1970 founding
+city Phoenix
+nickname Renegades
+display Phoenix Renegades
+approved 2002: National Conference, Southwest
+1970-1975: conference-2 d2 West role slot 3
+1976: conference-2 d2 West role slot 3
+1977-1994: conference-2 d2 West role slot 3
+1995-1998: conference-2 d2 slot 3
+1999-2001: conference-2 d2 slot 3
+2002-2029: conference-2 d2 Southwest slot 3
+
+founding-20
+1970 founding
+city San Diego
+nickname Destroyers
+display San Diego Destroyers
+approved 2002: National Conference, Southwest
+1970-1975: conference-2 d2 West role slot 4
+1976: conference-2 d2 West role slot 4
+1977-1994: conference-2 d2 West role slot 4
+1995-1998: conference-2 d2 slot 4
+1999-2001: conference-2 d2 slot 4
+2002-2029: conference-2 d2 Southwest slot 4
+
+founding-21
+1970 founding
+city Dallas
+nickname Outlaws
+display Dallas Outlaws
+approved 2002: National Conference, South Central
+1970-1975: conference-2 d3 East role slot 1
+1976: conference-2 d3 East role slot 1
+1977-1994: conference-2 d3 East role slot 1
+1995-1998: conference-2 d1 slot 5
+1999-2001: conference-2 d1 Central role slot 5
+2002-2029: conference-2 d4 South Central slot 1
+
+founding-22
+1970 founding
+city Los Angeles
+nickname Condors
+display Los Angeles Condors
+approved 2002: National Conference, West
+1970-1975: conference-2 d3 East role slot 2
+1976: conference-2 d3 East role slot 2
+1977-1994: conference-2 d3 East role slot 2
+1995-1998: conference-2 d3 slot 1
+1999-2001: conference-2 d3 slot 1
+2002-2029: conference-2 d3 West slot 1
+
+founding-23
+1970 founding
+city Houston
+nickname Roughnecks
+display Houston Roughnecks
+approved 2002: National Conference, South Central
+1970-1975: conference-2 d3 East role slot 3
+1976: conference-2 d3 East role slot 3
+1977-1994: conference-2 d3 East role slot 3
+1995-1998: conference-2 d2 slot 5
+1999-2001: conference-2 d2 slot 5
+2002-2029: conference-2 d4 South Central slot 2
+
+founding-24
+1970 founding
+city San Francisco
+nickname Juggernauts
+display San Francisco Juggernauts
+approved 2002: National Conference, West
+1970-1975: conference-2 d3 East role slot 4
+1976: conference-2 d3 East role slot 4
+1977-1994: conference-2 d3 East role slot 4
+1995-1998: conference-2 d3 slot 3
+1999-2001: conference-2 d3 slot 3
+2002-2029: conference-2 d3 West slot 3
+
+founding-25
+1970 founding
+city Philadelphia
+nickname Independents
+display Philadelphia Independents
+approved 2002: American Conference, Northeast
+1970-1975: conference-1 d3 East role slot 5
+1976: conference-1 d3 East role slot 5
+1977-1994: conference-1 d3 East role slot 5
+1995-1998: conference-1 d3 slot 4
+1999-2001: conference-1 d3 slot 5
+2002-2029: conference-1 d3 Northeast slot 4
+
+founding-26
+1970 founding
+city Seattle
+nickname Orcas
+display Seattle Orcas
+approved 2002: National Conference, West
+1970-1975: conference-2 d3 East role slot 5
+1976: conference-2 d3 East role slot 5
+1977-1994: conference-2 d3 East role slot 5
+1995-1998: conference-2 d3 slot 4
+1999-2001: conference-2 d3 slot 4
+2002-2029: conference-2 d3 West slot 4
+
+expansion-1976-01
+1976 expansion
+city Indianapolis
+nickname Speedsters
+display Indianapolis Speedsters
+approved 2002: American Conference, Midwest
+1976: conference-2 d2 West role slot 5
+1977-1994: conference-1 d2 West role slot 5
+1995-1998: conference-1 d3 slot 2
+1999-2001: conference-1 d2 slot 5
+2002-2029: conference-1 d3 Northeast slot 2
+CONFLICT: stored 2002 division is Northeast; approved division is Midwest
+
+expansion-1976-02
+1976 expansion
+city Portland
+nickname Lumberjacks
+display Portland Lumberjacks
+approved 2002: National Conference, West
+1976: conference-1 d2 West role slot 5
+1977-1994: conference-2 d1 Central role slot 5
+1995-1998: conference-2 d3 slot 2
+1999-2001: conference-2 d3 slot 2
+2002-2029: conference-2 d3 West slot 2
+
+expansion-1995-01
+1995 expansion
+city Memphis
+nickname Marauders
+display Memphis Marauders
+approved 2002: American Conference, Midwest
+1995-1998: conference-1 d3 slot 5
+1999-2001: conference-1 d1 slot 5
+2002-2029: conference-1 d4 Midwest slot 3
+
+expansion-1995-02
+1995 expansion
+city San Antonio
+nickname Armadillos
+display San Antonio Armadillos
+approved 2002: National Conference, South Central
+1995-1998: conference-2 d3 slot 5
+1999-2001: conference-2 d3 slot 5
+2002-2029: conference-2 d4 South Central slot 3
+
+expansion-1999-01
+1999 expansion
+city Charlotte
+nickname Prospectors
+display Charlotte Prospectors
+approved 2002: National Conference, Southeast
+1999-2001: conference-2 d1 Central role slot 6
+2002-2029: conference-1 d4 Midwest slot 4
+CONFLICT: the 2002 seat is American Midwest; the approved place is National Southeast. The 1999–2001 seat is National d1 slot 6
+
+expansion-2002-01
+2002 expansion
+city Niagara
+nickname Rapids
+display Niagara Rapids
+approved 2002: American Conference, Northeast
+2002-2029: conference-2 d4 South Central slot 4
+CONFLICT: stored conference is National and stored division is South Central; approved conference is American and approved division is Northeast
+```
+
+
+The 1970 historical-slot rule still fits these seats. It uses the conference, the division code, and `slot_order`. It does not use the public city. Conference-1 remains the AFC template, conference-2 the NFC template, `d3` the East template, `d1` the Central template, `d2` the West template, and slot order the template slot number. Los Angeles, San Francisco, and Seattle occupy three 1970 conference-2 East-role seats because those slugs later form the 2002 West division. The provenance club stays on the historical slot. The public city does not replace it.
+
+Four stored 2002 memberships disagree with the approved public alignment. Resolving them requires membership changes, so they are not changed here.
+
+- Indianapolis Speedsters, `expansion-1976-01`, is in `conference-1` `d3` slot 2. That code is Northeast. The approved division is Midwest. The 1976 season in conference-2 is the existing one-year swap, not a new move.
+- Charlotte Prospectors, `expansion-1999-01`, is in `conference-2` `d1` slot 6 for 1999–2001. From 2002 she is in `conference-1` `d4` slot 4. That 2002 code is Midwest. The approved place is National Southeast.
+- New Orleans River Kings, `founding-16`, is in `conference-2` `d1` slot 4. That code is Southeast. The approved division is South Central. `c2-d4` has only two founding seats, and those are Dallas and Houston, beside San Antonio.
+- Niagara Rapids, `expansion-2002-01`, is in `conference-2` `d4` slot 4. The approved place is American Northeast. Its only stored seats are National South Central.
+
 Placeholders, not permanent identities. There is no `expansion-1976-03`, `expansion-1976-04`, or `expansion-1996` slug.
 
-| Placeholder slug | First season | Display name until a real name is chosen |
+| Placeholder slug | First season | Generator placeholder display name |
 |------------------|--------------|------------------------------------------|
 | `founding-01` … `founding-26` | 1970 | Founding franchise 01–26 |
 | `expansion-1976-01`, `expansion-1976-02` | 1976 | 1976 expansion franchise 01–02 |
@@ -613,9 +1061,9 @@ Placeholders, not permanent identities. There is no `expansion-1976-03`, `expans
 | `expansion-1999-01` | 1999 | 1999 expansion franchise 01 |
 | `expansion-2002-01` | 2002 | 2002 expansion franchise 01 |
 
-Permanent slugs and catalog links stay empty until chosen. Every timeline on the release uses these same placeholder slugs and the same entry years. The display-name column above is what `fg-founding-1` writes. `fg-founding-1` does not read or write provisional names.
+Permanent catalog links stay empty. Every timeline on the release uses these same placeholder slugs and the same entry years. The display-name column above is what `fg-founding-1` writes. `fg-founding-1` does not read or write provisional names.
 
-`fg-founding-2` writes one `ProvisionalFranchiseName` row for each of the 32 placeholder slugs when the release is generated, including clubs that have not debuted. The row is unique on the release and `placeholder_slug`. It does not point at `UniverseFranchise`, so recreating a franchise row cannot erase it. `city` and `nickname` are fictional and each has its own status, `provisional` or `replaced`. The first write is provisional. Later naming may change a field only while that field is still provisional, and it then marks that field replaced. A replaced value is kept when the seed changes and when the franchise row is rebuilt. A city or nickname replacement is rejected when that exact, case-sensitive value is already used by another franchise in the same release. `display_name` is the city, one space, and the nickname. A new draw walks the expansion slugs in lexicographic order, then `founding-01` through `founding-26` in numeric order. The frozen lists hold 40 fictional cities and 40 fictional nicknames, in the approved order. Real NFL cities and NFL team nicknames are not in those lists. Final franchise identities stay unresolved.
+`fg-founding-2` writes one `ProvisionalFranchiseName` row for each of the 32 placeholder slugs when the release is generated, including clubs that have not debuted. The row is unique on the release and `placeholder_slug`. It does not point at `UniverseFranchise`, so recreating a franchise row cannot erase it. `city` and `nickname` are fictional and each has its own status, `provisional` or `replaced`. The first write is provisional. Later naming may change a field only while that field is still provisional, and it then marks that field replaced. A replaced value is kept when the seed changes and when the franchise row is rebuilt. A city or nickname replacement is rejected when that exact, case-sensitive value is already used by another franchise in the same release. `display_name` is the city, one space, and the nickname. A new draw walks the expansion slugs in lexicographic order, then `founding-01` through `founding-26` in numeric order. The frozen lists hold 40 fictional cities and 40 fictional nicknames, in the approved order. Real NFL cities and NFL team nicknames are not in those lists. Those drawn values are not the approved franchise names in [Approved franchise names and 2002 alignment](#approved-franchise-names-and-2002-alignment).
 
 `N(year)` is the number of franchises whose `first_active_season` is less than or equal to `year` and whose `final_active_season` is null or greater than or equal to `year`.
 
@@ -629,7 +1077,7 @@ N(year) = N(year - 1) + E(year) − D(year)
 
 ### Conference and division alignment
 
-Conferences stay `conference-1` and `conference-2` for the whole timeline. Twenty-six clubs are 13 in each conference. Thirteen is prime, so the 1970 divisions are 5, 4, and 4. The five-club division in each conference is `c1-d3` and `c2-d3`. Thirty-one clubs cannot split into two equal conferences: 1999–2001 are 16 in conference-1 and 15 in conference-2. Membership is shared. Timelines do not realign on their own.
+Conferences stay `conference-1` and `conference-2` for the whole timeline. Twenty-six clubs are 13 in each conference. Thirteen is prime, so the 1970 divisions are 5, 4, and 4. The five-club division in each conference is `c1-d3` and `c2-d3`. Thirty-one clubs cannot split into two equal conferences: 1999–2001 are 15 in conference-1 and 16 in conference-2. Membership is shared. Timelines do not realign on their own.
 
 | Seasons | Shape | Slots |
 |---------|--------|-------|
@@ -637,10 +1085,10 @@ Conferences stay `conference-1` and `conference-2` for the whole timeline. Twent
 | 1976 | each conference is `d1` 4, `d2` 5, `d3` 5 | `c1-d1` … `c1-d3` and `c2-d1` … `c2-d3` |
 | 1977–1994 | conference-1 is `d1` 4, `d2` 5, `d3` 5; conference-2 is `d1` 5, `d2` 4, `d3` 5 | the same six divisions |
 | 1995–1998 | 2 conferences × 3 divisions × 5 teams | `c1-d1` … `c1-d3` and `c2-d1` … `c2-d3` |
-| 1999–2001 | conference-1 is `d1` 6, `d2` 5, `d3` 5; conference-2 stays 3 × 5 | `c1-d1` … `c1-d3` and `c2-d1` … `c2-d3` |
+| 1999–2001 | conference-1 is `d1` 5, `d2` 5, `d3` 5; conference-2 is `d1` 6, `d2` 5, `d3` 5 | `c1-d1` … `c1-d3` and `c2-d1` … `c2-d3` |
 | 2002–2029 | 2 conferences × 4 divisions × 4 teams | `c1-d1` … `c1-d4` and `c2-d1` … `c2-d4` |
 
-No geographic names are assigned, and no placeholder slug is a historical NFL club. `c1-d3` means the third division of conference 1, not a region. For 1976–1994 and for conference-1 in 1999–2001, `d1` is the Central-sized role, `d2` is the West-sized role, and `d3` is the East-sized role. Those are size roles for the stored slugs. They do not rename a franchise. `slot_order` is an integer on the membership row. It is the order in the tables below. It is not a city, and after 1970 it is not alphabetical order of the slug. The corrected 1976, 1977–1994, and 1999–2001 seats are a new catalog. A release already published with the previous seats keeps those rows. This generator does not edit a published release.
+The public geographic names and the placeholder map are in [Approved franchise names and 2002 alignment](#approved-franchise-names-and-2002-alignment). No placeholder slug is a historical NFL club. `c1-d3` means the third division of conference 1. For 1976–1994, `d1` is the Central-sized role, `d2` is the West-sized role, and `d3` is the East-sized role. In 1999–2001, conference-2 `d1` is the six-club Central role, and conference-1 is five clubs in `d1`, `d2`, and `d3`. Those are size roles for the stored slugs. The 2002 public names of those codes are in the approved map. A size-role phrase is not by itself the public division name. `slot_order` is an integer on the membership row. It is the order in the tables below. It is not a city, and after 1970 it is not alphabetical order of the slug. The corrected 1976, 1977–1994, and 1999–2001 seats are a new catalog. A release already published with the previous seats keeps those rows. This generator does not edit a published release.
 
 **1970 through 1975.** Thirteen founding clubs in each conference. `founding-01` through `founding-24` keep the seats from the earlier four-club table. `founding-25` is order 5 of `c1-d3`. `founding-26` is order 5 of `c2-d3`.
 
@@ -686,23 +1134,25 @@ No geographic names are assigned, and no placeholder slug is a historical NFL cl
 | `c2-d2` | founding-17 | founding-18 | founding-19 | founding-20 | founding-23 |
 | `c2-d3` | founding-22 | expansion-1976-02 | founding-24 | founding-26 | expansion-1995-02 |
 
-**1999 realignment.** `expansion-1999-01` joins conference-1. That conference becomes 16 clubs in three divisions: `d1` has six, `d2` has five, and `d3` has five. There is no `c1-d4` in 1999–2001. `expansion-1999-01` is order 6 of `c1-d1`. It is the club the 1999 expansion event adds. It is not a historical franchise. Conference-2 stays 15 and is unchanged from the 1995 table.
+**1999 realignment.** `expansion-1999-01` joins conference-2. That conference becomes 16 clubs in three divisions: `d1` has six, `d2` has five, and `d3` has five. Conference-1 is 15 clubs, five in each division. There is no fourth division in 1999–2001. `expansion-1999-01` is order 6 of `c2-d1`. It is the club the 1999 expansion event adds. It is not a historical franchise. This 1999–2001 seating reverses the historical 16-team and 15-team conference sizes. The 2002 seats below are a separate realignment.
 
-| Division | Order 1 | Order 2 | Order 3 | Order 4 | Order 5 | Order 6 |
-|----------|---------|---------|---------|---------|---------|---------|
-| `c1-d1` | founding-01 | founding-02 | founding-03 | founding-04 | expansion-1995-01 | expansion-1999-01 |
-| `c1-d2` | founding-05 | founding-06 | founding-07 | founding-08 | expansion-1976-01 | |
-| `c1-d3` | founding-09 | founding-10 | founding-11 | founding-12 | founding-25 | |
-
-Conference-2 in 1999–2001:
+Conference-1 in 1999–2001:
 
 | Division | Order 1 | Order 2 | Order 3 | Order 4 | Order 5 |
 |----------|---------|---------|---------|---------|---------|
-| `c2-d1` | founding-13 | founding-14 | founding-15 | founding-16 | founding-21 |
-| `c2-d2` | founding-17 | founding-18 | founding-19 | founding-20 | founding-23 |
-| `c2-d3` | founding-22 | expansion-1976-02 | founding-24 | founding-26 | expansion-1995-02 |
+| `c1-d1` | founding-01 | founding-02 | founding-03 | founding-04 | expansion-1995-01 |
+| `c1-d2` | founding-05 | founding-06 | founding-07 | founding-08 | expansion-1976-01 |
+| `c1-d3` | founding-09 | founding-10 | founding-11 | founding-12 | founding-25 |
 
-**2002 realignment.** `expansion-2002-01` joins conference-2. Both conferences have 16 clubs in four divisions of four. Conference-1’s 2002 seats are the kept four-division table. They are not the 1999–2001 seats. Conference-2 is the kept conversion below.
+Conference-2 in 1999–2001:
+
+| Division | Order 1 | Order 2 | Order 3 | Order 4 | Order 5 | Order 6 |
+|----------|---------|---------|---------|---------|---------|---------|
+| `c2-d1` | founding-13 | founding-14 | founding-15 | founding-16 | founding-21 | expansion-1999-01 |
+| `c2-d2` | founding-17 | founding-18 | founding-19 | founding-20 | founding-23 | |
+| `c2-d3` | founding-22 | expansion-1976-02 | founding-24 | founding-26 | expansion-1995-02 | |
+
+**2002 realignment.** The seats below stay the generator's placeholder seats. Their public names, and the four seats that disagree with the approved 2002 divisions, are in [Approved franchise names and 2002 alignment](#approved-franchise-names-and-2002-alignment). `expansion-2002-01` joins conference-2. Both conferences have 16 clubs in four divisions of four. Conference-1’s 2002 seats are the kept four-division table. They are not the 1999–2001 seats. Conference-2 is the kept conversion below.
 
 | Division | Order 1 | Order 2 | Order 3 | Order 4 |
 |----------|---------|---------|---------|---------|
@@ -2347,7 +2797,7 @@ The playable clock is 60 seasons, 1970 through 2029 inclusive. `N(year)` is exac
 | 2002–2029 | 28 | 32 | 896 |
 | **Total** | **60** | | **1,797** |
 
-Regular-season games use the same lengths as the era profiles: 14 through 1977, 16 through 2020, and 17 from 2021. Games in a season are `N(year) × length / 2`. `31 × 16` is even, so 1999–2001 can be scheduled at 16 games even though the conferences are 16 and 15.
+Regular-season games use the same lengths as the era profiles: 14 through 1977, 16 through 2020, and 17 from 2021. Games in a season are `N(year) × length / 2`. `31 × 16` is even, so 1999–2001 can be scheduled at 16 games even though conference-2 has 16 clubs and conference-1 has 15.
 
 | Seasons | Years | N | Length | Games |
 |---------|-------|---|--------|-------|
