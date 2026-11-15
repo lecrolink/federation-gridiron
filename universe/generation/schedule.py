@@ -273,15 +273,20 @@ _ALIGN_1999 = (
     ('c2-d2', _teams(17, 18, 19, 20, 23)),
     ('c2-d3', ('founding-22', 'expansion-1976-02', 'founding-24', 'founding-26', 'expansion-1995-02')),
 )
+# 2002–2029. Both conferences are four divisions of four. Four clubs
+# rotate through the seats they vacate, and each incoming club keeps the
+# outgoing club's slot: expansion-1976-01 takes the Midwest seat,
+# expansion-1999-01 takes the Southeast seat, founding-16 takes the South
+# Central seat, and expansion-2002-01 takes the Northeast seat.
 _ALIGN_2002 = (
     ('c1-d1', _teams(1, 2, 3, 4)),
     ('c1-d2', _teams(5, 6, 7, 8)),
-    ('c1-d3', ('founding-10', 'expansion-1976-01', 'founding-12', 'founding-25')),
-    ('c1-d4', ('founding-09', 'founding-11', 'expansion-1995-01', 'expansion-1999-01')),
-    ('c2-d1', _teams(13, 14, 15, 16)),
+    ('c1-d3', ('founding-10', 'expansion-2002-01', 'founding-12', 'founding-25')),
+    ('c1-d4', ('founding-09', 'founding-11', 'expansion-1995-01', 'expansion-1976-01')),
+    ('c2-d1', _teams(13, 14, 15) + ('expansion-1999-01',)),
     ('c2-d2', _teams(17, 18, 19, 20)),
     ('c2-d3', ('founding-22', 'expansion-1976-02', 'founding-24', 'founding-26')),
-    ('c2-d4', ('founding-21', 'founding-23', 'expansion-1995-02', 'expansion-2002-01')),
+    ('c2-d4', ('founding-21', 'founding-23', 'expansion-1995-02', 'founding-16')),
 )
 
 ALIGNMENTS = (
@@ -1110,7 +1115,16 @@ def _validate_schedule_slice(release):
         (2001, 'expansion-1999-01', 'conference-2', 'd1', 6),
         (1999, 'expansion-1976-01', 'conference-1', 'd2', 5),
         (2001, 'expansion-1995-02', 'conference-2', 'd3', 5),
-        (2002, 'expansion-2002-01', 'conference-2', 'd4', 4),
+        (2001, 'founding-16', 'conference-2', 'd1', 4),
+        (2001, 'expansion-1976-01', 'conference-1', 'd2', 5),
+        (2002, 'expansion-1976-01', 'conference-1', 'd4', 4),
+        (2002, 'expansion-1999-01', 'conference-2', 'd1', 4),
+        (2002, 'founding-16', 'conference-2', 'd4', 4),
+        (2002, 'expansion-2002-01', 'conference-1', 'd3', 2),
+        (2029, 'expansion-1976-01', 'conference-1', 'd4', 4),
+        (2029, 'expansion-1999-01', 'conference-2', 'd1', 4),
+        (2029, 'founding-16', 'conference-2', 'd4', 4),
+        (2029, 'expansion-2002-01', 'conference-1', 'd3', 2),
         (2029, 'founding-09', 'conference-1', 'd4', 1),
     )
     for season_year, slug, conference_slug, division_slug, slot_order in checks:
@@ -1139,6 +1153,9 @@ def _validate_schedule_slice(release):
         (2001, 'conference-1', (('d1', 5), ('d2', 5), ('d3', 5))),
         (2001, 'conference-2', (('d1', 6), ('d2', 5), ('d3', 5))),
         (2002, 'conference-1', (('d1', 4), ('d2', 4), ('d3', 4), ('d4', 4))),
+        (2002, 'conference-2', (('d1', 4), ('d2', 4), ('d3', 4), ('d4', 4))),
+        (2029, 'conference-1', (('d1', 4), ('d2', 4), ('d3', 4), ('d4', 4))),
+        (2029, 'conference-2', (('d1', 4), ('d2', 4), ('d3', 4), ('d4', 4))),
     )
     for season_year, conference_slug, divisions in shape_checks:
         for division_slug, size in divisions:

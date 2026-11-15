@@ -271,9 +271,16 @@ class ScheduleReleaseTests(TestCase):
                 seat(2002, 'expansion-1999-01').division_slug,
                 seat(2002, 'expansion-1999-01').slot_order,
             ),
-            ('conference-1', 'd4', 4),
+            ('conference-2', 'd1', 4),
         )
-        self.assertEqual(seat(2002, 'expansion-2002-01').conference_slug, 'conference-2')
+        self.assertEqual(
+            (
+                seat(2002, 'expansion-2002-01').conference_slug,
+                seat(2002, 'expansion-2002-01').division_slug,
+                seat(2002, 'expansion-2002-01').slot_order,
+            ),
+            ('conference-1', 'd3', 2),
+        )
         self.assertFalse(
             FranchiseSeasonMembership.objects.filter(
                 franchise__placeholder_slug='expansion-2002-01',
@@ -284,6 +291,129 @@ class ScheduleReleaseTests(TestCase):
             FranchiseSeasonMembership.objects.filter(franchise__release=self.release).filter(
                 owner_selectable=True,
             ).count() == 1797
+        )
+
+    def test_the_2002_alignment_matches_the_approved_league(self):
+        approved = {
+            'founding-01': ('conference-1', 'd1', 1),
+            'founding-02': ('conference-1', 'd1', 2),
+            'founding-03': ('conference-1', 'd1', 3),
+            'founding-04': ('conference-1', 'd1', 4),
+            'founding-05': ('conference-1', 'd2', 1),
+            'founding-06': ('conference-1', 'd2', 2),
+            'founding-07': ('conference-1', 'd2', 3),
+            'founding-08': ('conference-1', 'd2', 4),
+            'founding-10': ('conference-1', 'd3', 1),
+            'expansion-2002-01': ('conference-1', 'd3', 2),
+            'founding-12': ('conference-1', 'd3', 3),
+            'founding-25': ('conference-1', 'd3', 4),
+            'founding-09': ('conference-1', 'd4', 1),
+            'founding-11': ('conference-1', 'd4', 2),
+            'expansion-1995-01': ('conference-1', 'd4', 3),
+            'expansion-1976-01': ('conference-1', 'd4', 4),
+            'founding-13': ('conference-2', 'd1', 1),
+            'founding-14': ('conference-2', 'd1', 2),
+            'founding-15': ('conference-2', 'd1', 3),
+            'expansion-1999-01': ('conference-2', 'd1', 4),
+            'founding-17': ('conference-2', 'd2', 1),
+            'founding-18': ('conference-2', 'd2', 2),
+            'founding-19': ('conference-2', 'd2', 3),
+            'founding-20': ('conference-2', 'd2', 4),
+            'founding-22': ('conference-2', 'd3', 1),
+            'expansion-1976-02': ('conference-2', 'd3', 2),
+            'founding-24': ('conference-2', 'd3', 3),
+            'founding-26': ('conference-2', 'd3', 4),
+            'founding-21': ('conference-2', 'd4', 1),
+            'founding-23': ('conference-2', 'd4', 2),
+            'expansion-1995-02': ('conference-2', 'd4', 3),
+            'founding-16': ('conference-2', 'd4', 4),
+        }
+        rotated = (
+            'expansion-1976-01',
+            'expansion-1999-01',
+            'founding-16',
+            'expansion-2002-01',
+        )
+        self.assertEqual(len(approved), 32)
+        self.assertEqual(len(set(approved.values())), 32)
+
+        def seat(year, slug):
+            return FranchiseSeasonMembership.objects.get(
+                franchise__release=self.release,
+                franchise__placeholder_slug=slug,
+                season_year=year,
+            )
+
+        for year in (2002, 2029):
+            rows = FranchiseSeasonMembership.objects.filter(
+                franchise__release=self.release,
+                season_year=year,
+            )
+            self.assertEqual(rows.count(), 32)
+            for conference_slug in ('conference-1', 'conference-2'):
+                self.assertEqual(rows.filter(conference_slug=conference_slug).count(), 16)
+                for division_slug in ('d1', 'd2', 'd3', 'd4'):
+                    self.assertEqual(
+                        rows.filter(
+                            conference_slug=conference_slug,
+                            division_slug=division_slug,
+                        ).count(),
+                        4,
+                    )
+            self.assertEqual(
+                rows.values('conference_slug', 'division_slug', 'slot_order').distinct().count(),
+                32,
+            )
+            found = {
+                row.franchise.placeholder_slug: (
+                    row.conference_slug,
+                    row.division_slug,
+                    row.slot_order,
+                )
+                for row in rows.select_related('franchise')
+            }
+            self.assertEqual(found, approved)
+        for year in range(2002, 2030):
+            for slug in rotated:
+                row = seat(year, slug)
+                self.assertEqual(
+                    (row.conference_slug, row.division_slug, row.slot_order),
+                    approved[slug],
+                )
+        self.assertEqual(
+            (
+                seat(2001, 'expansion-1999-01').conference_slug,
+                seat(2001, 'expansion-1999-01').division_slug,
+                seat(2001, 'expansion-1999-01').slot_order,
+            ),
+            ('conference-2', 'd1', 6),
+        )
+        self.assertEqual(
+            (
+                seat(2001, 'expansion-1976-01').conference_slug,
+                seat(2001, 'expansion-1976-01').division_slug,
+                seat(2001, 'expansion-1976-01').slot_order,
+            ),
+            ('conference-1', 'd2', 5),
+        )
+        self.assertEqual(
+            (
+                seat(2001, 'founding-16').conference_slug,
+                seat(2001, 'founding-16').division_slug,
+                seat(2001, 'founding-16').slot_order,
+            ),
+            ('conference-2', 'd1', 4),
+        )
+        self.assertFalse(
+            FranchiseSeasonMembership.objects.filter(
+                franchise__release=self.release,
+                franchise__placeholder_slug='expansion-2002-01',
+                season_year__lt=2002,
+            ).exists()
+        )
+        self.assertEqual(
+            FranchiseSeasonMembership.objects.filter(franchise__release=self.release).count(),
+            1797,
         )
 
     def test_expansion_rows_match_the_approved_arithmetic(self):

@@ -511,11 +511,18 @@ class PriorFinishTests(TestCase):
         self.assertEqual(len(grouped_ranks), 8)
         for values in grouped_ranks.values():
             self.assertEqual(sorted(values), [1, 2, 3, 4])
-        self.assertEqual(ranks['expansion-2002-01'], 4)
-        self.assertLess(ranks['expansion-1995-02'], ranks['founding-23'])
-        self.assertLess(ranks['founding-23'], ranks['founding-21'])
+        northeast = _ranks(self.timeline, 'conference-1', 'd3')
+        self.assertEqual(northeast['expansion-2002-01'], 4)
+        self.assertEqual(
+            [slug for slug, _rank in sorted(northeast.items(), key=lambda item: item[1])],
+            ['founding-10', 'founding-12', 'founding-25', 'expansion-2002-01'],
+        )
+        self.assertEqual(ranks['expansion-1995-02'], 1)
+        self.assertEqual(ranks['founding-21'], 4)
+        self.assertCountEqual((ranks['founding-16'], ranks['founding-23']), (2, 3))
         self.assertEqual(records['founding-21'][:3], (10, 6, 0))
         self.assertEqual(records['founding-23'][:3], (11, 5, 0))
+        self.assertEqual(records['founding-16'][:3], (11, 5, 0))
         self.assertGreater(records['expansion-1995-02'][0], records['founding-23'][0])
         charlotte = TimelinePriorFinish.objects.get(
             timeline=self.timeline,
@@ -552,14 +559,14 @@ class PriorFinishTests(TestCase):
             row for row in left
             if row.conference_slug == 'conference-1'
             and row.division_slug == 'd4'
-            and 'expansion-1999-01' in row.coordinate
+            and 'expansion-1976-01' in row.coordinate
         )
         self.assertRegex(
             draw.coordinate,
             r'^scheduling-rank-2002:conference-1:d4:\d+:[a-z0-9,-]+:\d+$',
         )
         self.assertIn('expansion-1995-01', draw.coordinate)
-        self.assertIn('expansion-1999-01', draw.coordinate)
+        self.assertIn('expansion-1976-01', draw.coordinate)
         self.assertIn('founding-09', draw.coordinate)
         self.assertNotIn('founding-11', draw.coordinate)
         self.assertNotRegex(draw.coordinate, rf'(^|:){self.timeline.pk}(:|$)')
@@ -573,8 +580,8 @@ class PriorFinishTests(TestCase):
             ).hexdigest(),
         )
         self.assertIn('expansion-1995-01', draw.candidates)
-        self.assertIn('expansion-1999-01', draw.candidates)
-        self.assertIn('conference-2:d1:expansion-1999-01', draw.candidates)
+        self.assertIn('expansion-1976-01', draw.candidates)
+        self.assertIn('conference-1:d2:expansion-1976-01', draw.candidates)
         chains = [item.split(':') for item in draw.candidates.split('|')]
         self.assertEqual(len(chains), 3)
         choice = _index_from_digest(draw.digest, 3)
@@ -627,23 +634,28 @@ class PriorFinishTests(TestCase):
 
         self.assertEqual(first['founding-11'], 4)
         self.assertEqual(second['founding-11'], 4)
-        self.assertEqual(first['founding-09'], 2)
-        self.assertEqual(second['founding-09'], 2)
-        self.assertEqual((first['expansion-1995-01'], first['expansion-1999-01']), (1, 3))
-        self.assertEqual((second['expansion-1995-01'], second['expansion-1999-01']), (3, 1))
+        self.assertEqual(first['expansion-1976-01'], 2)
+        self.assertEqual(second['expansion-1976-01'], 2)
+        self.assertEqual((first['expansion-1995-01'], first['founding-09']), (1, 3))
+        self.assertEqual((second['expansion-1995-01'], second['founding-09']), (3, 1))
 
     def test_a_better_outsider_ranks_between_a_2001_division_chain(self):
         overrides = {
-            'founding-10': (10, 6, 0, 1),
-            'founding-12': (8, 8, 0, 2),
-            'founding-25': (6, 10, 0, 3),
-            'founding-09': (4, 12, 0, 4),
+            'founding-09': (10, 6, 0, 1),
+            'founding-10': (8, 8, 0, 2),
+            'founding-12': (6, 10, 0, 3),
+            'founding-25': (4, 12, 0, 4),
             'founding-11': (2, 14, 0, 5),
-            'expansion-1976-01': (9, 7, 0, 1),
-            'founding-05': (7, 9, 0, 2),
+            'founding-05': (9, 7, 0, 1),
+            'expansion-1976-01': (6, 10, 0, 2),
             'founding-06': (5, 11, 0, 3),
             'founding-07': (3, 13, 0, 4),
             'founding-08': (1, 15, 0, 5),
+            'founding-01': (12, 4, 0, 1),
+            'founding-02': (10, 6, 0, 2),
+            'founding-03': (8, 8, 0, 3),
+            'founding-04': (6, 10, 0, 4),
+            'expansion-1995-01': (1, 15, 0, 5),
         }
         store_prior_finishes(
             timeline_id=self.timeline.pk,
@@ -652,10 +664,10 @@ class PriorFinishTests(TestCase):
 
         derive_scheduling_ranks(timeline_id=self.timeline.pk)
 
-        ranks = _ranks(self.timeline, 'conference-1', 'd3')
+        ranks = _ranks(self.timeline, 'conference-1', 'd4')
         self.assertEqual(
             [slug for slug, _rank in sorted(ranks.items(), key=lambda item: item[1])],
-            ['founding-10', 'expansion-1976-01', 'founding-12', 'founding-25'],
+            ['founding-09', 'expansion-1976-01', 'founding-11', 'expansion-1995-01'],
         )
         self.assertEqual(_identity(self.release), self.identity)
 
@@ -686,7 +698,7 @@ class PriorFinishTests(TestCase):
             row = finishes[slug]
             by_division.setdefault((row.conference_slug, row.division_slug), []).append(slug)
         self.assertEqual(len(by_division), 3)
-        self.assertEqual(by_division[('conference-2', 'd1')], ['expansion-1999-01'])
+        self.assertEqual(by_division[('conference-1', 'd2')], ['expansion-1976-01'])
         shared = [slugs for slugs in by_division.values() if len(slugs) >= 2]
         self.assertEqual(len(shared), 1)
         for slugs in shared:
