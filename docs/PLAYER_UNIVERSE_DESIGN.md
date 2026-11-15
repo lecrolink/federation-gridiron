@@ -609,7 +609,7 @@ This is the user-approved naming plan and the permanent map from those clubs to 
 
 `conference-1` is the American Conference. `conference-2` is the National Conference. That meaning is fixed for every alignment period.
 
-The 2002 public division names use the stored division codes as follows. This is the labeling that puts the most clubs in their approved 2002 division without moving a stored seat.
+The 2002 public division names use these stored division codes. From 2002 through 2029 the generator seats match these names.
 
 American Conference, `conference-1`:
 
@@ -631,10 +631,10 @@ Expansion slugs follow the stored conference after the existing one-year 1976 sw
 - `expansion-1976-02` = Portland Lumberjacks. It plays 1976 in conference-1, then returns to conference-2 for 1977–2029.
 - `expansion-1995-01` = Memphis Marauders. It stays in conference-1.
 - `expansion-1995-02` = San Antonio Armadillos. It stays in conference-2.
-- `expansion-1999-01` = Charlotte Prospectors. She joins conference-2 in 1999 as `d1` slot 6 and stays there through 2001. Her 2002 seat is unchanged.
+- `expansion-1999-01` = Charlotte Prospectors. She joins conference-2 in 1999 as `d1` slot 6 and stays there through 2001. From 2002 she is conference-2 `d1` slot 4.
 - `expansion-2002-01` = Niagara Rapids. Niagara is the location name of the Buffalo-Toronto expansion franchise.
 
-The seat lines are the generator seats. Through 1994, the label after the division code is the stored size role. In 1999–2001, conference-2 `d1` is the six-club Central role, and `expansion-1999-01` is slot 6 of that division. Other 1995–2001 lines give the code and slot only. The 2002 lines use the public division names above. Clubs that do not exist yet have no line for that period. Four 2002 seats disagree with the approved public division. Those four are marked CONFLICT and are listed after the map. This document does not move the 2002 seats.
+The seat lines are the generator seats. Through 1994, the label after the division code is the stored size role. In 1999–2001, conference-2 `d1` is the six-club Central role, and `expansion-1999-01` is slot 6 of that division. Other 1995–2001 lines give the code and slot only. The 2002 lines use the public division names above. Clubs that do not exist yet have no line for that period. The 2002 seats match the approved public divisions. Four clubs rotate into the seats the others vacate, and every other 2002 seat stays where it was.
 
 ```text
 founding-01
@@ -843,8 +843,7 @@ approved 2002: National Conference, South Central
 1977-1994: conference-2 d1 Central role slot 4
 1995-1998: conference-2 d1 slot 4
 1999-2001: conference-2 d1 Central role slot 4
-2002-2029: conference-2 d1 Southeast slot 4
-CONFLICT: stored 2002 division is Southeast; approved division is South Central
+2002-2029: conference-2 d4 South Central slot 4
 
 founding-17
 1970 founding
@@ -986,8 +985,7 @@ approved 2002: American Conference, Midwest
 1977-1994: conference-1 d2 West role slot 5
 1995-1998: conference-1 d3 slot 2
 1999-2001: conference-1 d2 slot 5
-2002-2029: conference-1 d3 Northeast slot 2
-CONFLICT: stored 2002 division is Northeast; approved division is Midwest
+2002-2029: conference-1 d4 Midwest slot 4
 
 expansion-1976-02
 1976 expansion
@@ -1028,8 +1026,7 @@ nickname Prospectors
 display Charlotte Prospectors
 approved 2002: National Conference, Southeast
 1999-2001: conference-2 d1 Central role slot 6
-2002-2029: conference-1 d4 Midwest slot 4
-CONFLICT: the 2002 seat is American Midwest; the approved place is National Southeast. The 1999–2001 seat is National d1 slot 6
+2002-2029: conference-2 d1 Southeast slot 4
 
 expansion-2002-01
 2002 expansion
@@ -1037,19 +1034,18 @@ city Niagara
 nickname Rapids
 display Niagara Rapids
 approved 2002: American Conference, Northeast
-2002-2029: conference-2 d4 South Central slot 4
-CONFLICT: stored conference is National and stored division is South Central; approved conference is American and approved division is Northeast
+2002-2029: conference-1 d3 Northeast slot 2
 ```
 
 
 The 1970 historical-slot rule still fits these seats. It uses the conference, the division code, and `slot_order`. It does not use the public city. Conference-1 remains the AFC template, conference-2 the NFC template, `d3` the East template, `d1` the Central template, `d2` the West template, and slot order the template slot number. Los Angeles, San Francisco, and Seattle occupy three 1970 conference-2 East-role seats because those slugs later form the 2002 West division. The provenance club stays on the historical slot. The public city does not replace it.
 
-Four stored 2002 memberships disagree with the approved public alignment. Resolving them requires membership changes, so they are not changed here.
+The 2002 alignment matches the approved public divisions. Four clubs rotate through the seats they vacate, and each incoming club takes the outgoing club's slot. The rotation covers every season from 2002 through 2029. No membership before 2002 changes.
 
-- Indianapolis Speedsters, `expansion-1976-01`, is in `conference-1` `d3` slot 2. That code is Northeast. The approved division is Midwest. The 1976 season in conference-2 is the existing one-year swap, not a new move.
-- Charlotte Prospectors, `expansion-1999-01`, is in `conference-2` `d1` slot 6 for 1999–2001. From 2002 she is in `conference-1` `d4` slot 4. That 2002 code is Midwest. The approved place is National Southeast.
-- New Orleans River Kings, `founding-16`, is in `conference-2` `d1` slot 4. That code is Southeast. The approved division is South Central. `c2-d4` has only two founding seats, and those are Dallas and Houston, beside San Antonio.
-- Niagara Rapids, `expansion-2002-01`, is in `conference-2` `d4` slot 4. The approved place is American Northeast. Its only stored seats are National South Central.
+- Indianapolis Speedsters, `expansion-1976-01`, moves from its previous 2002 seat, `conference-1` `d3` slot 2, to `conference-1` `d4` slot 4. Its 1976 conference-2 season and its 1977–2001 conference-1 seats stay as they were.
+- Charlotte Prospectors, `expansion-1999-01`, stays `conference-2` `d1` slot 6 for 1999–2001. From 2002 she moves from the previous seat, `conference-1` `d4` slot 4, to `conference-2` `d1` slot 4.
+- New Orleans River Kings, `founding-16`, moves from its previous 2002 seat, `conference-2` `d1` slot 4, to `conference-2` `d4` slot 4. Its seats through 2001 stay as they were.
+- Niagara Rapids, `expansion-2002-01`, moves from its previous 2002 seat, `conference-2` `d4` slot 4, to `conference-1` `d3` slot 2. It still has no membership before 2002.
 
 Placeholders, not permanent identities. There is no `expansion-1976-03`, `expansion-1976-04`, or `expansion-1996` slug.
 
@@ -1152,23 +1148,23 @@ Conference-2 in 1999–2001:
 | `c2-d2` | founding-17 | founding-18 | founding-19 | founding-20 | founding-23 | |
 | `c2-d3` | founding-22 | expansion-1976-02 | founding-24 | founding-26 | expansion-1995-02 | |
 
-**2002 realignment.** The seats below stay the generator's placeholder seats. Their public names, and the four seats that disagree with the approved 2002 divisions, are in [Approved franchise names and 2002 alignment](#approved-franchise-names-and-2002-alignment). `expansion-2002-01` joins conference-2. Both conferences have 16 clubs in four divisions of four. Conference-1’s 2002 seats are the kept four-division table. They are not the 1999–2001 seats. Conference-2 is the kept conversion below.
+**2002 realignment.** The seats below are the approved public alignment in [Approved franchise names and 2002 alignment](#approved-franchise-names-and-2002-alignment). `expansion-2002-01` joins conference-1. Both conferences have 16 clubs in four divisions of four. These seats are not the 1999–2001 seats. `expansion-1999-01` stays in conference-2 and moves from the six-club `d1` into Southeast `d1` slot 4.
 
 | Division | Order 1 | Order 2 | Order 3 | Order 4 |
 |----------|---------|---------|---------|---------|
 | `c1-d1` | founding-01 | founding-02 | founding-03 | founding-04 |
 | `c1-d2` | founding-05 | founding-06 | founding-07 | founding-08 |
-| `c1-d3` | founding-10 | expansion-1976-01 | founding-12 | founding-25 |
-| `c1-d4` | founding-09 | founding-11 | expansion-1995-01 | expansion-1999-01 |
+| `c1-d3` | founding-10 | expansion-2002-01 | founding-12 | founding-25 |
+| `c1-d4` | founding-09 | founding-11 | expansion-1995-01 | expansion-1976-01 |
 
 Conference-2 in 2002–2029:
 
 | Division | Order 1 | Order 2 | Order 3 | Order 4 |
 |----------|---------|---------|---------|---------|
-| `c2-d1` | founding-13 | founding-14 | founding-15 | founding-16 |
+| `c2-d1` | founding-13 | founding-14 | founding-15 | expansion-1999-01 |
 | `c2-d2` | founding-17 | founding-18 | founding-19 | founding-20 |
 | `c2-d3` | founding-22 | expansion-1976-02 | founding-24 | founding-26 |
-| `c2-d4` | founding-21 | founding-23 | expansion-1995-02 | expansion-2002-01 |
+| `c2-d4` | founding-21 | founding-23 | expansion-1995-02 | founding-16 |
 
 `founding-09` plays in `c1-d3` slot 1 for 1970–1994 and again for 1999–2001. It plays in `c1-d1` slot 5 for 1995–1998 and in `c1-d4` slot 1 from 2002 on. Founding clubs stay in their original conference. `expansion-1976-01` changes conference in 1976 and again in 1977, then stays in conference-1 through 1994. `expansion-1976-02` does the reverse. A club that moved in one year can move again in a later one. The 2002 shape is 2 conferences and 8 divisions of 4, which is the shape `league_generator.py` already builds as a 32-team tree. That generator still cannot represent 1970, 1976, 1995, or 1999. This document does not change it.
 
