@@ -222,9 +222,56 @@ class ScheduleReleaseTests(TestCase):
         self.assertEqual((moved.conference_slug, moved.division_slug, moved.slot_order), ('conference-1', 'd3', 1))
         self.assertEqual(seat(2029, 'founding-09').division_slug, 'd4')
         self.assertEqual(seat(1970, 'founding-25').slot_order, 5)
+        for year in (1999, 2000, 2001):
+            charlotte = seat(year, 'expansion-1999-01')
+            self.assertEqual(
+                (charlotte.conference_slug, charlotte.division_slug, charlotte.slot_order),
+                ('conference-2', 'd1', 6),
+            )
+            season = FranchiseSeasonMembership.objects.filter(
+                franchise__release=self.release,
+                season_year=year,
+            )
+            self.assertEqual(season.count(), 31)
+            self.assertEqual(season.filter(conference_slug='conference-1').count(), 15)
+            self.assertEqual(season.filter(conference_slug='conference-2').count(), 16)
+            self.assertEqual(
+                season.filter(conference_slug='conference-2', division_slug='d1').count(),
+                6,
+            )
+            self.assertEqual(
+                season.filter(conference_slug='conference-1').exclude(division_slug__in=('d1', 'd2', 'd3')).count(),
+                0,
+            )
+            for division_slug in ('d1', 'd2', 'd3'):
+                self.assertEqual(
+                    season.filter(conference_slug='conference-1', division_slug=division_slug).count(),
+                    5,
+                )
+            for division_slug in ('d2', 'd3'):
+                self.assertEqual(
+                    season.filter(conference_slug='conference-2', division_slug=division_slug).count(),
+                    5,
+                )
+            self.assertEqual(
+                season.values('conference_slug', 'division_slug', 'slot_order').distinct().count(),
+                31,
+            )
         self.assertEqual(
-            (seat(1999, 'expansion-1999-01').division_slug, seat(1999, 'expansion-1999-01').slot_order),
-            ('d1', 6),
+            (
+                seat(1999, 'expansion-1995-01').conference_slug,
+                seat(1999, 'expansion-1995-01').division_slug,
+                seat(1999, 'expansion-1995-01').slot_order,
+            ),
+            ('conference-1', 'd1', 5),
+        )
+        self.assertEqual(
+            (
+                seat(2002, 'expansion-1999-01').conference_slug,
+                seat(2002, 'expansion-1999-01').division_slug,
+                seat(2002, 'expansion-1999-01').slot_order,
+            ),
+            ('conference-1', 'd4', 4),
         )
         self.assertEqual(seat(2002, 'expansion-2002-01').conference_slug, 'conference-2')
         self.assertFalse(

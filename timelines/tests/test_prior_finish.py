@@ -263,12 +263,12 @@ class PriorFinishTests(TestCase):
             grouped.setdefault((row.conference_slug, row.division_slug), []).append(row)
             self.assertEqual(row.wins + row.losses + row.ties, 16)
         self.assertEqual(
-            sorted(row.division_place for row in grouped[('conference-1', 'd1')]),
+            sorted(row.division_place for row in grouped[('conference-2', 'd1')]),
             list(range(1, 7)),
         )
-        self.assertEqual(len(grouped[('conference-1', 'd1')]), 6)
+        self.assertEqual(len(grouped[('conference-2', 'd1')]), 6)
         for key, members in grouped.items():
-            if key == ('conference-1', 'd1'):
+            if key == ('conference-2', 'd1'):
                 continue
             self.assertEqual(sorted(row.division_place for row in members), list(range(1, 6)))
             self.assertEqual(len(members), 5)
@@ -512,9 +512,19 @@ class PriorFinishTests(TestCase):
         for values in grouped_ranks.values():
             self.assertEqual(sorted(values), [1, 2, 3, 4])
         self.assertEqual(ranks['expansion-2002-01'], 4)
-        self.assertLess(ranks['expansion-1995-02'], ranks['founding-21'])
-        self.assertEqual(records['founding-21'][:3], records['founding-23'][:3])
-        self.assertGreater(records['expansion-1995-02'][0], records['founding-21'][0])
+        self.assertLess(ranks['expansion-1995-02'], ranks['founding-23'])
+        self.assertLess(ranks['founding-23'], ranks['founding-21'])
+        self.assertEqual(records['founding-21'][:3], (10, 6, 0))
+        self.assertEqual(records['founding-23'][:3], (11, 5, 0))
+        self.assertGreater(records['expansion-1995-02'][0], records['founding-23'][0])
+        charlotte = TimelinePriorFinish.objects.get(
+            timeline=self.timeline,
+            franchise__placeholder_slug='expansion-1999-01',
+        )
+        self.assertEqual(
+            (charlotte.conference_slug, charlotte.division_slug, charlotte.division_place),
+            ('conference-2', 'd1', 1),
+        )
         self.assertEqual(TimelinePriorFinish.objects.filter(timeline=self.timeline).count(), 31)
         self.assertEqual(_identity(self.release), self.identity)
 
@@ -540,15 +550,18 @@ class PriorFinishTests(TestCase):
         )
         draw = next(
             row for row in left
-            if row.conference_slug == 'conference-2' and row.division_slug == 'd4'
+            if row.conference_slug == 'conference-1'
+            and row.division_slug == 'd4'
+            and 'expansion-1999-01' in row.coordinate
         )
         self.assertRegex(
             draw.coordinate,
-            r'^scheduling-rank-2002:conference-2:d4:\d+:[a-z0-9,-]+:\d+$',
+            r'^scheduling-rank-2002:conference-1:d4:\d+:[a-z0-9,-]+:\d+$',
         )
-        self.assertIn('founding-21', draw.coordinate)
-        self.assertIn('founding-23', draw.coordinate)
-        self.assertNotIn('expansion-2002-01', draw.coordinate)
+        self.assertIn('expansion-1995-01', draw.coordinate)
+        self.assertIn('expansion-1999-01', draw.coordinate)
+        self.assertIn('founding-09', draw.coordinate)
+        self.assertNotIn('founding-11', draw.coordinate)
         self.assertNotRegex(draw.coordinate, rf'(^|:){self.timeline.pk}(:|$)')
         self.assertEqual(draw.digest, _hex_digest(self.release.seed, draw.coordinate))
         self.assertEqual(
@@ -559,11 +572,12 @@ class PriorFinishTests(TestCase):
                 hashlib.sha256,
             ).hexdigest(),
         )
-        self.assertIn('founding-21', draw.candidates)
-        self.assertIn('founding-23', draw.candidates)
+        self.assertIn('expansion-1995-01', draw.candidates)
+        self.assertIn('expansion-1999-01', draw.candidates)
+        self.assertIn('conference-2:d1:expansion-1999-01', draw.candidates)
         chains = [item.split(':') for item in draw.candidates.split('|')]
-        self.assertEqual(len(chains), 2)
-        choice = _index_from_digest(draw.digest, 2)
+        self.assertEqual(len(chains), 3)
+        choice = _index_from_digest(draw.digest, 3)
         expected_chain = ':'.join(chains[choice][:2])
         expected_slug = chains[choice][-1]
         self.assertEqual(draw.chosen_slug, expected_slug)
@@ -601,7 +615,7 @@ class PriorFinishTests(TestCase):
             side_effect=forced(0),
         ):
             derive_scheduling_ranks(timeline_id=self.timeline.pk)
-        first = _ranks(self.timeline, 'conference-2', 'd4')
+        first = _ranks(self.timeline, 'conference-1', 'd4')
         TimelineSchedulingRank.objects.filter(timeline=self.timeline).delete()
         TimelineSchedulingDraw.objects.filter(timeline=self.timeline).delete()
         with patch(
@@ -609,14 +623,14 @@ class PriorFinishTests(TestCase):
             side_effect=forced(-1),
         ):
             derive_scheduling_ranks(timeline_id=self.timeline.pk)
-        second = _ranks(self.timeline, 'conference-2', 'd4')
+        second = _ranks(self.timeline, 'conference-1', 'd4')
 
-        self.assertEqual(first['expansion-1995-02'], 1)
-        self.assertEqual(second['expansion-1995-02'], 1)
-        self.assertEqual(first['expansion-2002-01'], 4)
-        self.assertEqual(second['expansion-2002-01'], 4)
-        self.assertEqual((first['founding-21'], first['founding-23']), (2, 3))
-        self.assertEqual((second['founding-21'], second['founding-23']), (3, 2))
+        self.assertEqual(first['founding-11'], 4)
+        self.assertEqual(second['founding-11'], 4)
+        self.assertEqual(first['founding-09'], 2)
+        self.assertEqual(second['founding-09'], 2)
+        self.assertEqual((first['expansion-1995-01'], first['expansion-1999-01']), (1, 3))
+        self.assertEqual((second['expansion-1995-01'], second['expansion-1999-01']), (3, 1))
 
     def test_a_better_outsider_ranks_between_a_2001_division_chain(self):
         overrides = {
@@ -671,8 +685,11 @@ class PriorFinishTests(TestCase):
         for slug in ranks:
             row = finishes[slug]
             by_division.setdefault((row.conference_slug, row.division_slug), []).append(slug)
-        self.assertEqual(len(by_division), 2)
-        for slugs in by_division.values():
+        self.assertEqual(len(by_division), 3)
+        self.assertEqual(by_division[('conference-2', 'd1')], ['expansion-1999-01'])
+        shared = [slugs for slugs in by_division.values() if len(slugs) >= 2]
+        self.assertEqual(len(shared), 1)
+        for slugs in shared:
             ordered = sorted(slugs, key=lambda slug: finishes[slug].division_place)
             self.assertLess(ranks[ordered[0]], ranks[ordered[1]])
 
