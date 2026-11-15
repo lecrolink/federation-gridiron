@@ -51,12 +51,12 @@ from universe.generation.founding import (
     hmac_int,
     universe_key,
 )
-from universe.generation.provisional_names import (
-    ProvisionalNameError,
-    assignment_order,
-    display_name_for,
-    resolve_names,
+from universe.generation.approved_names import (
+    ApprovedNameError,
+    approved_name_rows,
+    display_name,
 )
+from universe.generation.provisional_names import assignment_order
 from universe.models import (
     FranchiseHistoryEvent,
     FranchiseSeasonMembership,
@@ -466,7 +466,7 @@ def _expected_slice(seed, release_slug, names, preserved_rules):
         name = names[slug]
         franchises.append({
             'slug': slug,
-            'display_name': display_name_for(name['city'], name['nickname']),
+            'display_name': display_name(name['city'], name['nickname']),
             'origin': (
                 UniverseFranchise.Origin.FOUNDING
                 if DEBUT_YEAR[slug] == FIRST_SEASON_YEAR
@@ -862,6 +862,31 @@ def _save_all(rows):
         type(rows[0]).objects.bulk_create(rows)
 
 
+def _require_approved_names(stored, names):
+    """Refuse a stored name set that cannot become the approved map.
+
+    An empty set is the first write. A stored replaced city or nickname that
+    differs from the approved value is kept, so generation stops before any
+    franchise row is deleted.
+    """
+    if not stored:
+        return
+    if set(stored) != set(names):
+        raise ScheduleGenerationError(
+            'Stored franchise names do not match the approved placeholder slugs.'
+        )
+    for slug, row in stored.items():
+        expected = names[slug]
+        for field in ('city', 'nickname'):
+            if (
+                row[f'{field}_status'] == ProvisionalFranchiseName.Status.REPLACED
+                and row[field] != expected[field]
+            ):
+                raise ScheduleGenerationError(
+                    'A replaced city or nickname is kept.'
+                )
+
+
 def _sync_names(release, names):
     existing = {
         name.placeholder_slug: name
@@ -880,21 +905,34 @@ def _sync_names(release, names):
             ))
         _save_all(created)
         return
+    if set(existing) != set(names):
+        raise ScheduleGenerationError(
+            'Stored franchise names do not match the approved placeholder slugs.'
+        )
     changed = []
     for slug, row in names.items():
         current = existing[slug]
+        touched = False
         for field in ('city', 'nickname'):
             status_field = f'{field}_status'
             if getattr(current, status_field) == ProvisionalFranchiseName.Status.REPLACED:
-                if getattr(current, field) != row[field]:
+                if (
+                    getattr(current, field) != row[field]
+                    or row[status_field] != ProvisionalFranchiseName.Status.REPLACED
+                ):
                     raise ScheduleGenerationError(
                         'A replaced city or nickname is kept.'
                     )
                 continue
-            if getattr(current, field) != row[field]:
+            if (
+                getattr(current, field) != row[field]
+                or getattr(current, status_field) != row[status_field]
+            ):
                 setattr(current, field, row[field])
                 setattr(current, status_field, row[status_field])
-                changed.append(current)
+                touched = True
+        if touched:
+            changed.append(current)
     if changed:
         assert_release_lock_held(release.pk, using=database_alias(release))
         ProvisionalFranchiseName.objects.bulk_update(
@@ -1223,6 +1261,29 @@ def _validate_schedule_slice(release):
     nicknames = list(release.provisional_franchise_names.values_list('nickname', flat=True))
     if len(set(cities)) != 32 or len(set(nicknames)) != 32:
         raise ScheduleGenerationError('Provisional cities or nicknames are not unique.')
+    approved = approved_name_rows()
+    for name in release.provisional_franchise_names.all():
+        row = approved.get(name.placeholder_slug)
+        if (
+            row is None
+            or name.city != row['city']
+            or name.nickname != row['nickname']
+        ):
+            raise ScheduleGenerationError('A franchise name is not the approved name.')
+        if (
+            name.city_status != ProvisionalFranchiseName.Status.REPLACED
+            or name.nickname_status != ProvisionalFranchiseName.Status.REPLACED
+        ):
+            raise ScheduleGenerationError(
+                'An approved franchise name is not marked replaced.'
+            )
+        franchise = release.franchises.get(placeholder_slug=name.placeholder_slug)
+        if franchise.display_name != display_name(name.city, name.nickname):
+            raise ScheduleGenerationError(
+                'A franchise display name is not the approved name.'
+            )
+        if franchise.catalog_team_id is not None:
+            raise ScheduleGenerationError('A franchise is linked to a catalog team.')
     if UniversePlayer.objects.filter(release=release).exists():
         raise ScheduleGenerationError('This generator wrote a player.')
     if HistoricalStanding.objects.filter(franchise__release=release).exists():
@@ -1247,16 +1308,11 @@ def generate_schedule_release(league_id, seed):
             validation = release.validation_fingerprint
             schedule_version = release.expansion_schedule_version
             try:
-                stored = _stored_names(release)
-                redraw = bool(stored) and release.seed != seed
-                names = resolve_names(
-                    seed,
-                    release.slug,
-                    stored,
-                    redraw=redraw,
-                )
-            except ProvisionalNameError as exc:
+                names = approved_name_rows()
+            except ApprovedNameError as exc:
                 raise ScheduleGenerationError(str(exc)) from exc
+            stored = _stored_names(release)
+            _require_approved_names(stored, names)
             expected = _expected_slice(
                 seed,
                 release.slug,

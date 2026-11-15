@@ -1,7 +1,9 @@
 import inspect
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
 
+from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import SimpleTestCase, TestCase
@@ -20,13 +22,23 @@ from universe.generation.founding import (
     universe_key,
 )
 from universe.generation.names import GIVEN_NAMES, SURNAMES
+from universe.generation.approved_names import (
+    APPROVED_EXPANSION_YEARS,
+    APPROVED_FRANCHISE_NAMES,
+    CITY_MAX_LENGTH,
+    DISPLAY_NAME_MAX_LENGTH,
+    NICKNAME_MAX_LENGTH,
+    SLUG_MAX_LENGTH,
+    ApprovedNameError,
+    approved_name_rows,
+    validate_approved_names,
+)
 from universe.generation.provisional_names import (
     CITIES,
     NICKNAMES,
     ProvisionalNameError,
     assignment_order,
     replace_provisional_value,
-    resolve_names,
 )
 from universe.generation.schedule import (
     GENERATOR_VERSION,
@@ -102,6 +114,140 @@ class ProvisionalListTests(SimpleTestCase):
         source = inspect.getsource(founding)
         self.assertNotIn('ProvisionalFranchiseName', source)
         self.assertNotIn('provisional_names', source)
+        self.assertNotIn('approved_names', source)
+
+
+def design_approved_names():
+    """Read the authoritative name blocks from the design document."""
+    path = Path(__file__).resolve().parents[2] / 'docs' / 'PLAYER_UNIVERSE_DESIGN.md'
+    text = path.read_text(encoding='utf-8')
+    start = text.index('```text\nfounding-01\n')
+    end = text.index('```', start + 3)
+    found = {}
+    slug = None
+    city = None
+    nickname = None
+    for line in text[start:end].splitlines():
+        if line.startswith('founding-') or line.startswith('expansion-'):
+            slug = line.strip()
+            city = None
+            nickname = None
+            continue
+        if line.startswith('city '):
+            city = line[len('city '):]
+        elif line.startswith('nickname '):
+            nickname = line[len('nickname '):]
+        elif line.startswith('display ') and slug is not None:
+            found[slug] = (city, nickname, line[len('display '):])
+            slug = None
+    return found
+
+
+class ApprovedNameMapTests(SimpleTestCase):
+    def test_the_canonical_map_matches_the_design_document(self):
+        documented = design_approved_names()
+        self.assertEqual(len(documented), 32)
+        self.assertEqual(
+            tuple(APPROVED_FRANCHISE_NAMES),
+            tuple(
+                (slug, documented[slug][0], documented[slug][1])
+                for slug, _city, _nickname in APPROVED_FRANCHISE_NAMES
+            ),
+        )
+        for slug, city, nickname in APPROVED_FRANCHISE_NAMES:
+            self.assertEqual(documented[slug][2], f'{city} {nickname}')
+        boston = documented['founding-10'][1]
+        self.assertEqual(boston, 'Nor\u2019easters')
+        self.assertEqual(ord(boston[3]), 0x2019)
+        self.assertEqual(documented['expansion-2002-01'][:2], ('Niagara', 'Rapids'))
+        self.assertEqual(documented['founding-11'][0], 'St. Louis')
+        self.assertEqual(documented['founding-12'][0], 'New York')
+        self.assertEqual(documented['founding-16'][0], 'New Orleans')
+        self.assertEqual(documented['founding-18'][0], 'Kansas City')
+        self.assertEqual(documented['founding-20'][0], 'San Diego')
+        self.assertEqual(documented['founding-22'][0], 'Los Angeles')
+        self.assertEqual(documented['founding-24'][0], 'San Francisco')
+        self.assertEqual(documented['founding-13'][1], 'Iron Horses')
+        self.assertEqual(documented['founding-16'][1], 'River Kings')
+        self.assertEqual(documented['founding-18'][1], 'Prairie Dogs')
+
+    def test_field_limits_match_the_models(self):
+        self.assertEqual(
+            SLUG_MAX_LENGTH,
+            ProvisionalFranchiseName._meta.get_field('placeholder_slug').max_length,
+        )
+        self.assertEqual(
+            CITY_MAX_LENGTH,
+            ProvisionalFranchiseName._meta.get_field('city').max_length,
+        )
+        self.assertEqual(
+            NICKNAME_MAX_LENGTH,
+            ProvisionalFranchiseName._meta.get_field('nickname').max_length,
+        )
+        self.assertEqual(
+            DISPLAY_NAME_MAX_LENGTH,
+            UniverseFranchise._meta.get_field('display_name').max_length,
+        )
+
+    def test_the_canonical_map_validates(self):
+        validate_approved_names(APPROVED_FRANCHISE_NAMES)
+        rows = approved_name_rows()
+        self.assertEqual(set(rows), {slug for slug, _city, _nickname in APPROVED_FRANCHISE_NAMES})
+        for row in rows.values():
+            self.assertEqual(row['city_status'], 'replaced')
+            self.assertEqual(row['nickname_status'], 'replaced')
+
+    def test_an_incomplete_map_is_rejected(self):
+        with self.assertRaises(ApprovedNameError) as raised:
+            validate_approved_names(APPROVED_FRANCHISE_NAMES[:-1])
+        self.assertIn('32', str(raised.exception))
+
+    def test_a_duplicate_slug_is_rejected(self):
+        rows = list(APPROVED_FRANCHISE_NAMES)
+        rows[1] = (rows[0][0], 'Otherport', 'Othername')
+        with self.assertRaises(ApprovedNameError) as raised:
+            validate_approved_names(tuple(rows))
+        self.assertIn('more than once', str(raised.exception))
+
+    def test_an_unexpected_slug_is_rejected(self):
+        rows = list(APPROVED_FRANCHISE_NAMES)
+        rows[0] = ('founding-99', rows[0][1], rows[0][2])
+        with self.assertRaises(ApprovedNameError) as raised:
+            validate_approved_names(tuple(rows))
+        self.assertIn('unexpected', str(raised.exception))
+
+    def test_duplicate_cities_and_nicknames_are_rejected(self):
+        rows = list(APPROVED_FRANCHISE_NAMES)
+        rows[1] = (rows[1][0], rows[0][1], rows[1][2])
+        with self.assertRaises(ApprovedNameError) as raised:
+            validate_approved_names(tuple(rows))
+        self.assertIn('cities', str(raised.exception))
+        rows = list(APPROVED_FRANCHISE_NAMES)
+        rows[1] = (rows[1][0], rows[1][1], rows[0][2])
+        with self.assertRaises(ApprovedNameError) as raised:
+            validate_approved_names(tuple(rows))
+        self.assertIn('nicknames', str(raised.exception))
+
+    def test_a_display_name_must_join_the_city_and_nickname(self):
+        slug, city, nickname = APPROVED_FRANCHISE_NAMES[0]
+        rows = ((slug, city, nickname, 'Wrong Name'),) + APPROVED_FRANCHISE_NAMES[1:]
+        with self.assertRaises(ApprovedNameError) as raised:
+            validate_approved_names(rows)
+        self.assertIn('display name', str(raised.exception))
+
+    def test_an_overlong_name_is_rejected(self):
+        slug, _city, nickname = APPROVED_FRANCHISE_NAMES[0]
+        rows = ((slug, 'A' * (CITY_MAX_LENGTH + 1), nickname),) + APPROVED_FRANCHISE_NAMES[1:]
+        with self.assertRaises(ApprovedNameError) as raised:
+            validate_approved_names(rows)
+        self.assertIn('field limit', str(raised.exception))
+
+    def test_an_expansion_year_mismatch_is_rejected(self):
+        years = dict(APPROVED_EXPANSION_YEARS)
+        years['expansion-2002-01'] = 2003
+        with self.assertRaises(ApprovedNameError) as raised:
+            validate_approved_names(APPROVED_FRANCHISE_NAMES, expansion_years=years)
+        self.assertIn('expansion year', str(raised.exception))
 
 
 class ScheduleReleaseTests(TestCase):
@@ -452,24 +598,74 @@ class ScheduleReleaseTests(TestCase):
             1,
         )
 
-    def test_names_follow_the_draw_and_project_display_name(self):
-        expected = resolve_names(SEED, RELEASE_SLUG, {}, redraw=False)
-        cities = []
-        nicknames = []
-        for name in self.release.provisional_franchise_names.all():
-            row = expected[name.placeholder_slug]
-            self.assertEqual(name.city, row['city'])
-            self.assertEqual(name.nickname, row['nickname'])
-            self.assertEqual(name.city_status, 'provisional')
-            self.assertEqual(name.nickname_status, 'provisional')
-            self.assertIn(name.city, CITIES)
-            self.assertIn(name.nickname, NICKNAMES)
-            cities.append(name.city)
-            nicknames.append(name.nickname)
-            franchise = self.release.franchises.get(placeholder_slug=name.placeholder_slug)
-            self.assertEqual(franchise.display_name, f'{name.city} {name.nickname}')
-        self.assertEqual(len(set(cities)), 32)
-        self.assertEqual(len(set(nicknames)), 32)
+    def test_every_slug_receives_its_approved_name(self):
+        self.assertEqual(self.release.provisional_franchise_names.count(), 32)
+        approved = {
+            slug: (city, nickname)
+            for slug, city, nickname in APPROVED_FRANCHISE_NAMES
+        }
+        self.assertEqual(set(approved), set(
+            self.release.provisional_franchise_names.values_list('placeholder_slug', flat=True)
+        ))
+        for slug, (city, nickname) in approved.items():
+            name = self.release.provisional_franchise_names.get(placeholder_slug=slug)
+            franchise = self.release.franchises.get(placeholder_slug=slug)
+            self.assertEqual(name.city, city)
+            self.assertEqual(name.nickname, nickname)
+            self.assertEqual(name.city_status, 'replaced')
+            self.assertEqual(name.nickname_status, 'replaced')
+            self.assertEqual(franchise.display_name, f'{city} {nickname}')
+            self.assertIsNone(franchise.catalog_team_id)
+        boston = self.release.provisional_franchise_names.get(placeholder_slug='founding-10')
+        self.assertEqual(boston.nickname, 'Nor\u2019easters')
+        self.assertEqual(ord(boston.nickname[3]), 0x2019)
+        niagara = self.release.provisional_franchise_names.get(
+            placeholder_slug='expansion-2002-01',
+        )
+        self.assertEqual(niagara.city, 'Niagara')
+        self.assertEqual(niagara.nickname, 'Rapids')
+        self.assertEqual(
+            self.release.franchises.get(placeholder_slug='founding-11').display_name,
+            'St. Louis Stallions',
+        )
+        self.assertEqual(
+            self.release.franchises.get(placeholder_slug='founding-13').display_name,
+            'Atlanta Iron Horses',
+        )
+        self.assertEqual(
+            self.release.franchises.get(placeholder_slug='founding-16').display_name,
+            'New Orleans River Kings',
+        )
+        self.assertEqual(
+            self.release.franchises.get(placeholder_slug='founding-18').display_name,
+            'Kansas City Prairie Dogs',
+        )
+
+    def test_exact_rerun_writes_nothing(self):
+        name_ids = {
+            slug: pk
+            for slug, pk in self.release.provisional_franchise_names.values_list(
+                'placeholder_slug', 'pk',
+            )
+        }
+        franchise_ids = {
+            slug: pk
+            for slug, pk in self.release.franchises.values_list('placeholder_slug', 'pk')
+        }
+        with (
+            patch('universe.generation.schedule._delete_slice', side_effect=AssertionError('deleted')),
+            patch('universe.generation.schedule._write_slice', side_effect=AssertionError('wrote')),
+            patch.object(UniverseRelease, 'save', side_effect=AssertionError('saved')),
+        ):
+            self.assertEqual(generate_schedule_release(self.league.id, SEED), 'unchanged')
+        self.assertEqual(
+            dict(self.release.provisional_franchise_names.values_list('placeholder_slug', 'pk')),
+            name_ids,
+        )
+        self.assertEqual(
+            dict(self.release.franchises.values_list('placeholder_slug', 'pk')),
+            franchise_ids,
+        )
 
     def test_opening_staff_match_v1_through_index_23(self):
         v1_rows = build_staff(SEED, RELEASE_SLUG, 1970)
@@ -524,7 +720,7 @@ class ScheduleReleaseTests(TestCase):
             ).exists()
         )
 
-    def test_same_seed_keeps_rows_and_a_provisional_edit(self):
+    def test_same_seed_keeps_rows_and_a_replaced_edit_is_refused(self):
         franchise = UniverseFranchise.objects.get(placeholder_slug='founding-01')
         name = ProvisionalFranchiseName.objects.get(placeholder_slug='founding-01')
         franchise_id = franchise.pk
@@ -533,31 +729,48 @@ class ScheduleReleaseTests(TestCase):
         self.assertEqual(UniverseFranchise.objects.get(placeholder_slug='founding-01').pk, franchise_id)
 
         name.city = 'Customport'
-        name.save()
-        franchise.display_name = 'Tampered'
-        franchise.save()
-        self.assertEqual(generate_schedule_release(self.league.id, SEED), 'rebuilt')
+        with self.assertRaises(ValidationError):
+            name.save()
+        name.refresh_from_db()
+        self.assertEqual(name.city, 'Chicago')
+        self.assertEqual(name.city_status, 'replaced')
+
+        ProvisionalFranchiseName.objects.filter(pk=name.pk).update(city='Customport')
+        with self.assertRaises(ScheduleGenerationError):
+            generate_schedule_release(self.league.id, SEED)
         name.refresh_from_db()
         restored = UniverseFranchise.objects.get(placeholder_slug='founding-01')
         self.assertEqual(name.pk, name_id)
-        self.assertNotEqual(restored.pk, franchise_id)
+        self.assertEqual(restored.pk, franchise_id)
         self.assertEqual(name.city, 'Customport')
-        self.assertEqual(name.city_status, 'provisional')
-        self.assertEqual(restored.display_name, f'Customport {name.nickname}')
+        self.assertEqual(restored.display_name, 'Chicago Navigators')
 
-    def test_replaced_values_survive_a_new_seed(self):
-        name = ProvisionalFranchiseName.objects.get(placeholder_slug='expansion-1999-01')
-        replace_provisional_value(name, 'city', 'Harborview')
-        ProvisionalFranchiseName.objects.filter(pk=name.pk).update(nickname='Customnick')
+    def test_a_new_seed_keeps_the_approved_names(self):
+        before = {
+            name.placeholder_slug: (
+                name.pk, name.city, name.nickname, name.city_status, name.nickname_status,
+            )
+            for name in self.release.provisional_franchise_names.all()
+        }
+        coach_keys = set(UniverseCoach.objects.values_list('universe_key', flat=True))
         self.assertEqual(generate_schedule_release(self.league.id, OTHER_SEED), 'rebuilt')
-        name.refresh_from_db()
-        self.assertEqual(name.city, 'Harborview')
-        self.assertEqual(name.city_status, 'replaced')
-        self.assertNotEqual(name.nickname, 'Customnick')
-        self.assertEqual(name.nickname_status, 'provisional')
-        franchise = UniverseFranchise.objects.get(placeholder_slug='expansion-1999-01')
-        self.assertEqual(franchise.display_name, f'{name.city} {name.nickname}')
+        after = {
+            name.placeholder_slug: (
+                name.pk, name.city, name.nickname, name.city_status, name.nickname_status,
+            )
+            for name in self.release.provisional_franchise_names.all()
+        }
+        self.assertEqual(after, before)
+        self.assertNotEqual(
+            set(UniverseCoach.objects.values_list('universe_key', flat=True)),
+            coach_keys,
+        )
+        for slug, city, nickname in APPROVED_FRANCHISE_NAMES:
+            franchise = UniverseFranchise.objects.get(placeholder_slug=slug)
+            self.assertEqual(franchise.display_name, f'{city} {nickname}')
+            self.assertIsNone(franchise.catalog_team_id)
         self.release.refresh_from_db()
+        self.assertEqual(self.release.seed, OTHER_SEED)
         self.assertEqual(self.release.catalog_fingerprint, 'preexisting')
         self.assertEqual(self.release.expansion_schedule_version, 3)
         self.assertEqual(self.release.validation_fingerprint, '')
@@ -565,6 +778,15 @@ class ScheduleReleaseTests(TestCase):
     def test_replacement_rejects_an_exact_duplicate_and_keeps_fields_independent(self):
         first = ProvisionalFranchiseName.objects.get(placeholder_slug='founding-01')
         second = ProvisionalFranchiseName.objects.get(placeholder_slug='founding-02')
+        with self.assertRaises(ProvisionalNameError):
+            replace_provisional_value(second, 'city', 'Harborview')
+        second.refresh_from_db()
+        self.assertEqual(second.city, 'Cleveland')
+        self.assertEqual(second.city_status, 'replaced')
+        ProvisionalFranchiseName.objects.filter(pk=second.pk).update(
+            city_status='provisional',
+            nickname_status='provisional',
+        )
         with self.assertRaises(ProvisionalNameError):
             replace_provisional_value(second, 'city', first.city)
         second.refresh_from_db()
@@ -581,6 +803,9 @@ class ScheduleReleaseTests(TestCase):
 
     def test_replacement_locks_the_release_before_the_sibling_check(self):
         second = ProvisionalFranchiseName.objects.get(placeholder_slug='founding-02')
+        ProvisionalFranchiseName.objects.filter(pk=second.pk).update(
+            nickname_status='provisional',
+        )
         events = []
         real_select = UniverseRelease.objects.select_for_update
         real_filter = ProvisionalFranchiseName.objects.filter
@@ -615,25 +840,73 @@ class ScheduleReleaseTests(TestCase):
         franchise = UniverseFranchise.objects.get(placeholder_slug='founding-02')
         self.assertEqual(franchise.display_name, f'{second.city} Lockname')
 
-    def test_duplicate_stored_names_and_an_exhausted_list_refuse(self):
+    def test_a_replaced_name_that_differs_refuses_before_any_rewrite(self):
         franchise_id = UniverseFranchise.objects.get(placeholder_slug='founding-03').pk
-        first, second = list(self.release.provisional_franchise_names.order_by('placeholder_slug')[:2])
+        name_id = ProvisionalFranchiseName.objects.get(placeholder_slug='founding-03').pk
+        first, second = list(
+            self.release.provisional_franchise_names.order_by('placeholder_slug')[:2]
+        )
         ProvisionalFranchiseName.objects.filter(pk=second.pk).update(city=first.city)
-        with self.assertRaises(ScheduleGenerationError):
+        with self.assertRaises(ScheduleGenerationError) as raised:
             generate_schedule_release(self.league.id, SEED)
+        self.assertIn('kept', str(raised.exception))
         self.assertEqual(
             UniverseFranchise.objects.get(placeholder_slug='founding-03').pk,
             franchise_id,
         )
-        ProvisionalFranchiseName.objects.filter(pk=second.pk).update(city='Separateport')
+        self.assertEqual(
+            ProvisionalFranchiseName.objects.get(placeholder_slug='founding-03').pk,
+            name_id,
+        )
+
+    def test_a_provisional_value_is_corrected_to_the_approved_name(self):
+        name = ProvisionalFranchiseName.objects.get(placeholder_slug='founding-03')
+        name_id = name.pk
+        ProvisionalFranchiseName.objects.filter(pk=name.pk).update(
+            city='Separateport',
+            city_status='provisional',
+        )
         with patch('universe.generation.provisional_names.CITIES', ('Onlyport',)):
-            with self.assertRaises(ScheduleGenerationError) as raised:
-                generate_schedule_release(self.league.id, OTHER_SEED)
-        self.assertIn('No unused provisional name remains.', str(raised.exception))
-        self.assertEqual(
-            UniverseFranchise.objects.get(placeholder_slug='founding-03').pk,
-            franchise_id,
+            self.assertEqual(generate_schedule_release(self.league.id, OTHER_SEED), 'rebuilt')
+        name.refresh_from_db()
+        self.assertEqual(name.pk, name_id)
+        self.assertEqual(name.city, 'Detroit')
+        self.assertEqual(name.nickname, 'Wheels')
+        self.assertEqual(name.city_status, 'replaced')
+        self.assertEqual(name.nickname_status, 'replaced')
+        franchise = UniverseFranchise.objects.get(placeholder_slug='founding-03')
+        self.assertEqual(franchise.display_name, 'Detroit Wheels')
+        self.assertIsNone(franchise.catalog_team_id)
+
+    def test_a_failed_franchise_write_leaves_no_partial_names(self):
+        from django.db import IntegrityError
+
+        league = League(name='Atomic League', slug='atomic-league', tier=1, active=False)
+        league.save()
+        release = UniverseRelease(
+            slug='atomic-release',
+            root_league=league,
+            generator_version='pending',
+            seed=1,
+            founding_franchise_count=26,
+            expansion_schedule_version=1,
+            first_season_year=1970,
+            season_count=60,
+            last_season_year=2029,
+            status=UniverseRelease.Status.DRAFT,
         )
+        release.save()
+        with patch.object(
+            UniverseFranchise.objects,
+            'bulk_create',
+            side_effect=IntegrityError('forced franchise write failure'),
+        ):
+            with self.assertRaises(ScheduleGenerationError):
+                generate_schedule_release(league.id, SEED)
+        self.assertEqual(release.provisional_franchise_names.count(), 0)
+        self.assertEqual(release.franchises.count(), 0)
+        release.refresh_from_db()
+        self.assertEqual(release.generator_version, 'pending')
 
     def test_a_nonblank_rule_survives_a_rebuild(self):
         event = ExpansionEvent.objects.get(season_year=1976)
@@ -655,9 +928,35 @@ class ScheduleReleaseTests(TestCase):
             validation_fingerprint='b' * 64,
             published_at=timezone.now(),
         )
+        stored = list(
+            self.release.provisional_franchise_names.order_by('placeholder_slug').values_list(
+                'placeholder_slug', 'city', 'nickname', 'city_status', 'nickname_status',
+            )
+        )
+        displays = list(
+            self.release.franchises.order_by('placeholder_slug').values_list(
+                'placeholder_slug', 'display_name', 'catalog_team_id',
+            )
+        )
         with self.assertRaises(ScheduleGenerationError):
             generate_schedule_release(self.league.id, OTHER_SEED)
         self.assertEqual(self.release.franchises.count(), 32)
+        self.assertEqual(
+            list(
+                self.release.provisional_franchise_names.order_by('placeholder_slug').values_list(
+                    'placeholder_slug', 'city', 'nickname', 'city_status', 'nickname_status',
+                )
+            ),
+            stored,
+        )
+        self.assertEqual(
+            list(
+                self.release.franchises.order_by('placeholder_slug').values_list(
+                    'placeholder_slug', 'display_name', 'catalog_team_id',
+                )
+            ),
+            displays,
+        )
 
     def test_wrong_horizon_writes_nothing(self):
         self.release.founding_franchise_count = 24
