@@ -119,6 +119,113 @@ class SchedulePlan(NamedTuple):
     games: tuple
 
 
+def historical_fixture_state(timeline):
+    """Return ABSENT, EXACT, or DIFFERENT for one timeline's 1970 fixtures.
+
+    EXACT uses the same assignment, game, and week sets as
+    ``generate_historical_timeline_schedule_1970``. Counts alone are not
+    enough. This function does not insert, update, or delete.
+    """
+    assignment_rows, game_rows, week_rows, bye_exists = _stored_fixture_rows(timeline)
+    try:
+        plan = _plan_for_release(timeline.release_id)
+    except HistoricalTimelineScheduleRefused:
+        if assignment_rows or game_rows or week_rows or bye_exists:
+            return 'DIFFERENT'
+        return 'ABSENT'
+    state = _fixture_match(assignment_rows, game_rows, week_rows, bye_exists, plan)
+    return {'absent': 'ABSENT', 'exact': 'EXACT', 'differ': 'DIFFERENT'}[state]
+
+
+def _plan_for_release(release_id):
+    template = _require_template()
+    memberships = _require_memberships(release_id)
+    plan = _build_plan(template, memberships)
+    _prove(plan, template, memberships)
+    return plan
+
+
+def _stored_fixture_rows(timeline):
+    assignment_rows = list(
+        TimelineScheduleSlotAssignment.objects.filter(
+            timeline_id=timeline.pk,
+            season_year=SEASON,
+        )
+    )
+    game_rows = list(
+        ScheduleGame.objects.filter(
+            timeline_id=timeline.pk,
+            season_year=SEASON,
+        )
+    )
+    week_rows = list(
+        ScheduleWeekAssignment.objects.filter(
+            timeline_id=timeline.pk,
+            season_year=SEASON,
+        ).select_related('game')
+    )
+    bye_exists = ScheduleBye.objects.filter(
+        timeline_id=timeline.pk,
+        season_year=SEASON,
+    ).exists()
+    return assignment_rows, game_rows, week_rows, bye_exists
+
+
+def _fixture_match(assignment_rows, game_rows, week_rows, bye_exists, plan):
+    """Return absent, exact, or differ. This is the writer's comparison."""
+    if bye_exists:
+        return 'differ'
+    if not assignment_rows and not game_rows and not week_rows:
+        return 'absent'
+    found_assignments = {
+        (row.franchise_id, row.historical_slot_id, row.assignment_basis)
+        for row in assignment_rows
+    }
+    found_games = {
+        (
+            row.home_id,
+            row.away_id,
+            row.category,
+            row.kind,
+            row.historical_game_id,
+        )
+        for row in game_rows
+    }
+    found_weeks = {
+        (row.game.historical_game_id, row.week)
+        for row in week_rows
+    }
+    expected_assignments = {
+        (row.franchise_id, row.slot_id, row.basis)
+        for row in plan.assignments
+    }
+    expected_games = {
+        (
+            row.home_id,
+            row.away_id,
+            row.category,
+            ScheduleGame.Kind.REGULAR,
+            row.historical_game_id,
+        )
+        for row in plan.games
+    }
+    expected_weeks = {
+        (row.historical_game_id, row.week)
+        for row in plan.games
+    }
+    exact = (
+        found_assignments == expected_assignments
+        and len(assignment_rows) == len(found_assignments) == CLUBS
+        and found_games == expected_games
+        and len(game_rows) == len(found_games) == FIXTURES
+        and found_weeks == expected_weeks
+        and len(week_rows) == len(found_weeks) == FIXTURES
+    )
+    if exact:
+        return 'exact'
+    return 'differ'
+
+
 def generate_historical_timeline_schedule_1970(*, timeline_id):
     """Write one timeline's 1970 historical fixtures.
 
@@ -182,59 +289,20 @@ def _generate_locked(release, timeline_id):
             season_year=SEASON,
         ).select_related('game')
     )
-    if ScheduleBye.objects.filter(
+    bye_exists = ScheduleBye.objects.filter(
         timeline_id=timeline.pk,
         season_year=SEASON,
-    ).exists():
-        raise HistoricalTimelineScheduleRefused(DIFFER)
-
-    found_assignments = {
-        (row.franchise_id, row.historical_slot_id, row.assignment_basis)
-        for row in assignment_rows
-    }
-    found_games = {
-        (
-            row.home_id,
-            row.away_id,
-            row.category,
-            row.kind,
-            row.historical_game_id,
-        )
-        for row in game_rows
-    }
-    found_weeks = {
-        (row.game.historical_game_id, row.week)
-        for row in week_rows
-    }
-    expected_assignments = {
-        (row.franchise_id, row.slot_id, row.basis)
-        for row in plan.assignments
-    }
-    expected_games = {
-        (
-            row.home_id,
-            row.away_id,
-            row.category,
-            ScheduleGame.Kind.REGULAR,
-            row.historical_game_id,
-        )
-        for row in plan.games
-    }
-    expected_weeks = {
-        (row.historical_game_id, row.week)
-        for row in plan.games
-    }
-    exact = (
-        found_assignments == expected_assignments
-        and len(assignment_rows) == len(found_assignments) == CLUBS
-        and found_games == expected_games
-        and len(game_rows) == len(found_games) == FIXTURES
-        and found_weeks == expected_weeks
-        and len(week_rows) == len(found_weeks) == FIXTURES
+    ).exists()
+    state = _fixture_match(
+        assignment_rows,
+        game_rows,
+        week_rows,
+        bye_exists,
+        plan,
     )
-    if exact:
+    if state == 'exact':
         return 'unchanged'
-    if assignment_rows or game_rows or week_rows:
+    if state == 'differ':
         raise HistoricalTimelineScheduleRefused(DIFFER)
 
     assert_release_lock_held(release.pk)
@@ -593,63 +661,6 @@ def _clean(rows, message):
 
 
 def _confirm_inserted(timeline, plan):
-    assignments = TimelineScheduleSlotAssignment.objects.filter(
-        timeline_id=timeline.pk,
-        season_year=SEASON,
-    )
-    games = ScheduleGame.objects.filter(
-        timeline_id=timeline.pk,
-        season_year=SEASON,
-    )
-    weeks = ScheduleWeekAssignment.objects.filter(
-        timeline_id=timeline.pk,
-        season_year=SEASON,
-    ).select_related('game')
-    found_assignments = {
-        (row.franchise_id, row.historical_slot_id, row.assignment_basis)
-        for row in assignments
-    }
-    found_games = {
-        (
-            row.home_id,
-            row.away_id,
-            row.category,
-            row.kind,
-            row.historical_game_id,
-        )
-        for row in games
-    }
-    found_weeks = {
-        (row.game.historical_game_id, row.week)
-        for row in weeks
-    }
-    expected_assignments = {
-        (row.franchise_id, row.slot_id, row.basis) for row in plan.assignments
-    }
-    expected_games = {
-        (
-            row.home_id,
-            row.away_id,
-            row.category,
-            ScheduleGame.Kind.REGULAR,
-            row.historical_game_id,
-        )
-        for row in plan.games
-    }
-    expected_weeks = {(row.historical_game_id, row.week) for row in plan.games}
-    if (
-        assignments.count() != CLUBS
-        or len(found_assignments) != CLUBS
-        or found_assignments != expected_assignments
-        or games.count() != FIXTURES
-        or len(found_games) != FIXTURES
-        or found_games != expected_games
-        or weeks.count() != FIXTURES
-        or len(found_weeks) != FIXTURES
-        or found_weeks != expected_weeks
-        or ScheduleBye.objects.filter(
-            timeline_id=timeline.pk,
-            season_year=SEASON,
-        ).exists()
-    ):
+    assignment_rows, game_rows, week_rows, bye_exists = _stored_fixture_rows(timeline)
+    if _fixture_match(assignment_rows, game_rows, week_rows, bye_exists, plan) != 'exact':
         raise HistoricalTimelineScheduleRefused(INSERT_FAILED)
