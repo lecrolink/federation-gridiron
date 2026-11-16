@@ -1,0 +1,40 @@
+{% extends "setupflow/base.html" %}
+
+{% block title %}Choose a franchise{% endblock %}
+
+{% block content %}
+  <h1>Choose a franchise</h1>
+  <p class="lede">Twenty-four founding clubs, in the 1970 conference and division placeholders. Cities and nicknames are still unchosen.</p>
+  {% for conference in conferences %}
+    <section class="group" aria-labelledby="{{ conference.slug }}">
+      <h2 id="{{ conference.slug }}">{{ conference.label }}</h2>
+      {% for division in conference.divisions %}
+        <h3>{{ division.slug }}</h3>
+        <ul class="clubs">
+          {% for club in division.clubs %}
+            <li>
+              <a class="club{% if selected and selected.slug == club.slug %} is-selected{% endif %}" href="{% url 'setupflow:overview' club.slug %}">
+                <span class="club-number">{{ club.number }}</span>
+                <span class="club-copy">
+                  <span class="club-name">{{ club.name }}</span>
+                  <span class="club-meta">{{ club.slug }}</span>
+                </span>
+                {% if selected and selected.slug == club.slug %}
+                  <span class="club-badge">Selected</span>
+                {% endif %}
+              </a>
+            </li>
+          {% endfor %}
+        </ul>
+      {% endfor %}
+    </section>
+  {% endfor %}
+{% endblock %}
+
+{% block actions %}
+  {% if selected %}
+    <div class="actionbar">
+      <a class="button" href="{% url 'setupflow:overview' selected.slug %}">Continue with {{ selected.number }}</a>
+    </div>
+  {% endif %}
+{% endblock %}

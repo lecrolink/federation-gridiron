@@ -1,0 +1,54 @@
+{% extends "setupflow/base.html" %}
+
+{% block title %}GM instructions{% endblock %}
+
+{% block content %}
+  <p class="kicker">{{ franchise.name }}</p>
+  <h1>Instructions for the general manager</h1>
+  <p class="lede">Set the direction, name up to three position groups, and say how willing the club is to trade. The general manager still writes the contracts.</p>
+  {% include "setupflow/includes/errors.html" %}
+  <form id="gm-form" method="post" action="{% url 'setupflow:gm' franchise.slug %}">
+    {% csrf_token %}
+    {% include "setupflow/includes/radios.html" with legend="Team direction" name="team_direction" options=directions selected=state.team_direction %}
+    <fieldset class="choices">
+      <legend>Position groups</legend>
+      <p class="help">Optional. Leave a group empty to let the general manager choose. Set them in order.</p>
+      <label class="field">
+        <span>First priority</span>
+        <select name="priority_group_1">
+          <option value="">None</option>
+          {% for option in priorities %}
+            <option value="{{ option.value }}"{% if option.value == state.priority_group_1 %} selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Second priority</span>
+        <select name="priority_group_2">
+          <option value="">None</option>
+          {% for option in priorities %}
+            <option value="{{ option.value }}"{% if option.value == state.priority_group_2 %} selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Third priority</span>
+        <select name="priority_group_3">
+          <option value="">None</option>
+          {% for option in priorities %}
+            <option value="{{ option.value }}"{% if option.value == state.priority_group_3 %} selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </fieldset>
+    {% include "setupflow/includes/radios.html" with legend="Trade appetite" name="trade_appetite" options=trades selected=state.trade_appetite help="How often the general manager may move future picks, within that year's rules." %}
+    {% include "setupflow/includes/radios.html" with legend="Veteran preference" name="veteran_preference" options=veterans selected=state.veteran_preference help="Follow the direction unless you want to override it." %}
+  </form>
+{% endblock %}
+
+{% block actions %}
+  <div class="actionbar">
+    <a class="button button-secondary" href="{% url 'setupflow:staff' franchise.slug %}">Back</a>
+    <button class="button" type="submit" form="gm-form">Continue</button>
+  </div>
+{% endblock %}

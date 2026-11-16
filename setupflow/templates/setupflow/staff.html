@@ -1,0 +1,77 @@
+{% extends "setupflow/base.html" %}
+
+{% block title %}Staff{% endblock %}
+
+{% block content %}
+  <p class="kicker">{{ franchise.name }}</p>
+  <h1>General manager and head coach</h1>
+  <p class="lede">The default is to keep both. A replacement is a placeholder candidate. This screen does not hire anyone.</p>
+  {% include "setupflow/includes/errors.html" %}
+  <form id="staff-form" method="post" action="{% url 'setupflow:staff' franchise.slug %}">
+    {% csrf_token %}
+    <fieldset class="choices staff-group">
+      <legend>General manager</legend>
+      <label class="choice">
+        <input type="radio" name="gm_choice" value="keep"{% if state.gm_choice == "keep" %} checked{% endif %}>
+        <span class="choice-body">
+          <span class="choice-title">Keep</span>
+          <span class="choice-note">Opening general manager, already employed by {{ franchise.name }}.</span>
+        </span>
+      </label>
+      <label class="choice">
+        <input type="radio" name="gm_choice" value="replace"{% if state.gm_choice == "replace" %} checked{% endif %}>
+        <span class="choice-body">
+          <span class="choice-title">Replace</span>
+          <span class="choice-note">Choose one available placeholder below.</span>
+        </span>
+      </label>
+      <div class="replacements">
+        {% for person in gms %}
+          <label class="choice choice-sub">
+            <input type="radio" name="gm_replacement" value="{{ person.id }}"{% if state.gm_replacement == person.id %} checked{% endif %}>
+            <span class="choice-body">
+              <span class="choice-title">{{ person.name }}</span>
+              <span class="choice-note">{{ person.note }}</span>
+            </span>
+          </label>
+        {% endfor %}
+      </div>
+    </fieldset>
+    <fieldset class="choices staff-group">
+      <legend>Head coach</legend>
+      <label class="choice">
+        <input type="radio" name="hc_choice" value="keep"{% if state.hc_choice == "keep" %} checked{% endif %}>
+        <span class="choice-body">
+          <span class="choice-title">Keep</span>
+          <span class="choice-note">Opening head coach, already employed by {{ franchise.name }}.</span>
+        </span>
+      </label>
+      <label class="choice">
+        <input type="radio" name="hc_choice" value="replace"{% if state.hc_choice == "replace" %} checked{% endif %}>
+        <span class="choice-body">
+          <span class="choice-title">Replace</span>
+          <span class="choice-note">Choose one available placeholder below.</span>
+        </span>
+      </label>
+      <div class="replacements">
+        {% for person in coaches %}
+          <label class="choice choice-sub">
+            <input type="radio" name="hc_replacement" value="{{ person.id }}"{% if state.hc_replacement == person.id %} checked{% endif %}>
+            <span class="choice-body">
+              <span class="choice-title">{{ person.name }}</span>
+              <span class="choice-note">{{ person.note }}</span>
+            </span>
+          </label>
+        {% endfor %}
+      </div>
+    </fieldset>
+  </form>
+  <noscript><style>.replacements { display: grid; }</style></noscript>
+{% endblock %}
+
+{% block actions %}
+  <div class="actionbar">
+    <a class="button button-secondary" href="{% url 'setupflow:overview' franchise.slug %}">Back</a>
+    <button class="button" type="submit" form="staff-form">Continue</button>
+  </div>
+{% endblock %}

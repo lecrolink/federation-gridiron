@@ -1,0 +1,14 @@
+{% extends "setupflow/base.html" %}
+
+{% block title %}Unknown franchise{% endblock %}
+
+{% block content %}
+  <h1>That franchise is not in the 1970 list</h1>
+  <p class="lede"><code>{{ slug }}</code> is outside the 24 founding placeholders.</p>
+{% endblock %}
+
+{% block actions %}
+  <div class="actionbar">
+    <a class="button" href="{% url 'setupflow:franchises' %}">Back to the clubs</a>
+  </div>
+{% endblock %}
