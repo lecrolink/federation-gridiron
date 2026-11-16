@@ -15,12 +15,18 @@ from django.test import SimpleTestCase
 
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATE = ROOT / 'scripts' / 'pythonanywhere_migrate_test.sh'
+PREFLIGHT = ROOT / 'scripts' / 'pythonanywhere_migrate_preflight.sh'
 WORKFLOW = ROOT / '.github' / 'workflows' / 'migrate-pythonanywhere.yml'
 DEPLOY_WORKFLOW = ROOT / '.github' / 'workflows' / 'deploy-pythonanywhere.yml'
 PUBLISHED_FINGERPRINT = 'SHA256:zy2jmqxNg/fs6tFZK55OjHTI3B2UofzOiUvTPtcX3/Y'
 TEST_DATABASE = 'lecrolink$fg_test'
 PRODUCTION_DATABASE = 'lecrolink$fg'
 CONFIRMATION = 'MIGRATE_FG_TEST'
+# Bytes recorded for CONFIRMATION on runs 43715646219, 43715681404, and
+# 43715711121. Runner 2.338.2 prints "  KEY: VALUE"; the log line has one
+# extra leading space from the timestamp separator. What remains is four
+# U+0020 bytes plus the typed token, and no carriage return.
+PHONE_CONFIRMATION = '    ' + CONFIRMATION
 
 
 def _git_env():
@@ -236,6 +242,17 @@ class PythonAnywhereMigrateScriptTests(SimpleTestCase):
         self.assertIn('python is not', completed.stderr)
         self.assertEqual(self._calls(), [])
 
+    def test_dollar_in_the_database_name_is_not_expanded(self):
+        completed = self._run(fg_test='EXPANDED', FG_FAKE_DB_NAME=TEST_DATABASE)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn(f'Database name is {TEST_DATABASE}.', completed.stdout)
+        self.assertNotIn('EXPANDED', completed.stdout)
+        self.assertNotIn('EXPANDED', completed.stderr)
+        source = MIGRATE.read_text()
+        self.assertIn("expected_db='lecrolink$fg_test'", source)
+        self.assertNotIn('expected_db="lecrolink$fg_test"', source)
+        self.assertNotIn('expected_db=lecrolink$fg_test', source)
+
     def test_production_database_name_is_refused_before_migrate(self):
         completed = self._run(FG_FAKE_DB_NAME=PRODUCTION_DATABASE)
         self.assertEqual(completed.returncode, 1)
@@ -304,7 +321,15 @@ class PythonAnywhereMigrateWorkflowTests(SimpleTestCase):
         self.assertNotIn('push:', source)
         self.assertNotIn('pull_request', source)
         self.assertIn(f'Type {CONFIRMATION}', source)
-        self.assertIn(f'!= "{CONFIRMATION}"', source)
+        self.assertIn('confirmation:', source)
+        self.assertIn('CONFIRMATION: ${{ inputs.confirmation }}', source)
+        self.assertNotIn('!= "MIGRATE_FG_TEST"', source)
+        preflight = PREFLIGHT.read_text()
+        self.assertIn('!= "MIGRATE_FG_TEST"', preflight)
+        self.assertIn('${confirmation# }', preflight)
+        self.assertIn('${confirmation% }', preflight)
+        self.assertNotIn('eval', _executable_lines(PREFLIGHT))
+        self.assertEqual(source.count('bash scripts/pythonanywhere_migrate_preflight.sh'), 2)
         self.assertIn('required: true', source)
         self.assertIn('cancel-in-progress: false', source)
         self.assertIn('pythonanywhere-www-federationgridiron-com', source)
@@ -322,9 +347,19 @@ class PythonAnywhereMigrateWorkflowTests(SimpleTestCase):
             source,
         )
         self.assertIn('if: success()', source)
-        migrate_step = source.split('name: Migrate lecrolink$fg_test', 1)[1]
-        migrate_step = migrate_step.split('name: Reload www.federationgridiron.com', 1)[0]
-        self.assertLess(migrate_step.index(CONFIRMATION), migrate_step.index('ssh-keyscan'))
+        migrate_job = source.split('\n  migrate:', 1)[1]
+        self.assertLess(
+            migrate_job.index('bash scripts/pythonanywhere_migrate_preflight.sh'),
+            migrate_job.index('secrets.PYTHONANYWHERE_SSH_PRIVATE_KEY'),
+        )
+        self.assertLess(
+            migrate_job.index('bash scripts/pythonanywhere_migrate_preflight.sh'),
+            migrate_job.index('ssh-keyscan'),
+        )
+        self.assertLess(
+            migrate_job.index('ssh-keyscan'),
+            migrate_job.index('secrets.PYTHONANYWHERE_API_TOKEN'),
+        )
         self.assertLess(
             source.index('name: Migrate lecrolink$fg_test'),
             source.index('name: Reload www.federationgridiron.com'),
@@ -345,3 +380,207 @@ class PythonAnywhereMigrateWorkflowTests(SimpleTestCase):
             self.assertNotIn(forbidden, source)
         without_test_name = source.replace(TEST_DATABASE, '')
         self.assertNotIn(PRODUCTION_DATABASE, without_test_name)
+        self.assertNotIn('push:', source)
+        self.assertNotIn('pull_request', source)
+        require_main = source.split('require-main:', 1)[1].split('migrate:', 1)[0]
+        self.assertNotIn('ssh-keyscan', require_main)
+        self.assertNotIn('pythonanywhere.com', require_main)
+
+
+class PythonAnywhereMigratePreflightTests(SimpleTestCase):
+    def _preflight(self, confirmation=CONFIRMATION, ref='refs/heads/main', include_confirmation=True, include_ref=True):
+        bindir = Path(self._tmpdir()) / 'bin'
+        bindir.mkdir()
+        ssh_log = bindir.parent / 'ssh.log'
+        ssh = bindir / 'ssh'
+        ssh.write_text(
+            '#!/bin/sh\nprintf "%s\\n" "$*" >> "${SSH_LOG}"\nexit 99\n'
+        )
+        ssh.chmod(ssh.stat().st_mode | stat.S_IEXEC)
+        keyscan = bindir / 'ssh-keyscan'
+        keyscan.write_text(ssh.read_text())
+        keyscan.chmod(keyscan.stat().st_mode | stat.S_IEXEC)
+        env = {
+            'PATH': f'{bindir}:/usr/bin:/bin',
+            'HOME': '/tmp',
+            'SSH_LOG': str(ssh_log),
+        }
+        if include_confirmation:
+            env['CONFIRMATION'] = confirmation
+        if include_ref:
+            env['GITHUB_REF'] = ref
+        completed = subprocess.run(
+            ['bash', str(PREFLIGHT)],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        completed.ssh_log = ssh_log.read_text() if ssh_log.exists() else ''
+        return completed
+
+    def _tmpdir(self):
+        self._tmp_n = getattr(self, '_tmp_n', 0) + 1
+        path = Path(os.environ.get('TMPDIR', '/tmp')) / (
+            f'fg-preflight-{os.getpid()}-{id(self)}-{self._tmp_n}'
+        )
+        path.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(subprocess.run, ['rm', '-rf', str(path)], check=False)
+        return path
+
+    def test_logged_phone_value_is_four_leading_spaces(self):
+        log_body = '   CONFIRMATION:     MIGRATE_FG_TEST'
+        self.assertEqual(log_body.encode().hex(),
+                         '202020434f4e4649524d4154494f4e3a20202020204d4947524154455f46475f54455354')
+        message = log_body[1:]
+        self.assertTrue(message.startswith('  CONFIRMATION: '))
+        value = message[len('  CONFIRMATION: '):]
+        self.assertEqual(value, PHONE_CONFIRMATION)
+        self.assertEqual(value.encode().hex(), '202020204d4947524154455f46475f54455354')
+        self.assertNotIn(b'\r', value.encode())
+        self.assertNotIn(b'\n', value.encode())
+
+    def test_old_comparison_refuses_the_logged_phone_value(self):
+        completed = subprocess.run(
+            ['bash', '-e', '-c',
+             'set -euo pipefail\n'
+             'if [ "${CONFIRMATION}" != "MIGRATE_FG_TEST" ]; then\n'
+             '  echo "Refusing to migrate: type MIGRATE_FG_TEST to continue." >&2\n'
+             '  exit 1\n'
+             'fi\n'],
+            capture_output=True,
+            text=True,
+            env={'PATH': '/usr/bin:/bin', 'CONFIRMATION': PHONE_CONFIRMATION},
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn('type MIGRATE_FG_TEST to continue.', completed.stderr)
+        self.assertNotEqual(PHONE_CONFIRMATION, CONFIRMATION)
+
+    def test_exact_confirmation_passes_preflight(self):
+        completed = self._preflight(CONFIRMATION)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout, '')
+        self.assertEqual(completed.stderr, '')
+        self.assertEqual(completed.ssh_log, '')
+
+    def test_ordinary_space_padding_passes_preflight(self):
+        accepted = [
+            PHONE_CONFIRMATION,
+            ' ' + CONFIRMATION,
+            '  ' + CONFIRMATION,
+            '   ' + CONFIRMATION,
+            '     ' + CONFIRMATION,
+            '        ' + CONFIRMATION,
+            CONFIRMATION + ' ',
+            CONFIRMATION + '        ',
+            ' ' + CONFIRMATION + ' ',
+            '    ' + CONFIRMATION + '   ',
+        ]
+        for value in accepted:
+            with self.subTest(value=repr(value)):
+                completed = self._preflight(value)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(completed.stdout, '')
+                self.assertEqual(completed.stderr, '')
+                self.assertEqual(completed.ssh_log, '')
+
+    def test_other_confirmation_values_fail_before_ssh(self):
+        rejected = [
+            '',
+            '    ',
+            'MIGRATE_FG_TES',
+            'MIGRATE_FG_TESTX',
+            'please MIGRATE_FG_TEST',
+            'MIGRATE_FG_TEST please',
+            'MIGRATE_FG_TEST\n',
+            'MIGRATE_FG_TEST\r',
+            'MIGRATE_FG_TEST\r\n',
+            '\n' + CONFIRMATION,
+            '\r' + CONFIRMATION,
+            '\tMIGRATE_FG_TEST',
+            'MIGRATE_FG_TEST\t',
+            ' \t' + CONFIRMATION,
+            CONFIRMATION + '\t ',
+            'migrate_fg_test',
+            'Migrate_FG_Test',
+            'MIGRATE-FG-TEST',
+            'MIGRATE_FG TEST',
+            'MIGRATE_FG_TEST MIGRATE_FG_TEST',
+            PHONE_CONFIRMATION + '\n',
+            PHONE_CONFIRMATION + '\r',
+            CONFIRMATION + '\x7f',
+            '\x01' + CONFIRMATION,
+            CONFIRMATION + '\x1b',
+            'NOT-THE-TOKEN',
+        ]
+        for value in rejected:
+            with self.subTest(value=repr(value)):
+                completed = self._preflight(value)
+                self.assertEqual(completed.returncode, 1)
+                self.assertIn('type MIGRATE_FG_TEST to continue.', completed.stderr)
+                refusal = 'Refusing to migrate: type MIGRATE_FG_TEST to continue.'
+                if value and value not in refusal:
+                    self.assertNotIn(value, completed.stdout)
+                    self.assertNotIn(value, completed.stderr)
+                self.assertEqual(completed.ssh_log, '')
+                self.assertNotIn('ssh-keyscan', completed.stdout)
+
+    def test_missing_confirmation_fails_before_ssh(self):
+        completed = self._preflight(include_confirmation=False)
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn('type MIGRATE_FG_TEST to continue.', completed.stderr)
+        self.assertEqual(completed.ssh_log, '')
+
+    def test_wrong_refs_fail_before_ssh(self):
+        for ref in (
+            '',
+            'main',
+            'refs/heads/master',
+            'refs/heads/Main',
+            'refs/heads/main ',
+            'refs/heads/feature',
+            'refs/pull/1/merge',
+            'refs/tags/main',
+        ):
+            with self.subTest(ref=repr(ref)):
+                completed = self._preflight(CONFIRMATION, ref=ref)
+                self.assertEqual(completed.returncode, 1)
+                self.assertIn('Only main is migrated.', completed.stderr)
+                self.assertIn(ref, completed.stderr)
+                self.assertEqual(completed.ssh_log, '')
+
+    def test_missing_ref_fails_before_ssh(self):
+        completed = self._preflight(CONFIRMATION, include_ref=False)
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn('Only main is migrated.', completed.stderr)
+        self.assertEqual(completed.ssh_log, '')
+
+    def test_phone_value_on_the_wrong_ref_fails_before_ssh(self):
+        completed = self._preflight(PHONE_CONFIRMATION, ref='refs/heads/feature')
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn('Only main is migrated.', completed.stderr)
+        self.assertEqual(completed.ssh_log, '')
+
+    def test_preflight_source_does_not_connect(self):
+        source = PREFLIGHT.read_text()
+        for forbidden in (
+            'ssh-keyscan',
+            'ssh ',
+            'curl',
+            'pythonanywhere.com',
+            'manage.py',
+            'mysql',
+            'API_TOKEN',
+            'PRIVATE_KEY',
+            'BEGIN OPENSSH',
+            'eval ',
+            'source ',
+        ):
+            self.assertNotIn(forbidden, source)
+        for line in source.splitlines():
+            if line.strip().startswith('echo '):
+                self.assertNotIn('CONFIRMATION', line)
+                self.assertNotIn('confirmation', line)
+        self.assertNotIn('push:', WORKFLOW.read_text())
+        self.assertNotIn('pull_request', WORKFLOW.read_text())
