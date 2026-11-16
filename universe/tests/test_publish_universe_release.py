@@ -1451,6 +1451,29 @@ class ReleaseLockInventoryTests(SimpleTestCase):
                 if call in stripped:
                     self.assertIn('using=', stripped, f'{name}: {stripped}')
 
+    def _assert_historical_template_bulk_is_not_release_content(self, text):
+        from universe.historical import HistoricalScheduleGame, HistoricalScheduleSlot
+
+        bulk_lines = [
+            line.strip() for line in text.splitlines() if 'bulk_create(' in line
+        ]
+        self.assertEqual(
+            bulk_lines,
+            [
+                'HistoricalScheduleSlot.objects.bulk_create(slot_models)',
+                'HistoricalScheduleGame.objects.bulk_create(game_models)',
+            ],
+        )
+        self.assertIn('with transaction.atomic():', text)
+        self.assertNotIn('holding_release_lock', text)
+        self.assertNotIn('assert_release_lock_held', text)
+        self.assertNotIn('select_for_update', text)
+        for model in (HistoricalScheduleSlot, HistoricalScheduleGame):
+            self.assertNotIn(
+                'release',
+                {field.name for field in model._meta.concrete_fields},
+            )
+
     def test_every_fingerprint_model_locks_the_parent_release(self):
         from universe.fingerprints import _coverage
 
@@ -1482,20 +1505,29 @@ class ReleaseLockInventoryTests(SimpleTestCase):
                 or queryset_delete
             ):
                 found.append(path.relative_to(universe).as_posix())
-        self.assertEqual(
-            sorted(found),
-            [
-                'generation/founding.py',
-                'generation/opening_players.py',
-                'generation/player_rating_profiles.py',
-                'generation/prospects.py',
-                'generation/schedule.py',
-            ],
-        )
-        for name in found:
+        release_bulk_files = [
+            'generation/founding.py',
+            'generation/opening_players.py',
+            'generation/opponents.py',
+            'generation/opponents_1978.py',
+            'generation/opponents_1990.py',
+            'generation/player_rating_profiles.py',
+            'generation/prospects.py',
+            'generation/schedule.py',
+            'generation/weeks.py',
+            'generation/weeks_1978.py',
+        ]
+        template_bulk_files = [
+            'generation/historical_1970.py',
+        ]
+        self.assertEqual(sorted(found), sorted(release_bulk_files + template_bulk_files))
+        for name in release_bulk_files:
             text = (universe / name).read_text()
             self.assertIn('holding_release_lock', text)
             self.assertIn('assert_release_lock_held', text)
+        self._assert_historical_template_bulk_is_not_release_content(
+            (universe / template_bulk_files[0]).read_text(),
+        )
         for name in (
             'publication_service.py',
             'generation/provisional_names.py',
