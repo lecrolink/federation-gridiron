@@ -29,15 +29,15 @@ jobs:
           echo "Refusing to migrate ${{ github.ref }}. Only main is migrated." >&2
           exit 1
 
+      - name: Check out the preflight
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
       - name: Require the typed confirmation
         env:
           CONFIRMATION: ${{ inputs.confirmation }}
         run: |
           set -euo pipefail
-          if [ "${CONFIRMATION}" != "MIGRATE_FG_TEST" ]; then
-            echo "Refusing to migrate: type MIGRATE_FG_TEST to continue." >&2
-            exit 1
-          fi
+          bash scripts/pythonanywhere_migrate_preflight.sh
 
   migrate:
     needs: require-main
@@ -48,16 +48,18 @@ jobs:
       - name: Check out the migration script
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
-      - name: Migrate lecrolink$fg_test
+      - name: Require the typed confirmation
         env:
-          PYTHONANYWHERE_SSH_PRIVATE_KEY: ${{ secrets.PYTHONANYWHERE_SSH_PRIVATE_KEY }}
           CONFIRMATION: ${{ inputs.confirmation }}
         run: |
           set -euo pipefail
-          if [ "${CONFIRMATION}" != "MIGRATE_FG_TEST" ]; then
-            echo "Refusing to migrate: type MIGRATE_FG_TEST to continue." >&2
-            exit 1
-          fi
+          bash scripts/pythonanywhere_migrate_preflight.sh
+
+      - name: Migrate lecrolink$fg_test
+        env:
+          PYTHONANYWHERE_SSH_PRIVATE_KEY: ${{ secrets.PYTHONANYWHERE_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
           if [ -z "${PYTHONANYWHERE_SSH_PRIVATE_KEY}" ]; then
             echo "PYTHONANYWHERE_SSH_PRIVATE_KEY is not configured." >&2
             exit 1
