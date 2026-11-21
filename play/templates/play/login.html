@@ -1,0 +1,42 @@
+{% extends "play/base.html" %}
+
+{% block title %}Sign in · Federation Gridiron{% endblock %}
+
+{% block content %}
+  <h1>Sign in</h1>
+  <p class="lead">Use the account that already belongs to your campaign.</p>
+  <form method="post" action="{% url 'login' %}">
+    {% csrf_token %}
+    {% if form.non_field_errors %}
+      <ul class="errorlist">
+        {% for error in form.non_field_errors %}
+          <li>{{ error }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    <label>
+      Username
+      {{ form.username }}
+    </label>
+    {% if form.username.errors %}
+      <ul class="errorlist">
+        {% for error in form.username.errors %}
+          <li>{{ error }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    <label>
+      Password
+      {{ form.password }}
+    </label>
+    {% if form.password.errors %}
+      <ul class="errorlist">
+        {% for error in form.password.errors %}
+          <li>{{ error }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    <input type="hidden" name="next" value="{{ next }}">
+    <button type="submit">Sign in</button>
+  </form>
+{% endblock %}

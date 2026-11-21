@@ -1,0 +1,30 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Federation Gridiron{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'play/play.css' %}">
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <a class="brand" href="{% url 'home' %}">Federation Gridiron</a>
+      <nav>
+        {% if user.is_authenticated %}
+          <form method="post" action="{% url 'logout' %}">
+            {% csrf_token %}
+            <button type="submit">Sign out</button>
+          </form>
+        {% else %}
+          <a class="button" href="{% url 'login' %}">Sign in</a>
+        {% endif %}
+      </nav>
+    </header>
+    <main>
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>
