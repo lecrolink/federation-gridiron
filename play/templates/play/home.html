@@ -1,0 +1,64 @@
+{% extends "play/base.html" %}
+
+{% block content %}
+  {% if campaign.state == "anonymous" %}
+    <h1>Your campaign</h1>
+    <p class="lead">Sign in to see the club, roster, and schedule for your active campaign.</p>
+  {% elif campaign.state == "none" %}
+    <h1>No active campaign</h1>
+    <p class="lead">This account is not an active participant in a campaign that is still open.</p>
+  {% elif campaign.state == "several" %}
+    <h1>More than one campaign</h1>
+    <p class="lead">This page shows one campaign at a time. These are the active campaigns on this account:</p>
+    <ul>
+      {% for name in campaign.campaigns %}
+        <li>{{ name }}</li>
+      {% endfor %}
+    </ul>
+  {% elif campaign.state == "no_club" %}
+    <h1>{{ campaign.timeline_name }}</h1>
+    <p class="lead">No club is under your control in {{ campaign.season_year }}.</p>
+    <p>The campaign phase is {{ campaign.phase }}.</p>
+  {% else %}
+    <h1>{{ campaign.franchise_name }}</h1>
+    <p class="lead">{{ campaign.timeline_name }}</p>
+    <dl>
+      <dt>Season</dt>
+      <dd>{{ campaign.season_year }}</dd>
+      <dt>Phase</dt>
+      <dd>{{ campaign.phase }}</dd>
+    </dl>
+
+    <section>
+      <h2>Roster</h2>
+      {% if campaign.roster %}
+        <ul class="stack">
+          {% for player in campaign.roster %}
+            <li>
+              <strong>{{ player.name }}</strong>
+              <span>{{ player.position }} · {{ player.role }} · {{ player.availability }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p>No players are on the open roster.</p>
+      {% endif %}
+    </section>
+
+    <section>
+      <h2>Schedule</h2>
+      {% if campaign.schedule %}
+        <ul class="stack">
+          {% for game in campaign.schedule %}
+            <li>
+              <strong>{% if game.week %}Week {{ game.week }}{% else %}Week not stored{% endif %}</strong>
+              <span>{{ game.side }} vs {{ game.opponent }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p>No games are stored for this club in this season.</p>
+      {% endif %}
+    </section>
+  {% endif %}
+{% endblock %}

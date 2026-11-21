@@ -1,0 +1,167 @@
+:root {
+  color-scheme: light dark;
+  --ink: #1c1915;
+  --muted: #5c564c;
+  --paper: #f6f3ec;
+  --card: #fffdf8;
+  --line: #d7d0c4;
+  --accent: #1f4d3a;
+  --accent-ink: #f7f4ee;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #f3efe6;
+    --muted: #c4bbaa;
+    --paper: #171614;
+    --card: #221f1b;
+    --line: #3c3830;
+    --accent: #8fbfa4;
+    --accent-ink: #142019;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.45;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.wrap {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1rem 1rem 2.5rem;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  color: inherit;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+nav form { margin: 0; }
+
+a.button,
+button {
+  font: inherit;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: 0;
+  border-radius: 0.4rem;
+  padding: 0.55rem 0.9rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+h1 {
+  font-size: 1.6rem;
+  line-height: 1.2;
+  margin: 1.25rem 0 0.35rem;
+}
+
+h2 {
+  font-size: 1.1rem;
+  margin: 1.5rem 0 0.4rem;
+}
+
+.lead,
+p { color: var(--ink); }
+
+.lead { color: var(--muted); }
+
+dl {
+  display: grid;
+  grid-template-columns: 6.5rem 1fr;
+  gap: 0.35rem 0.75rem;
+  margin: 1rem 0;
+  padding: 0.9rem 1rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+}
+
+dt { color: var(--muted); }
+
+dd { margin: 0; }
+
+.stack {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+}
+
+.stack li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.stack li:first-child { border-top: 0; }
+
+.stack span { color: var(--muted); text-align: right; }
+
+label {
+  display: block;
+  margin: 0.9rem 0 0.35rem;
+}
+
+input[type="text"],
+input[type="password"] {
+  display: block;
+  width: 100%;
+  margin-top: 0.3rem;
+  font: inherit;
+  padding: 0.6rem 0.7rem;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+}
+
+form button { margin-top: 1rem; }
+
+.errorlist {
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+  color: #9b2c2c;
+}
+
+ul:not(.stack):not(.errorlist) {
+  padding-left: 1.2rem;
+}
+
+@media (max-width: 560px) {
+  header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  dl { grid-template-columns: 1fr; }
+
+  .stack li {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .stack span { text-align: left; }
+}
