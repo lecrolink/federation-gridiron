@@ -225,3 +225,12 @@ class PythonAnywhereWorkflowTests(SimpleTestCase):
         )
         for forbidden in ('manage.py', 'migrate', 'BEGIN OPENSSH', 'BEGIN RSA'):
             self.assertNotIn(forbidden, source)
+
+    def test_dashboard_stylesheet_is_already_in_the_served_static_directory(self):
+        """The web app serves checkout static files. The update does not collect them."""
+        source = ROOT / 'play' / 'static' / 'play' / 'play.css'
+        served = ROOT / 'static' / 'play' / 'play.css'
+        template = (ROOT / 'play' / 'templates' / 'play' / 'base.html').read_text()
+        self.assertIn("{% static 'play/play.css' %}", template)
+        self.assertEqual(served.read_bytes(), source.read_bytes())
+        self.assertIn(b'font-family', served.read_bytes())
