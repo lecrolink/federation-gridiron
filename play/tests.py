@@ -6,6 +6,7 @@ from django.utils import timezone
 from leagues.models import League
 from play.campaign import campaign_for_user
 from timelines.models import (
+    OwnerDirective,
     RosterMembership,
     ScheduleGame,
     ScheduleWeekAssignment,
@@ -132,6 +133,11 @@ class PlayPagesTests(TestCase):
             season_year=2021,
             season_index=1,
             phase=Timeline.Phase.DIRECTION,
+        )
+        cls.directive = OwnerDirective.objects.create(
+            timeline=cls.timeline,
+            participant=cls.participant,
+            season=season,
         )
         with deferred_lifecycle():
             overlay = TimelinePlayer.objects.create(
@@ -294,3 +300,182 @@ class PlayPagesTests(TestCase):
     def test_admin_remains_routed(self):
         response = self.client.get('/admin/login/')
         self.assertEqual(response.status_code, 200)
+
+    def _direction_post(self, **overrides):
+        payload = {
+            'team_direction': 'balanced',
+            'priority_group_1': '',
+            'priority_group_2': '',
+            'priority_group_3': '',
+            'trade_appetite': 'medium',
+            'veteran_preference': 'automatic',
+            'draft_participation': 'delegate_to_gm',
+            'offensive_emphasis': 'balanced',
+            'defensive_emphasis': 'balanced',
+            'fourth_down': 'balanced',
+            'playing_time': 'automatic',
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_owner_can_view_and_save_direction(self):
+        self.client.force_login(self.owner)
+        home = self.client.get(reverse('home'))
+        self.assertContains(home, 'Set direction')
+        page = self.client.get(reverse('direction'))
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, 'Harbor Hawks')
+        self.assertContains(page, 'Save direction')
+        self.assertContains(page, 'value="balanced" selected')
+        self.assertContains(page, 'csrfmiddlewaretoken')
+        before_roster = RosterMembership.objects.count()
+        before_games = list(ScheduleGame.objects.values_list('id', 'home_id', 'away_id'))
+        saved = self.client.post(reverse('direction'), self._direction_post(
+            team_direction='compete',
+            priority_group_1='quarterback',
+            trade_appetite='high',
+            timeline='999',
+            locked='true',
+        ), follow=True)
+        self.assertRedirects(saved, reverse('direction'))
+        self.assertContains(saved, 'Direction saved.')
+        self.assertContains(saved, 'value="compete" selected')
+        directive = OwnerDirective.objects.get(pk=self.directive.pk)
+        self.assertEqual(directive.team_direction, 'compete')
+        self.assertEqual(directive.priority_group_1, 'quarterback')
+        self.assertIsNone(directive.priority_group_2)
+        self.assertEqual(directive.trade_appetite, 'high')
+        self.assertFalse(directive.locked)
+        self.assertEqual(directive.participant_id, self.participant.pk)
+        self.timeline.refresh_from_db()
+        season = TimelineSeason.objects.get(timeline=self.timeline)
+        self.assertEqual(self.timeline.phase, Timeline.Phase.DIRECTION)
+        self.assertEqual(season.phase, Timeline.Phase.DIRECTION)
+        self.assertFalse(season.directives_locked)
+        self.assertEqual(RosterMembership.objects.count(), before_roster)
+        self.assertEqual(
+            list(ScheduleGame.objects.values_list('id', 'home_id', 'away_id')),
+            before_games,
+        )
+        self.assertEqual(self.club.display_name, 'Harbor Hawks')
+
+    def test_invalid_direction_values_are_refused(self):
+        self.client.force_login(self.owner)
+        refused = self.client.post(reverse('direction'), self._direction_post(
+            team_direction='win-now',
+        ))
+        self.assertEqual(refused.status_code, 200)
+        self.assertContains(refused, 'Select a valid choice')
+        ordered = self.client.post(reverse('direction'), self._direction_post(
+            priority_group_2='skill',
+        ))
+        self.assertContains(ordered, 'Choose a first priority before a second one.')
+        repeated = self.client.post(reverse('direction'), self._direction_post(
+            priority_group_1='quarterback',
+            priority_group_2='quarterback',
+        ))
+        self.assertContains(repeated, 'Choose each priority group once.')
+        directive = OwnerDirective.objects.get(pk=self.directive.pk)
+        self.assertEqual(directive.team_direction, 'balanced')
+        self.assertIsNone(directive.priority_group_1)
+        self.assertIsNone(directive.priority_group_2)
+
+    def test_another_account_cannot_change_this_direction(self):
+        self.client.force_login(self.other)
+        without_club = self.client.post(reverse('direction'), self._direction_post(
+            team_direction='rebuild',
+        ))
+        self.assertEqual(without_club.status_code, 403)
+        self.assertNotContains(without_club, 'Harbor Hawks', status_code=403)
+        self.directive.refresh_from_db()
+        self.assertEqual(self.directive.team_direction, 'balanced')
+        season = TimelineSeason.objects.create(
+            timeline=Timeline.objects.get(name='Someone else plays'),
+            profile=self.timeline.seasons.get().profile,
+            season_year=2021,
+            season_index=1,
+            phase=Timeline.Phase.DIRECTION,
+        )
+        other_timeline = season.timeline
+        other_timeline.phase = Timeline.Phase.DIRECTION
+        other_timeline.save()
+        participant = other_timeline.participants.get(user=self.other)
+        TimelineFranchiseControl.objects.create(
+            timeline=other_timeline,
+            participant=participant,
+            franchise=self.opponent,
+            first_controlled_season=2021,
+        )
+        other_directive = OwnerDirective.objects.create(
+            timeline=other_timeline,
+            participant=participant,
+            season=season,
+        )
+        self.client.force_login(self.owner)
+        self.client.post(reverse('direction'), self._direction_post(
+            team_direction='rebuild',
+        ))
+        other_directive.refresh_from_db()
+        self.assertEqual(other_directive.team_direction, 'balanced')
+        self.client.force_login(self.other)
+        foreign = self.client.get(reverse('direction'))
+        self.assertContains(foreign, 'River City')
+        self.assertNotContains(foreign, 'Harbor Hawks')
+        self.client.post(reverse('direction'), self._direction_post(
+            team_direction='compete',
+        ))
+        self.directive.refresh_from_db()
+        other_directive.refresh_from_db()
+        self.assertEqual(self.directive.team_direction, 'rebuild')
+        self.assertEqual(other_directive.team_direction, 'compete')
+
+    def test_anonymous_and_closed_direction_cannot_be_saved(self):
+        anonymous = self.client.post(reverse('direction'), self._direction_post(
+            team_direction='rebuild',
+        ))
+        self.assertEqual(anonymous.status_code, 403)
+        self.assertContains(anonymous, 'Sign in', status_code=403)
+        self.directive.refresh_from_db()
+        self.assertEqual(self.directive.team_direction, 'balanced')
+
+        self.client.force_login(self.owner)
+        self.directive.locked = True
+        self.directive.save()
+        locked = self.client.post(reverse('direction'), self._direction_post(
+            team_direction='rebuild',
+        ))
+        self.assertEqual(locked.status_code, 403)
+        self.assertNotContains(locked, 'Save direction', status_code=403)
+        self.directive.refresh_from_db()
+        self.assertEqual(self.directive.team_direction, 'balanced')
+        self.assertTrue(self.directive.locked)
+
+    def test_direction_stays_put_outside_the_direction_phase(self):
+        self.client.force_login(self.owner)
+        self.timeline.phase = Timeline.Phase.DRAFT
+        self.timeline.save()
+        season = self.timeline.seasons.get()
+        season.phase = Timeline.Phase.DRAFT
+        season.save()
+        paused = self.client.post(reverse('direction'), self._direction_post(
+            team_direction='rebuild',
+        ))
+        self.assertEqual(paused.status_code, 403)
+        self.directive.refresh_from_db()
+        self.assertEqual(self.directive.team_direction, 'balanced')
+        self.timeline.refresh_from_db()
+        season.refresh_from_db()
+        self.assertEqual(self.timeline.phase, Timeline.Phase.DRAFT)
+        self.assertEqual(season.phase, Timeline.Phase.DRAFT)
+
+    def test_direction_post_requires_the_csrf_token(self):
+        from django.test import Client
+
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.owner)
+        refused = client.post(reverse('direction'), self._direction_post(
+            team_direction='rebuild',
+        ))
+        self.assertEqual(refused.status_code, 403)
+        self.directive.refresh_from_db()
+        self.assertEqual(self.directive.team_direction, 'balanced')
