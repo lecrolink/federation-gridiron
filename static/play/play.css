@@ -165,6 +165,21 @@ select {
 
 form button { margin-top: 1rem; }
 
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.club { margin-top: 1.75rem; }
+
+.club h2 { margin-bottom: 0.2rem; }
+
+.club.yours {
+  border-left: 3px solid var(--accent);
+  padding-left: 0.75rem;
+}
+
 .errorlist {
   margin: 0.4rem 0 0;
   padding-left: 1.1rem;

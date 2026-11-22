@@ -1,10 +1,11 @@
 from django.contrib.auth import views as auth_views
 from django.urls import path
 
-from play.views import direction, home
+from play.views import clubs, direction, home
 
 urlpatterns = [
     path('', home, name='home'),
+    path('clubs/', clubs, name='clubs'),
     path('direction/', direction, name='direction'),
     path(
         'sign-in/',

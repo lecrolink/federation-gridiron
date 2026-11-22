@@ -1,0 +1,53 @@
+{% extends "play/base.html" %}
+
+{% block title %}Clubs · Federation Gridiron{% endblock %}
+
+{% block content %}
+  {% if campaign.state == "anonymous" %}
+    <h1>Clubs</h1>
+    <p class="lead">Sign in to compare the opening clubs in your active campaign.</p>
+  {% elif campaign.state == "none" %}
+    <h1>No active campaign</h1>
+    <p class="lead">This account is not an active participant in a campaign that is still open.</p>
+  {% elif campaign.state == "several" %}
+    <h1>More than one campaign</h1>
+    <p class="lead">Club comparison is shown for one campaign at a time. These are the active campaigns on this account:</p>
+    <ul>
+      {% for name in campaign.campaigns %}
+        <li>{{ name }}</li>
+      {% endfor %}
+    </ul>
+  {% elif campaign.state == "no_club" %}
+    <h1>{{ campaign.timeline_name }}</h1>
+    <p class="lead">No club is under your control in {{ campaign.season_year }}.</p>
+  {% elif missing_season %}
+    <h1>Clubs</h1>
+    <p class="lead">{{ campaign.timeline_name }}</p>
+    <p>No season is stored for this campaign.</p>
+  {% else %}
+    <h1>Clubs</h1>
+    <p class="lead">{{ campaign.timeline_name }} · {{ campaign.season_year }}</p>
+    <p>{{ caption }}</p>
+    {% if clubs %}
+      {% for club in clubs %}
+        <section class="club{% if club.yours %} yours{% endif %}">
+          <h2>{{ club.name }}{% if club.yours %} <span class="hint">Your club</span>{% endif %}</h2>
+          <p>Overall {{ club.overall }}</p>
+          <p class="hint">{{ caption }}</p>
+          <p>Depth {{ club.depth_summary }}</p>
+          <p>Upside {{ club.upside_summary }}</p>
+          <ul class="stack">
+            {% for group in club.groups %}
+              <li>
+                <strong>{{ group.label }}</strong>
+                <span>{{ group.ability }} · {{ group.depth }} · {{ group.upside }} · Room {{ group.rooms }}</span>
+              </li>
+            {% endfor %}
+          </ul>
+        </section>
+      {% endfor %}
+    {% else %}
+      <p>No opening clubs are stored for this season.</p>
+    {% endif %}
+  {% endif %}
+{% endblock %}

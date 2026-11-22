@@ -28,7 +28,10 @@
       <dt>Phase</dt>
       <dd>{{ campaign.phase }}</dd>
     </dl>
-    <p><a class="button" href="{% url 'direction' %}">Set direction</a></p>
+    <p class="actions">
+      <a class="button" href="{% url 'direction' %}">Set direction</a>
+      <a class="button" href="{% url 'clubs' %}">Compare clubs</a>
+    </p>
 
     <section>
       <h2>Roster</h2>
