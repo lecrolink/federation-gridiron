@@ -1,0 +1,71 @@
+{% extends "play/base.html" %}
+
+{% block title %}Direction · Federation Gridiron{% endblock %}
+
+{% block content %}
+  {% if campaign.state == "anonymous" %}
+    <h1>Direction</h1>
+    <p class="lead">Sign in to set the direction for your active campaign.</p>
+  {% elif campaign.state == "none" %}
+    <h1>No active campaign</h1>
+    <p class="lead">This account is not an active participant in a campaign that is still open.</p>
+  {% elif campaign.state == "several" %}
+    <h1>More than one campaign</h1>
+    <p class="lead">Direction is shown for one campaign at a time. These are the active campaigns on this account:</p>
+    <ul>
+      {% for name in campaign.campaigns %}
+        <li>{{ name }}</li>
+      {% endfor %}
+    </ul>
+  {% elif campaign.state == "no_club" %}
+    <h1>{{ campaign.timeline_name }}</h1>
+    <p class="lead">No club is under your control in {{ campaign.season_year }}.</p>
+  {% else %}
+    <h1>Direction</h1>
+    <p class="lead">{{ campaign.franchise_name }}</p>
+    <p>{{ campaign.timeline_name }} · {{ campaign.season_year }} · {{ campaign.phase }}</p>
+
+    {% if blocked == "missing" %}
+      <p>No direction decisions are stored for this season.</p>
+    {% elif blocked == "phase" %}
+      <p>Direction decisions can be saved while the campaign is in the direction phase.</p>
+    {% elif blocked == "locked" %}
+      <p>These decisions are locked for this season.</p>
+    {% endif %}
+
+    {% if editable and form %}
+      <form method="post" action="{% url 'direction' %}">
+        {% csrf_token %}
+        {% if form.non_field_errors %}
+          <ul class="errorlist">
+            {% for error in form.non_field_errors %}
+              <li>{{ error }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+        {% for field in form %}
+          <label for="{{ field.id_for_label }}">
+            {{ field.label }}
+            {% if field.help_text %}<span class="hint">{{ field.help_text }}</span>{% endif %}
+            {{ field }}
+          </label>
+          {% if field.errors %}
+            <ul class="errorlist">
+              {% for error in field.errors %}
+                <li>{{ error }}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+        {% endfor %}
+        <button type="submit">Save direction</button>
+      </form>
+    {% elif lines %}
+      <dl>
+        {% for line in lines %}
+          <dt>{{ line.label }}</dt>
+          <dd>{{ line.value }}</dd>
+        {% endfor %}
+      </dl>
+    {% endif %}
+  {% endif %}
+{% endblock %}

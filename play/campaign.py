@@ -18,9 +18,22 @@ from timelines.models import (
 )
 
 
-def campaign_for_user(user):
+class ResolvedCampaign:
+    """The signed-in user's one active campaign, when that scope is unique."""
+
+    def __init__(self, state, timeline=None, participation=None, control=None, season=None, campaigns=None):
+        self.state = state
+        self.timeline = timeline
+        self.participation = participation
+        self.control = control
+        self.season = season
+        self.campaigns = campaigns or []
+
+
+def resolve_campaign(user):
+    """Resolve one active campaign. The result carries no other account's rows."""
     if not getattr(user, 'is_authenticated', False):
-        return {'state': 'anonymous'}
+        return ResolvedCampaign('anonymous')
     participations = list(
         TimelineParticipant.objects.filter(
             user=user,
@@ -29,12 +42,12 @@ def campaign_for_user(user):
         ).select_related('timeline').order_by('timeline__name', 'id')
     )
     if not participations:
-        return {'state': 'none'}
+        return ResolvedCampaign('none')
     if len(participations) != 1:
-        return {
-            'state': 'several',
-            'campaigns': [row.timeline.name for row in participations],
-        }
+        return ResolvedCampaign(
+            'several',
+            campaigns=[row.timeline.name for row in participations],
+        )
     participation = participations[0]
     timeline = participation.timeline
     controls = list(
@@ -46,28 +59,49 @@ def campaign_for_user(user):
         ).select_related('franchise').order_by('id')
     )
     if len(controls) != 1:
-        return {
-            'state': 'no_club',
-            'timeline_name': timeline.name,
-            'season_year': timeline.current_season_year,
-            'phase': phase_label(timeline.phase),
-        }
-    franchise = controls[0].franchise
+        return ResolvedCampaign(
+            'no_club',
+            timeline=timeline,
+            participation=participation,
+        )
     season = TimelineSeason.objects.filter(
         timeline=timeline,
         season_year=timeline.current_season_year,
     ).first()
-    phase = season.phase if season is not None else timeline.phase
-    roster = _roster(timeline, season, franchise)
-    schedule = _schedule(timeline, franchise)
+    return ResolvedCampaign(
+        'ready',
+        timeline=timeline,
+        participation=participation,
+        control=controls[0],
+        season=season,
+    )
+
+
+def campaign_for_user(user):
+    resolved = resolve_campaign(user)
+    if resolved.state == 'anonymous':
+        return {'state': 'anonymous'}
+    if resolved.state == 'none':
+        return {'state': 'none'}
+    if resolved.state == 'several':
+        return {'state': 'several', 'campaigns': resolved.campaigns}
+    if resolved.state == 'no_club':
+        return {
+            'state': 'no_club',
+            'timeline_name': resolved.timeline.name,
+            'season_year': resolved.timeline.current_season_year,
+            'phase': phase_label(resolved.timeline.phase),
+        }
+    season = resolved.season
+    phase = season.phase if season is not None else resolved.timeline.phase
     return {
         'state': 'ready',
-        'timeline_name': timeline.name,
-        'franchise_name': franchise.display_name,
-        'season_year': timeline.current_season_year,
+        'timeline_name': resolved.timeline.name,
+        'franchise_name': resolved.control.franchise.display_name,
+        'season_year': resolved.timeline.current_season_year,
         'phase': phase_label(phase),
-        'roster': roster,
-        'schedule': schedule,
+        'roster': _roster(resolved.timeline, season, resolved.control.franchise),
+        'schedule': _schedule(resolved.timeline, resolved.control.franchise),
     }
 
 
