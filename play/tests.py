@@ -468,6 +468,21 @@ class PlayPagesTests(TestCase):
         self.assertEqual(self.timeline.phase, Timeline.Phase.DRAFT)
         self.assertEqual(season.phase, Timeline.Phase.DRAFT)
 
+    def test_signed_in_owner_can_compare_clubs(self):
+        self.client.force_login(self.owner)
+        response = self.client.get(reverse('clubs'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Relative roster comparison')
+        self.assertContains(response, 'Harbor Hawks')
+        self.assertContains(response, 'River City')
+        self.assertContains(response, 'Quiet Club')
+        self.assertContains(response, 'Offense')
+        self.assertContains(response, 'Defense')
+        self.assertContains(response, 'Special teams')
+        self.assertContains(response, 'QB')
+        self.assertContains(response, 'Strongest')
+        self.assertContains(response, 'Weakest')
+
     def test_direction_post_requires_the_csrf_token(self):
         from django.test import Client
 
