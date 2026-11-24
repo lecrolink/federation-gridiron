@@ -27,24 +27,29 @@
   {% else %}
     <h1>Clubs</h1>
     <p class="lead">{{ campaign.timeline_name }} · {{ campaign.season_year }}</p>
-    <p>{{ caption }}</p>
+    <p>{{ label }}</p>
+    <p>{{ explanation }}</p>
+    <p class="hint">{{ tiers }} {{ ties }}</p>
     {% if clubs %}
       {% for club in clubs %}
-        <section class="club{% if club.yours %} yours{% endif %}">
-          <h2>{{ club.name }}{% if club.yours %} <span class="hint">Your club</span>{% endif %}</h2>
-          <p>Overall {{ club.overall }}</p>
-          <p class="hint">{{ caption }}</p>
-          <p>Depth {{ club.depth_summary }}</p>
-          <p>Upside {{ club.upside_summary }}</p>
-          <ul class="stack">
-            {% for group in club.groups %}
-              <li>
-                <strong>{{ group.label }}</strong>
-                <span>{{ group.ability }} · {{ group.depth }} · {{ group.upside }} · Room {{ group.rooms }}</span>
-              </li>
-            {% endfor %}
-          </ul>
-        </section>
+        <details class="club{% if club.yours %} yours{% endif %}"{% if club.yours %} open{% endif %}>
+          <summary>
+            <span class="club-name">{{ club.name }}{% if club.yours %} <span class="hint">Your club</span>{% endif %}</span>
+            <span>{{ club.tier }} · {{ club.rank_label }}</span>
+            <span class="hint">Strongest {{ club.strongest }} · Weakest {{ club.weakest }}</span>
+          </summary>
+          {% for unit in club.units %}
+            <h3>{{ unit.label }}</h3>
+            <ul class="stack">
+              {% for position in unit.positions %}
+                <li>
+                  <strong>{{ position.code }}</strong>
+                  <span>{{ position.grade }} · {{ position.depth }} · {{ position.upside }}{% if position.room %} · Room{% endif %}</span>
+                </li>
+              {% endfor %}
+            </ul>
+          {% endfor %}
+        </details>
       {% endfor %}
     {% else %}
       <p>No opening clubs are stored for this season.</p>
