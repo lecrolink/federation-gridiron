@@ -298,9 +298,9 @@ def _units(positions):
     units = []
     for label in ('Offense', 'Defense', 'Special teams'):
         rows = [row for row in positions if row['unit'] == label]
-        for row in rows:
-            del row['unit']
         units.append({'label': label, 'positions': rows})
+    for row in positions:
+        del row['unit']
     return units
 
 
